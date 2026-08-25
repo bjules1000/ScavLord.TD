@@ -1,0 +1,230 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-display: "Press Start 2P", monospace;
+  --font-mono: "VT323", ui-monospace, monospace;
+}
+
+:root {
+  --radius: 0rem;
+  --background: oklch(0.18 0.015 110);
+  --foreground: oklch(0.92 0.02 95);
+  --card: oklch(0.23 0.018 110);
+  --card-foreground: oklch(0.92 0.02 95);
+  --popover: oklch(0.21 0.018 110);
+  --popover-foreground: oklch(0.92 0.02 95);
+  --primary: oklch(0.79 0.16 78);
+  --primary-foreground: oklch(0.18 0.03 60);
+  --secondary: oklch(0.3 0.03 120);
+  --secondary-foreground: oklch(0.92 0.02 95);
+  --muted: oklch(0.27 0.02 110);
+  --muted-foreground: oklch(0.68 0.03 95);
+  --accent: oklch(0.72 0.16 140);
+  --accent-foreground: oklch(0.18 0.03 60);
+  --destructive: oklch(0.62 0.21 30);
+  --destructive-foreground: oklch(0.96 0.01 90);
+  --border: oklch(0.34 0.03 110);
+  --input: oklch(0.34 0.03 110);
+  --ring: oklch(0.79 0.16 78);
+  --chart-1: oklch(0.79 0.16 78);
+  --chart-2: oklch(0.72 0.16 140);
+  --chart-3: oklch(0.62 0.21 30);
+  --chart-4: oklch(0.68 0.09 220);
+  --chart-5: oklch(0.6 0.05 95);
+  --sidebar: oklch(0.21 0.018 110);
+  --sidebar-foreground: oklch(0.92 0.02 95);
+  --sidebar-primary: oklch(0.79 0.16 78);
+  --sidebar-primary-foreground: oklch(0.18 0.03 60);
+  --sidebar-accent: oklch(0.27 0.02 110);
+  --sidebar-accent-foreground: oklch(0.92 0.02 95);
+  --sidebar-border: oklch(0.34 0.03 110);
+  --sidebar-ring: oklch(0.79 0.16 78);
+}
+
+.dark {
+  --background: oklch(0.18 0.015 110);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+@layer base {
+  body {
+    font-family: var(--font-mono);
+    background-image:
+      linear-gradient(oklch(0.22 0.02 110 / 0.6) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(0.22 0.02 110 / 0.6) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+}
+
+/* space reserved above/below the battlefield so it always fits the viewport */
+:root {
+  --td-chrome: 13rem;
+}
+@media (max-height: 900px) {
+  :root {
+    --td-chrome: 11rem;
+  }
+}
+@media (max-height: 700px) and (orientation: landscape) {
+  :root {
+    --td-chrome: 7.5rem;
+  }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  :root {
+    --td-chrome: 5.5rem;
+  }
+}
+
+@media (max-height: 700px) and (orientation: landscape) {
+  .td-hide-short {
+    display: none;
+  }
+  .td-grid {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
+  .td-side {
+    max-height: calc(100dvh - var(--td-chrome, 7.5rem));
+    overflow-y: auto;
+  }
+}
+
+
+
+
+
+
+@utility font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+@utility font-mono {
+  font-family: var(--font-mono);
+  font-size: 1.15em;
+}
+
+@utility pixel-frame {
+  border: 4px solid var(--color-border);
+  box-shadow:
+    0 0 0 4px var(--color-background),
+    0 0 0 8px var(--color-card),
+    0 12px 0 0 oklch(0 0 0 / 0.45);
+  background: var(--color-card);
+}
+
+@utility pixel-card {
+  border: 2px solid var(--color-border);
+  background: var(--color-card);
+  padding: 0.75rem;
+  box-shadow: 4px 4px 0 0 oklch(0 0 0 / 0.5);
+}
+
+@utility pixel-chip {
+  border: 2px solid var(--color-border);
+  background: var(--color-card);
+  padding: 0.25rem 0.6rem;
+  box-shadow: 3px 3px 0 0 oklch(0 0 0 / 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+@utility pixel-btn {
+  border: 2px solid var(--color-border);
+  background: var(--color-secondary);
+  color: var(--color-secondary-foreground);
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-display);
+  font-size: 9px;
+  box-shadow: 3px 3px 0 0 oklch(0 0 0 / 0.6);
+  transition: transform 80ms steps(2), box-shadow 80ms steps(2);
+}
+@utility pixel-btn-primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-color: oklch(0.55 0.13 70);
+}
+
+@layer base {
+  .pixel-btn:hover {
+    transform: translate(1px, 1px);
+    box-shadow: 2px 2px 0 0 oklch(0 0 0 / 0.6);
+  }
+  .pixel-btn:active {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 0 oklch(0 0 0 / 0.6);
+  }
+  .pixel-card.is-active {
+    border-color: var(--color-primary);
+    background: oklch(0.28 0.05 90);
+  }
+}

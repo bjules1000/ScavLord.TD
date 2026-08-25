@@ -1,0 +1,284 @@
+import { BACKPACKS, ITEM_BY_ID, makeItem, type Item } from "./gear";
+
+export interface QuestProgress {
+  scavKills: number;
+  bossKills: number;
+  bestWave: number;
+  extracts: number;
+}
+
+export interface QuestDef {
+  id: string;
+  name: string;
+  desc: string;
+  reward: number; // roubles paid when redeemed
+  skillPoints?: number; // skill points paid when redeemed
+  unlocks: string[]; // item ids buyable after redeeming
+  done: (q: QuestProgress) => boolean;
+  progress: (q: QuestProgress) => string;
+}
+
+export interface SkillDef {
+  id: string;
+  name: string;
+  desc: string;
+  cost: number;
+}
+
+/** Permanent perks bought with skill points earned from quests. */
+export const SKILLS: SkillDef[] = [
+  { id: "charisma", name: "CHARISMA", cost: 1, desc: "Flea prices -10%, sell value +10%." },
+  { id: "mule", name: "MULE", cost: 1, desc: "+2 backpack slots in raid." },
+  { id: "commando", name: "COMMANDO", cost: 2, desc: "+2 raid loadout slots." },
+  { id: "happy_camper", name: "HAPPY CAMPER", cost: 1, desc: "+40% roubles when scrapping loot in raid." },
+  { id: "hoarder", name: "HOARDER", cost: 1, desc: "+8 stash slots." },
+  { id: "quartermaster", name: "QUARTERMASTER", cost: 2, desc: "+250₽ starting raid funds." },
+];
+
+export const SKILL_BY_ID: Record<string, SkillDef> = Object.fromEntries(
+  SKILLS.map((s) => [s.id, s]),
+);
+
+export interface SkillMods {
+  buyMult: number;
+  sellMult: number;
+  backpackBonus: number;
+  loadoutBonus: number;
+  scrapMult: number;
+  stashBonus: number;
+  startRoubles: number;
+}
+
+export function skillMods(ids: string[]): SkillMods {
+  const has = (id: string) => ids.includes(id);
+  return {
+    buyMult: has("charisma") ? 0.9 : 1,
+    sellMult: has("charisma") ? 1.1 : 1,
+    backpackBonus: has("mule") ? 2 : 0,
+    loadoutBonus: has("commando") ? 2 : 0,
+    scrapMult: has("happy_camper") ? 1.4 : 1,
+    stashBonus: has("hoarder") ? 8 : 0,
+    startRoubles: has("quartermaster") ? 250 : 0,
+  };
+}
+
+
+
+export const QUESTS: QuestDef[] = [
+  {
+    id: "debut",
+    skillPoints: 1,
+    reward: 800,
+    name: "DEBUT",
+    desc: "Kill 25 scavs.",
+    unlocks: ["w_adar", "a_grip", "m_ifak", "ar_paca"],
+    done: (q) => q.scavKills >= 25,
+    progress: (q) => `${Math.min(25, q.scavKills)}/25`,
+  },
+  {
+    id: "checkpoint",
+    skillPoints: 1,
+    reward: 1500,
+    name: "CHECKPOINT",
+    desc: "Reach wave 5 in a single raid.",
+    unlocks: ["a_optic", "a_brake", "m_salewa"],
+    done: (q) => q.bestWave >= 5,
+    progress: (q) => `${Math.min(5, q.bestWave)}/5`,
+  },
+  {
+    id: "supplier",
+    skillPoints: 1,
+    reward: 2000,
+    name: "SUPPLIER",
+    desc: "Extract once with loot.",
+    unlocks: ["w_ak74", "a_mag", "a_laser"],
+    done: (q) => q.extracts >= 1,
+    progress: (q) => `${Math.min(1, q.extracts)}/1`,
+  },
+  {
+    id: "gunsmith",
+    skillPoints: 2,
+    reward: 3500,
+    name: "GUNSMITH",
+    desc: "Extract 3 times.",
+    unlocks: ["w_pkm", "w_m4", "a_supp", "m_grizzly", "ar_6b23"],
+    done: (q) => q.extracts >= 3,
+    progress: (q) => `${Math.min(3, q.extracts)}/3`,
+  },
+  {
+    id: "shooters_gallery",
+    skillPoints: 1,
+    reward: 2500,
+    name: "SHOOTERS GALLERY",
+    desc: "Reach wave 8 in a single raid.",
+    unlocks: ["w_mp133", "a_brake"],
+    done: (q) => q.bestWave >= 8,
+    progress: (q) => `${Math.min(8, q.bestWave)}/8`,
+  },
+  {
+    id: "bounty",
+    skillPoints: 3,
+    reward: 6000,
+    name: "BOUNTY",
+    desc: "Kill Reshala.",
+    unlocks: ["w_sv98", "w_m32", "a_m995", "a_thermal", "ar_slick"],
+    done: (q) => q.bossKills >= 1,
+    progress: (q) => `${Math.min(1, q.bossKills)}/1`,
+  },
+  {
+    id: "long_range",
+    skillPoints: 3,
+    reward: 9000,
+    name: "LONG RANGE",
+    desc: "Kill 2 bosses and extract 6 times.",
+    unlocks: ["w_m700", "w_dvl10", "a_thermal"],
+    done: (q) => q.bossKills >= 2 && q.extracts >= 6,
+    progress: (q) => `${Math.min(2, q.bossKills)}/2 · ${Math.min(6, q.extracts)}/6`,
+  },
+];
+
+export interface DebuffDef {
+  id: string;
+  name: string;
+  desc: string;
+}
+
+/** Permanent scars your PMC picks up as he levels. They never go away while he lives. */
+export const DEBUFFS: DebuffDef[] = [
+  { id: "old_wound", name: "OLD WOUND", desc: "-12% max health on your PMC." },
+  { id: "shaky_hands", name: "SHAKY HANDS", desc: "-6% hit chance on your PMC." },
+  { id: "bad_knee", name: "BAD KNEE", desc: "Repositioning costs a longer firing pause." },
+  { id: "notoriety", name: "NOTORIETY", desc: "+10% enemy health region-wide." },
+  { id: "blacklisted", name: "BLACKLISTED", desc: "-15% raid start roubles." },
+  { id: "heavy_breath", name: "HEAVY BREATHER", desc: "-8% rate of fire on your PMC." },
+];
+
+export const DEBUFF_BY_ID: Record<string, DebuffDef> = Object.fromEntries(
+  DEBUFFS.map((d) => [d.id, d]),
+);
+
+export interface PmcState {
+  name: string;
+  level: number;
+  xp: number;
+  debuffs: string[];
+  weapon: string;
+  attachments: string[];
+  armor: string | null;
+  deaths: number;
+}
+
+export function freshPmc(): PmcState {
+  return {
+    name: "BEAR-01",
+    level: 1,
+    xp: 0,
+    debuffs: [],
+    weapon: "toz",
+    attachments: [],
+    armor: null,
+    deaths: 0,
+  };
+}
+
+export const xpForLevel = (level: number) => 140 + (level - 1) * 120;
+export const XP_PER_LEVEL = xpForLevel;
+
+/** Every level-up marks the PMC. Returns null once he has collected them all. */
+export function rollDebuff(current: string[]): DebuffDef | null {
+  const pool = DEBUFFS.filter((d) => !current.includes(d.id));
+  if (!pool.length) return null;
+  return pool[Math.floor(Math.random() * pool.length)]!;
+}
+
+
+export interface Meta {
+  bank: number;
+  claimed: string[];
+  stash: Array<{ defId: string }>;
+  quests: QuestProgress;
+  runs: number;
+  pmc: PmcState;
+  skills: string[];
+  skillPoints: number;
+  /** owned backpack id from gear.ts BACKPACKS */
+  backpack: string;
+}
+
+const KEY = "kolkhoz-meta-v5";
+
+export function freshMeta(): Meta {
+  return {
+    bank: 0,
+    claimed: [],
+    stash: [{ defId: "a_grip" }, { defId: "m_ifak" }],
+    quests: { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0 },
+    runs: 0,
+    pmc: freshPmc(),
+    skills: [],
+    skillPoints: 0,
+    backpack: "sling",
+  };
+}
+
+export function loadMeta(): Meta {
+  if (typeof window === "undefined") return freshMeta();
+  try {
+    const raw = window.localStorage.getItem(KEY);
+    if (!raw) return freshMeta();
+    const p = JSON.parse(raw) as Meta;
+    const base = freshPmc();
+    return {
+      bank: Number(p.bank) || 0,
+      claimed: Array.isArray(p.claimed) ? p.claimed.filter((c) => typeof c === "string") : [],
+      stash: Array.isArray(p.stash) ? p.stash.filter((s) => !!ITEM_BY_ID[s.defId]) : [],
+      quests: {
+        scavKills: Number(p.quests?.scavKills) || 0,
+        bossKills: Number(p.quests?.bossKills) || 0,
+        bestWave: Number(p.quests?.bestWave) || 0,
+        extracts: Number(p.quests?.extracts) || 0,
+      },
+      runs: Number(p.runs) || 0,
+      pmc: {
+        name: p.pmc?.name || base.name,
+        level: Math.max(1, Number(p.pmc?.level) || 1),
+        xp: Math.max(0, Number(p.pmc?.xp) || 0),
+        debuffs: Array.isArray(p.pmc?.debuffs)
+          ? p.pmc!.debuffs.filter((d) => !!DEBUFF_BY_ID[d])
+          : [],
+        weapon: p.pmc?.weapon || base.weapon,
+        attachments: Array.isArray(p.pmc?.attachments) ? p.pmc!.attachments : [],
+        armor: p.pmc?.armor ?? null,
+        deaths: Number(p.pmc?.deaths) || 0,
+      },
+      skills: Array.isArray(p.skills) ? p.skills.filter((x) => !!SKILL_BY_ID[x]) : [],
+      skillPoints: Math.max(0, Number(p.skillPoints) || 0),
+      backpack: BACKPACKS[p.backpack ?? ""] ? p.backpack : "sling",
+    };
+  } catch {
+    return freshMeta();
+  }
+}
+
+
+export function saveMeta(m: Meta) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(KEY, JSON.stringify(m));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function unlockedIds(claimed: string[]): string[] {
+  const out = new Set<string>(["w_toz", "m_ifak", "bp_scav", "bp_pilgrim", "bp_trizip"]);
+  for (const quest of QUESTS)
+    if (claimed.includes(quest.id)) quest.unlocks.forEach((u) => out.add(u));
+  return [...out];
+}
+
+export function stashItems(m: Meta, uidStart: number): Item[] {
+  return m.stash
+    .map((s, i) => makeItem(s.defId, uidStart + i))
+    .filter((x): x is Item => x !== null);
+}
