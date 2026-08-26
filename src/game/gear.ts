@@ -30,7 +30,7 @@ export interface WeaponDef {
 export const WEAPONS: Record<string, WeaponDef> = {
   toz: {
     id: "toz",
-    name: "TOZ-106",
+    name: "BREAK-ACTION",
     cls: "shotgun",
     damage: 9,
     range: 62,
@@ -46,7 +46,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   mp133: {
     id: "mp133",
-    name: "MP-133 PUMP",
+    name: "PUMP 12",
     cls: "shotgun",
     damage: 11,
     range: 74,
@@ -62,7 +62,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   adar: {
     id: "adar",
-    name: "ADAR 2-15",
+    name: "SPORT CARBINE",
     cls: "rifle",
     damage: 22,
     range: 108,
@@ -76,7 +76,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   ak74: {
     id: "ak74",
-    name: "AK-74N",
+    name: "KALASH RIFLE",
     cls: "rifle",
     damage: 19,
     range: 100,
@@ -90,7 +90,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   m4: {
     id: "m4",
-    name: "M4A1",
+    name: "SERVICE CARBINE",
     cls: "rifle",
     damage: 24,
     range: 122,
@@ -104,7 +104,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   pkm: {
     id: "pkm",
-    name: "PKM",
+    name: "SQUAD LMG",
     cls: "lmg",
     damage: 17,
     range: 104,
@@ -118,7 +118,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   sv98: {
     id: "sv98",
-    name: "SV-98",
+    name: "BOLT RIFLE",
     cls: "sniper",
     damage: 78,
     range: 205,
@@ -132,7 +132,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   m700: {
     id: "m700",
-    name: "M700 SNIPER",
+    name: "HUNTING BOLT",
     cls: "sniper",
     damage: 105,
     range: 228,
@@ -146,7 +146,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   dvl10: {
     id: "dvl10",
-    name: "DVL-10 SABOTEUR",
+    name: "LONG RIFLE",
     cls: "sniper",
     damage: 150,
     range: 255,
@@ -160,7 +160,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   m32: {
     id: "m32",
-    name: "M32A1 MGL",
+    name: "ROTARY GL",
     cls: "launcher",
     damage: 52,
     range: 132,
@@ -185,14 +185,14 @@ export interface AttachmentDef {
 }
 
 export const ATTACHMENTS: Record<string, AttachmentDef> = {
-  optic: { id: "optic", name: "PSO-1 SCOPE", damageMult: 1, rangeMult: 1.18, rofMult: 1, accuracy: 0.12, pen: 0 },
-  thermal: { id: "thermal", name: "T-7 THERMAL", damageMult: 1, rangeMult: 1.3, rofMult: 1, accuracy: 0.2, pen: 0 },
-  grip: { id: "grip", name: "RK-3 FOREGRIP", damageMult: 1, rangeMult: 1, rofMult: 1, accuracy: 0.14, pen: 0 },
+  optic: { id: "optic", name: "4x SCOPE", damageMult: 1, rangeMult: 1.18, rofMult: 1, accuracy: 0.12, pen: 0 },
+  thermal: { id: "thermal", name: "THERMAL SIGHT", damageMult: 1, rangeMult: 1.3, rofMult: 1, accuracy: 0.2, pen: 0 },
+  grip: { id: "grip", name: "FOREGRIP", damageMult: 1, rangeMult: 1, rofMult: 1, accuracy: 0.14, pen: 0 },
   brake: { id: "brake", name: "MUZZLE BRAKE", damageMult: 1, rangeMult: 1.04, rofMult: 1.05, accuracy: 0.1, pen: 0 },
-  mag: { id: "mag", name: "60-RND MAG", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0 },
+  mag: { id: "mag", name: "DRUM MAG", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0 },
   supp: { id: "supp", name: "SUPPRESSOR", damageMult: 1.12, rangeMult: 1.06, rofMult: 1, accuracy: 0.07, pen: 0 },
-  m995: { id: "m995", name: "M995 AMMO", damageMult: 1.1, rangeMult: 1, rofMult: 1, accuracy: 0, pen: 6 },
-  laser: { id: "laser", name: "TACTICAL LASER", damageMult: 1, rangeMult: 1, rofMult: 1.08, accuracy: 0.13, pen: 0 },
+  m995: { id: "m995", name: "AP ROUNDS", damageMult: 1.1, rangeMult: 1, rofMult: 1, accuracy: 0, pen: 6 },
+  laser: { id: "laser", name: "TAC LASER", damageMult: 1, rangeMult: 1, rofMult: 1.08, accuracy: 0.13, pen: 0 },
 };
 
 export interface ArmorDef {
@@ -206,9 +206,9 @@ export interface ArmorDef {
 }
 
 export const ARMORS: Record<string, ArmorDef> = {
-  paca: { id: "paca", name: "PACA SOFT ARMOR", reduction: 0.18, durability: 110, plate: "#4a4636", trim: "#6f6a4f" },
-  sixb23: { id: "sixb23", name: "6B23 ARMOR", reduction: 0.3, durability: 190, plate: "#3f4a38", trim: "#6fd6ff" },
-  slick: { id: "slick", name: "SLICK PLATE CARRIER", reduction: 0.45, durability: 300, plate: "#26282b", trim: "#f0b400" },
+  paca: { id: "paca", name: "SOFT VEST", reduction: 0.18, durability: 110, plate: "#4a4636", trim: "#6f6a4f" },
+  sixb23: { id: "sixb23", name: "RIOT PLATES", reduction: 0.3, durability: 190, plate: "#3f4a38", trim: "#6fd6ff" },
+  slick: { id: "slick", name: "PLATE CARRIER", reduction: 0.45, durability: 300, plate: "#26282b", trim: "#f0b400" },
 };
 
 export interface BackpackDef {
@@ -220,9 +220,9 @@ export interface BackpackDef {
 
 export const BACKPACKS: Record<string, BackpackDef> = {
   sling: { id: "sling", name: "SLING BAG", bonus: 0 },
-  scavpack: { id: "scavpack", name: "SCAV BACKPACK", bonus: 2 },
-  pilgrim: { id: "pilgrim", name: "PILGRIM", bonus: 4 },
-  trizip: { id: "trizip", name: "TRI-ZIP", bonus: 6 },
+  scavpack: { id: "scavpack", name: "SCAV SACK", bonus: 2 },
+  pilgrim: { id: "pilgrim", name: "ALPINIST PACK", bonus: 4 },
+  trizip: { id: "trizip", name: "RAID PACK", bonus: 6 },
 };
 
 export const BACKPACK_ORDER = ["sling", "scavpack", "pilgrim", "trizip"];
@@ -249,43 +249,43 @@ export interface Item extends ItemDef {
 
 export const ITEMS: ItemDef[] = [
   // weapons
-  { id: "w_toz", kind: "weapon", ref: "toz", name: "TOZ-106", rarity: "common", value: 70, desc: "Sawn-off scattergun: 5 pellets, tiny range.", price: 300 },
-  { id: "w_mp133", kind: "weapon", ref: "mp133", name: "MP-133 PUMP", rarity: "rare", value: 480, desc: "7-pellet spread, brutal up close, no reach.", price: 1700 },
-  { id: "w_adar", kind: "weapon", ref: "adar", name: "ADAR 2-15", rarity: "common", value: 260, desc: "More range and punch, slower cycle.", price: 900 },
-  { id: "w_ak74", kind: "weapon", ref: "ak74", name: "AK-74N", rarity: "rare", value: 420, desc: "Fast, loose, three mod slots.", price: 1500 },
-  { id: "w_pkm", kind: "weapon", ref: "pkm", name: "PKM", rarity: "rare", value: 520, desc: "Belt-fed spray. Terrible accuracy.", price: 2000 },
-  { id: "w_m4", kind: "weapon", ref: "m4", name: "M4A1", rarity: "rare", value: 640, desc: "Accurate, four mod slots.", price: 2600 },
-  { id: "w_sv98", kind: "weapon", ref: "sv98", name: "SV-98", rarity: "epic", value: 900, desc: "Huge range and damage, very slow.", price: 4200 },
-  { id: "w_m700", kind: "weapon", ref: "m700", name: "M700 SNIPER", rarity: "epic", value: 1150, desc: "105 dmg, huge range, very slow.", price: 5200 },
-  { id: "w_dvl10", kind: "weapon", ref: "dvl10", name: "DVL-10 SABOTEUR", rarity: "epic", value: 1500, desc: "150 dmg one-shot cannon, 4 mod slots.", price: 7200 },
-  { id: "w_m32", kind: "weapon", ref: "m32", name: "M32A1 MGL", rarity: "epic", value: 950, desc: "Frag rounds, area damage.", price: 4600 },
+  { id: "w_toz", kind: "weapon", ref: "toz", name: "BREAK-ACTION", rarity: "common", value: 70, desc: "Sawn-off scattergun: 5 pellets, tiny range.", price: 300 },
+  { id: "w_mp133", kind: "weapon", ref: "mp133", name: "PUMP 12", rarity: "rare", value: 480, desc: "7-pellet spread, brutal up close, no reach.", price: 1700 },
+  { id: "w_adar", kind: "weapon", ref: "adar", name: "SPORT CARBINE", rarity: "common", value: 260, desc: "More range and punch, slower cycle.", price: 900 },
+  { id: "w_ak74", kind: "weapon", ref: "ak74", name: "KALASH RIFLE", rarity: "rare", value: 420, desc: "Fast, loose, three mod slots.", price: 1500 },
+  { id: "w_pkm", kind: "weapon", ref: "pkm", name: "SQUAD LMG", rarity: "rare", value: 520, desc: "Belt-fed spray. Terrible accuracy.", price: 2000 },
+  { id: "w_m4", kind: "weapon", ref: "m4", name: "SERVICE CARBINE", rarity: "rare", value: 640, desc: "Accurate, four mod slots.", price: 2600 },
+  { id: "w_sv98", kind: "weapon", ref: "sv98", name: "BOLT RIFLE", rarity: "epic", value: 900, desc: "Huge range and damage, very slow.", price: 4200 },
+  { id: "w_m700", kind: "weapon", ref: "m700", name: "HUNTING BOLT", rarity: "epic", value: 1150, desc: "105 dmg, huge range, very slow.", price: 5200 },
+  { id: "w_dvl10", kind: "weapon", ref: "dvl10", name: "LONG RIFLE", rarity: "epic", value: 1500, desc: "150 dmg one-shot cannon, 4 mod slots.", price: 7200 },
+  { id: "w_m32", kind: "weapon", ref: "m32", name: "ROTARY GL", rarity: "epic", value: 950, desc: "Frag rounds, area damage.", price: 4600 },
   // attachments
-  { id: "a_grip", kind: "attachment", ref: "grip", name: "RK-3 FOREGRIP", rarity: "common", value: 110, desc: "+14% hit chance.", price: 450 },
+  { id: "a_grip", kind: "attachment", ref: "grip", name: "FOREGRIP", rarity: "common", value: 110, desc: "+14% hit chance.", price: 450 },
   { id: "a_brake", kind: "attachment", ref: "brake", name: "MUZZLE BRAKE", rarity: "common", value: 130, desc: "+10% hit chance, small ROF/range.", price: 500 },
-  { id: "a_optic", kind: "attachment", ref: "optic", name: "PSO-1 SCOPE", rarity: "rare", value: 240, desc: "+18% range, +12% hit chance.", price: 950 },
-  { id: "a_mag", kind: "attachment", ref: "mag", name: "60-RND MAG", rarity: "rare", value: 220, desc: "+28% rate of fire.", price: 900 },
+  { id: "a_optic", kind: "attachment", ref: "optic", name: "4x SCOPE", rarity: "rare", value: 240, desc: "+18% range, +12% hit chance.", price: 950 },
+  { id: "a_mag", kind: "attachment", ref: "mag", name: "DRUM MAG", rarity: "rare", value: 220, desc: "+28% rate of fire.", price: 900 },
   { id: "a_supp", kind: "attachment", ref: "supp", name: "SUPPRESSOR", rarity: "rare", value: 300, desc: "+12% damage, +6% range, +7% hit chance.", price: 1200 },
-  { id: "a_laser", kind: "attachment", ref: "laser", name: "TACTICAL LASER", rarity: "rare", value: 260, desc: "+13% hit chance, +8% ROF.", price: 1000 },
-  { id: "a_m995", kind: "attachment", ref: "m995", name: "M995 AMMO", rarity: "epic", value: 420, desc: "+6 armor pen, +10% damage.", price: 1800 },
-  { id: "a_thermal", kind: "attachment", ref: "thermal", name: "T-7 THERMAL", rarity: "epic", value: 560, desc: "+30% range, +20% hit chance.", price: 2400 },
-  // body armor — only your PMC can wear it
-  { id: "ar_paca", kind: "armor", ref: "paca", name: "PACA SOFT ARMOR", rarity: "common", value: 220, desc: "-18% incoming, 110 durability.", price: 700 },
-  { id: "ar_6b23", kind: "armor", ref: "sixb23", name: "6B23 ARMOR", rarity: "rare", value: 480, desc: "-30% incoming, 190 durability.", price: 1600 },
-  { id: "ar_slick", kind: "armor", ref: "slick", name: "SLICK PLATE CARRIER", rarity: "epic", value: 820, desc: "-45% incoming, 300 durability.", price: 3800 },
+  { id: "a_laser", kind: "attachment", ref: "laser", name: "TAC LASER", rarity: "rare", value: 260, desc: "+13% hit chance, +8% ROF.", price: 1000 },
+  { id: "a_m995", kind: "attachment", ref: "m995", name: "AP ROUNDS", rarity: "epic", value: 420, desc: "+6 armor pen, +10% damage.", price: 1800 },
+  { id: "a_thermal", kind: "attachment", ref: "thermal", name: "THERMAL SIGHT", rarity: "epic", value: 560, desc: "+30% range, +20% hit chance.", price: 2400 },
+  // body armor — only your operator can wear it
+  { id: "ar_paca", kind: "armor", ref: "paca", name: "SOFT VEST", rarity: "common", value: 220, desc: "-18% incoming, 110 durability.", price: 700 },
+  { id: "ar_6b23", kind: "armor", ref: "sixb23", name: "RIOT PLATES", rarity: "rare", value: 480, desc: "-30% incoming, 190 durability.", price: 1600 },
+  { id: "ar_slick", kind: "armor", ref: "slick", name: "PLATE CARRIER", rarity: "epic", value: 820, desc: "-45% incoming, 300 durability.", price: 3800 },
   // meds
 
-  { id: "m_ifak", kind: "meds", name: "IFAK", rarity: "common", value: 80, heal: 45, desc: "Heals an operator for 45 HP.", price: 260 },
-  { id: "m_salewa", kind: "meds", name: "SALEWA", rarity: "common", value: 140, heal: 90, desc: "Heals an operator for 90 HP.", price: 420 },
-  { id: "m_grizzly", kind: "meds", name: "GRIZZLY", rarity: "rare", value: 280, heal: 220, desc: "Full trauma kit — 220 HP.", price: 850 },
+  { id: "m_ifak", kind: "meds", name: "POCKET KIT", rarity: "common", value: 80, heal: 45, desc: "Heals an operator for 45 HP.", price: 260 },
+  { id: "m_salewa", kind: "meds", name: "TRAUMA BAG", rarity: "common", value: 140, heal: 90, desc: "Heals an operator for 90 HP.", price: 420 },
+  { id: "m_grizzly", kind: "meds", name: "SURGEON KIT", rarity: "rare", value: 280, heal: 220, desc: "Full trauma kit — 220 HP.", price: 850 },
   // valuables
   { id: "v_bolts", kind: "valuable", name: "BOLTS", rarity: "common", value: 60, desc: "Pure sell value." },
   { id: "v_gpu", kind: "valuable", name: "GRAPHICS CARD", rarity: "rare", value: 520, desc: "Pure sell value." },
-  { id: "v_ledx", kind: "valuable", name: "LEDX", rarity: "epic", value: 700, desc: "Pure sell value." },
-  { id: "v_btc", kind: "valuable", name: "0.2 BTC", rarity: "epic", value: 900, desc: "Pure sell value." },
+  { id: "v_ledx", kind: "valuable", name: "MED BOARD", rarity: "epic", value: 700, desc: "Pure sell value." },
+  { id: "v_btc", kind: "valuable", name: "COIN STASH", rarity: "epic", value: 900, desc: "Pure sell value." },
   // backpacks — shop only, buying one upgrades your rig permanently
-  { id: "bp_scav", kind: "backpack", ref: "scavpack", name: "SCAV BACKPACK", rarity: "common", value: 300, desc: "+2 raid backpack slots.", price: 900 },
-  { id: "bp_pilgrim", kind: "backpack", ref: "pilgrim", name: "PILGRIM", rarity: "rare", value: 900, desc: "+4 raid backpack slots.", price: 2600 },
-  { id: "bp_trizip", kind: "backpack", ref: "trizip", name: "TRI-ZIP", rarity: "epic", value: 1600, desc: "+6 raid backpack slots.", price: 5200 },
+  { id: "bp_scav", kind: "backpack", ref: "scavpack", name: "SCAV SACK", rarity: "common", value: 300, desc: "+2 raid backpack slots.", price: 900 },
+  { id: "bp_pilgrim", kind: "backpack", ref: "pilgrim", name: "ALPINIST PACK", rarity: "rare", value: 900, desc: "+4 raid backpack slots.", price: 2600 },
+  { id: "bp_trizip", kind: "backpack", ref: "trizip", name: "RAID PACK", rarity: "epic", value: 1600, desc: "+6 raid backpack slots.", price: 5200 },
 ];
 
 

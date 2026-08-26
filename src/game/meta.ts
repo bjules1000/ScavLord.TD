@@ -27,7 +27,7 @@ export interface SkillDef {
 
 /** Permanent perks bought with skill points earned from quests. */
 export const SKILLS: SkillDef[] = [
-  { id: "charisma", name: "CHARISMA", cost: 1, desc: "Flea prices -10%, sell value +10%." },
+  { id: "charisma", name: "CHARISMA", cost: 1, desc: "Black market prices -10%, sell value +10%." },
   { id: "mule", name: "MULE", cost: 1, desc: "+2 backpack slots in raid." },
   { id: "commando", name: "COMMANDO", cost: 2, desc: "+2 raid loadout slots." },
   { id: "happy_camper", name: "HAPPY CAMPER", cost: 1, desc: "+40% roubles when scrapping loot in raid." },
@@ -69,7 +69,7 @@ export const QUESTS: QuestDef[] = [
     id: "debut",
     skillPoints: 1,
     reward: 800,
-    name: "DEBUT",
+    name: "FIRST BLOOD",
     desc: "Kill 25 scavs.",
     unlocks: ["w_adar", "a_grip", "m_ifak", "ar_paca"],
     done: (q) => q.scavKills >= 25,
@@ -79,7 +79,7 @@ export const QUESTS: QuestDef[] = [
     id: "checkpoint",
     skillPoints: 1,
     reward: 1500,
-    name: "CHECKPOINT",
+    name: "HOLD THE LINE",
     desc: "Reach wave 5 in a single raid.",
     unlocks: ["a_optic", "a_brake", "m_salewa"],
     done: (q) => q.bestWave >= 5,
@@ -89,7 +89,7 @@ export const QUESTS: QuestDef[] = [
     id: "supplier",
     skillPoints: 1,
     reward: 2000,
-    name: "SUPPLIER",
+    name: "WALK OUT",
     desc: "Extract once with loot.",
     unlocks: ["w_ak74", "a_mag", "a_laser"],
     done: (q) => q.extracts >= 1,
@@ -99,7 +99,7 @@ export const QUESTS: QuestDef[] = [
     id: "gunsmith",
     skillPoints: 2,
     reward: 3500,
-    name: "GUNSMITH",
+    name: "ARMORY RUN",
     desc: "Extract 3 times.",
     unlocks: ["w_pkm", "w_m4", "a_supp", "m_grizzly", "ar_6b23"],
     done: (q) => q.extracts >= 3,
@@ -109,7 +109,7 @@ export const QUESTS: QuestDef[] = [
     id: "shooters_gallery",
     skillPoints: 1,
     reward: 2500,
-    name: "SHOOTERS GALLERY",
+    name: "DEEP RAID",
     desc: "Reach wave 8 in a single raid.",
     unlocks: ["w_mp133", "a_brake"],
     done: (q) => q.bestWave >= 8,
@@ -119,8 +119,8 @@ export const QUESTS: QuestDef[] = [
     id: "bounty",
     skillPoints: 3,
     reward: 6000,
-    name: "BOUNTY",
-    desc: "Kill Reshala.",
+    name: "CROWN KILL",
+    desc: "Kill the Enforcer.",
     unlocks: ["w_sv98", "w_m32", "a_m995", "a_thermal", "ar_slick"],
     done: (q) => q.bossKills >= 1,
     progress: (q) => `${Math.min(1, q.bossKills)}/1`,
@@ -129,8 +129,8 @@ export const QUESTS: QuestDef[] = [
     id: "long_range",
     skillPoints: 3,
     reward: 9000,
-    name: "LONG RANGE",
-    desc: "Kill 2 bosses and extract 6 times.",
+    name: "BLOOD CONTRACT",
+    desc: "Kill 2 Enforcers and extract 6 times.",
     unlocks: ["w_m700", "w_dvl10", "a_thermal"],
     done: (q) => q.bossKills >= 2 && q.extracts >= 6,
     progress: (q) => `${Math.min(2, q.bossKills)}/2 · ${Math.min(6, q.extracts)}/6`,
@@ -143,14 +143,14 @@ export interface DebuffDef {
   desc: string;
 }
 
-/** Permanent scars your PMC picks up as he levels. They never go away while he lives. */
+/** Permanent scars your operator picks up as they level. They never go away while they live. */
 export const DEBUFFS: DebuffDef[] = [
-  { id: "old_wound", name: "OLD WOUND", desc: "-12% max health on your PMC." },
-  { id: "shaky_hands", name: "SHAKY HANDS", desc: "-6% hit chance on your PMC." },
+  { id: "old_wound", name: "OLD WOUND", desc: "-12% max health on your operator." },
+  { id: "shaky_hands", name: "SHAKY HANDS", desc: "-6% hit chance on your operator." },
   { id: "bad_knee", name: "BAD KNEE", desc: "Repositioning costs a longer firing pause." },
   { id: "notoriety", name: "NOTORIETY", desc: "+10% enemy health region-wide." },
-  { id: "blacklisted", name: "BLACKLISTED", desc: "-15% raid start roubles." },
-  { id: "heavy_breath", name: "HEAVY BREATHER", desc: "-8% rate of fire on your PMC." },
+  { id: "blacklisted", name: "BLACKLISTED", desc: "-15% raid start funds." },
+  { id: "heavy_breath", name: "HEAVY BREATHER", desc: "-8% rate of fire on your operator." },
 ];
 
 export const DEBUFF_BY_ID: Record<string, DebuffDef> = Object.fromEntries(
@@ -170,7 +170,7 @@ export interface PmcState {
 
 export function freshPmc(): PmcState {
   return {
-    name: "BEAR-01",
+    name: "ASH-01",
     level: 1,
     xp: 0,
     debuffs: [],
@@ -184,7 +184,7 @@ export function freshPmc(): PmcState {
 export const xpForLevel = (level: number) => 140 + (level - 1) * 120;
 export const XP_PER_LEVEL = xpForLevel;
 
-/** Every level-up marks the PMC. Returns null once he has collected them all. */
+/** Every level-up marks the operator. Returns null once they have collected them all. */
 export function rollDebuff(current: string[]): DebuffDef | null {
   const pool = DEBUFFS.filter((d) => !current.includes(d.id));
   if (!pool.length) return null;
@@ -240,7 +240,7 @@ export function loadMeta(): Meta {
       },
       runs: Number(p.runs) || 0,
       pmc: {
-        name: p.pmc?.name || base.name,
+        name: p.pmc?.name && p.pmc.name !== "BEAR-01" ? p.pmc.name : base.name,
         level: Math.max(1, Number(p.pmc?.level) || 1),
         xp: Math.max(0, Number(p.pmc?.xp) || 0),
         debuffs: Array.isArray(p.pmc?.debuffs)
