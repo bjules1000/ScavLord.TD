@@ -54,6 +54,16 @@ import {
   drawTower,
 } from "./draw";
 import type { Bullet, Enemy, EnemyKind, FloatText, Particle, Tower } from "./types";
+import {
+  applyHit,
+  applyWireDamage,
+  creditKillBook,
+  isSettledOut,
+  leakIfAlive,
+  settleRemovedEnemies,
+  type KillBook,
+} from "./combat";
+import { settleHaul } from "./extract";
 
 const W = COLS * TILE;
 const H = ROWS * TILE;
@@ -264,7 +274,7 @@ const attachItemId = (attId: string) =>
 const armorItemId = (armorId: string) =>
   ITEMS.find((i) => i.kind === "armor" && i.ref === armorId)?.id ?? null;
 
-/** Where the player's PMC sets up when the raid starts: safest tile nearest the road head. */
+/** Where the player's operator sets up when the raid starts: safest tile nearest the road head. */
 function pmcSpawnTile(map: GameMap, s: GameState) {
   const [sx, sy] = map.PIX[0]!;
   let best: { tx: number; ty: number; score: number } | null = null;
@@ -297,6 +307,10 @@ export default function TarkovTD() {
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
   const [choices, setChoices] = useState<Item[]>([]);
+  const [pendingLoot, setPendingLoot] = useState<Item | null>(null);
+  const [swapUid, setSwapUid] = useState<number | null>(null);
+  const [sellValuableUids, setSellValuableUids] = useState<Set<number>>(() => new Set());
+  const [leaveUids, setLeaveUids] = useState<Set<number>>(() => new Set());
   const [loadout, setLoadout] = useState<Item[]>([]);
   const [stash, setStash] = useState<Item[]>(() => {
     const m = loadMeta();
@@ -388,11 +402,15 @@ export default function TarkovTD() {
     });
     gs.current = s;
     setChoices([]);
+    setPendingLoot(null);
+    setSwapUid(null);
+    setSellValuableUids(new Set());
+    setLeaveUids(new Set());
     setLoadout([]);
     setScreen("hideout");
     persist(stash, []);
     setLog([
-      `${m.pmc.name} inserted at ${mapRef.current.def.name}. Keep him alive — if he dies, the run is over for good.`,
+      `${m.pmc.name} inserted at ${mapRef.current.def.name}. Keep them alive — if they die, the run is over for good.`,
     ]);
     rerender();
   }, [loadout, persist, rerender, stash]);
@@ -401,18 +419,24 @@ export default function TarkovTD() {
     (keepBackpack: boolean) => {
       const s = gs.current;
       const m = metaRef.current;
-      m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
-      m.quests.scavKills += s.scavKills;
-      m.quests.bossKills += s.bossKills;
       let next = [...stash];
       if (keepBackpack) {
         const haul = [...s.backpack, ...s.recovered];
-        const kept = haul.filter((i) => i.kind !== "valuable");
-        const sold = haul.filter((i) => i.kind === "valuable").reduce((a, i) => a + i.value, 0);
-        m.bank += sold;
-        next = [...next, ...kept].slice(0, stashSlots);
+        const settled = settleHaul(stash, haul, sellValuableUids, stashSlots, leaveUids);
+        if (!settled.ok) {
+          pushLog(
+            `STASH FULL — ${settled.keptCount} recovered item(s), ${settled.room} free slot(s). Sell or leave items first.`,
+          );
+          rerender();
+          return;
+        }
+        m.bank += settled.soldValue;
+        next = settled.next;
       }
-      // PMC bookkeeping: he keeps his kit when he walks out, loses everything when he doesn't
+      m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
+      m.quests.scavKills += s.scavKills;
+      m.quests.bossKills += s.bossKills;
+      // Operator bookkeeping: they keep kit on extract, lose it on death / wipe
       const pmc = s.towers.find((t) => t.pmc);
       if (s.pmcDown) {
         const deaths = m.pmc.deaths + 1;
@@ -430,10 +454,15 @@ export default function TarkovTD() {
       saveMeta(m);
       gs.current = freshState([], "hideout", mapRef.current);
       setLoadout([]);
+      setChoices([]);
+      setPendingLoot(null);
+      setSwapUid(null);
+      setSellValuableUids(new Set());
+      setLeaveUids(new Set());
       setScreen("hideout");
       rerender();
     },
-    [rerender, stash, stashSlots],
+    [leaveUids, pushLog, rerender, sellValuableUids, stash, stashSlots],
   );
 
 
@@ -479,7 +508,7 @@ export default function TarkovTD() {
       m.bank += paid;
       m.stash = [...next, ...loadout].map((i) => ({ defId: i.id }));
       saveMeta(m);
-      pushLog(`Sold ${item.name} to the flea for ${paid}₽ (bank).`);
+      pushLog(`Sold ${item.name} on the black market for ${paid}₽ (bank).`);
       rerender();
     },
     [loadout, pushLog, rerender, stash],
@@ -526,7 +555,7 @@ export default function TarkovTD() {
       m.skillPoints += q.skillPoints ?? 0;
       saveMeta(m);
       pushLog(
-        `${q.name} redeemed: +${q.reward}₽${q.skillPoints ? `, +${q.skillPoints} skill point(s)` : ""} and new flea stock.`,
+        `${q.name} redeemed: +${q.reward}₽${q.skillPoints ? `, +${q.skillPoints} skill point(s)` : ""} and new market stock.`,
       );
       rerender();
     },
@@ -560,7 +589,7 @@ export default function TarkovTD() {
     [loadout, persist, stash],
   );
 
-  /* ---------------- PMC equipment (hideout) ---------------- */
+  /* ---------------- operator equipment (hideout) ---------------- */
 
   const pmcSlots = () => WEAPONS[metaRef.current.pmc.weapon]?.slots ?? 1;
 
@@ -590,7 +619,7 @@ export default function TarkovTD() {
         if (oldId) back.push(makeItem(oldId, newUid())!);
         m.pmc.armor = item.ref;
       } else {
-        return pushLog("Your PMC can only wear guns, mods and armor.");
+        return pushLog("Your operator can only wear guns, mods and armor.");
       }
       ns = [...ns, ...back].slice(0, stashSlots);
       setStash(ns);
@@ -607,7 +636,7 @@ export default function TarkovTD() {
       const m = metaRef.current;
       let defId: string | null = null;
       if (slot === "weapon") {
-        if (m.pmc.weapon === "toz") return pushLog("He keeps his TOZ as a fallback.");
+        if (m.pmc.weapon === "toz") return pushLog("They keep a break-action as a fallback.");
         defId = weaponItemId(m.pmc.weapon);
         m.pmc.weapon = "toz";
         const slots = WEAPONS["toz"]!.slots;
@@ -683,7 +712,7 @@ export default function TarkovTD() {
         s.backpack = s.backpack.filter((i) => i.uid !== uid);
         pushLog(`${item.name} installed.`);
       } else if (item.kind === "armor" && item.ref) {
-        if (!tower.pmc) return pushLog("Only your own PMC can strap on body armor.");
+        if (!tower.pmc) return pushLog("Only your own operator can strap on body armor.");
         const def = ARMORS[item.ref];
         if (!def) return;
         const old = tower.armor ? armorItemId(tower.armor) : null;
@@ -731,23 +760,19 @@ export default function TarkovTD() {
 
     const hurtEnemy = (e: Enemy, amount: number, pen: number) => {
       const def = ENEMIES[e.kind];
-      const armor = Math.max(0, def.armor - pen);
-      const dealt = Math.max(1, amount - armor);
-      e.hp -= dealt;
+      const dealt = applyHit(e, amount, def.armor, pen);
       e.hitFlash = 0.07;
       return dealt;
     };
 
     const killEnemy = (e: Enemy, s: GameState) => {
       const def = ENEMIES[e.kind];
+      const book: KillBook = s;
+      const xp = creditKillBook(e.kind, def.bounty, book);
       const money = def.bounty;
-      s.roubles += money;
-      s.killed += 1;
-      if (e.kind === "boss") s.bossKills += 1;
-      else s.scavKills += 1;
       const pmc = s.towers.find((t) => t.pmc);
       if (pmc) {
-        pmc.xp = (pmc.xp ?? 0) + (e.kind === "boss" ? 120 : 14);
+        pmc.xp = (pmc.xp ?? 0) + xp;
         const need = XP_PER_LEVEL(pmc.level ?? 1);
         if (pmc.xp >= need) {
           pmc.xp -= need;
@@ -762,7 +787,7 @@ export default function TarkovTD() {
             s.floats.push({ x: pmc.tx * TILE + TILE / 2, y: pmc.ty * TILE - 24, life: 2, text: scar.name, color: "#ff5a3c" });
             pushLog(`LEVEL ${pmc.level}. New scar: ${scar.name} — ${scar.desc}`);
           } else {
-            pushLog(`LEVEL ${pmc.level}. Your PMC is tougher.`);
+            pushLog(`LEVEL ${pmc.level}. Your operator is tougher.`);
           }
           s.floats.push({ x: pmc.tx * TILE + TILE / 2, y: pmc.ty * TILE - 8, life: 1.6, text: `LVL ${pmc.level}`, color: "#f0b400" });
         }
@@ -771,6 +796,12 @@ export default function TarkovTD() {
       spawnParticles(e.x, e.y, def.body, e.kind === "boss" ? 40 : 10, e.kind === "boss" ? 140 : 70);
       spawnParticles(e.x, e.y, "#8c2f2f", 6, 50);
       if (e.kind === "boss") s.shake = 12;
+    };
+
+    const paySettledKills = (s: GameState) => {
+      const settled = settleRemovedEnemies(s.enemies);
+      s.enemies = settled.survivors;
+      for (const e of settled.kills) killEnemy(e, s);
     };
 
 
@@ -817,14 +848,17 @@ export default function TarkovTD() {
           fireCd: 600 + Math.random() * 900,
           aim: 0,
           muzzle: 0,
+          leaked: false,
+          counted: false,
         });
       }
 
-      // enemies
+      // enemies — corpses do not walk, leak, or fight
       for (const e of s.enemies) {
         const def = ENEMIES[e.kind];
         e.hitFlash = Math.max(0, e.hitFlash - dt);
         e.slow = Math.max(0, e.slow - dt);
+        if (isSettledOut(e)) continue;
         const sp = def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? 0.45 : 1);
         let move = sp * dt;
         while (move > 0 && e.seg < mapRef.current.SEG_LEN.length) {
@@ -841,16 +875,17 @@ export default function TarkovTD() {
         }
         e.step += sp * dt * 0.25;
         if (e.seg >= mapRef.current.SEG_LEN.length) {
-          e.hp = -1;
-          s.lives -= def.damage;
-          s.shake = 8;
-          s.floats.push({
-            x: mapRef.current.PIX[mapRef.current.PIX.length - 1]![0],
-            y: mapRef.current.PIX[mapRef.current.PIX.length - 1]![1] - 16,
-            life: 1,
-            text: `-${def.damage} HP`,
-            color: "#ff5a3c",
-          });
+          if (leakIfAlive(e)) {
+            s.lives -= def.damage;
+            s.shake = 8;
+            s.floats.push({
+              x: mapRef.current.PIX[mapRef.current.PIX.length - 1]![0],
+              y: mapRef.current.PIX[mapRef.current.PIX.length - 1]![1] - 16,
+              life: 1,
+              text: `-${def.damage} HP`,
+              color: "#ff5a3c",
+            });
+          }
           continue;
         }
         const [x, y] = pathPoint(mapRef.current, e.seg, e.t);
@@ -865,9 +900,10 @@ export default function TarkovTD() {
         if (wire) {
           e.slow = 0.8;
           wire.hp -= dt * 9;
-          e.hp -= dt * 3;
+          applyWireDamage(e, dt * 3);
           if (Math.random() < dt * 3) spawnParticles(e.x, e.y, "#9a9484", 1, 25);
         }
+        if (isSettledOut(e)) continue;
 
         e.muzzle = Math.max(0, e.muzzle - dt);
         e.fireCd -= dt * 1000;
@@ -913,15 +949,8 @@ export default function TarkovTD() {
         }
       }
 
-      const survivors: Enemy[] = [];
-      for (const e of s.enemies) {
-        if (e.hp <= 0) {
-          if (e.hp > -1) killEnemy(e, s);
-        } else survivors.push(e);
-      }
-      s.enemies = survivors;
-
       if (s.lives <= 0) {
+        paySettledKills(s);
         s.lives = 0;
         s.phase = "dead";
         rerender();
@@ -963,6 +992,7 @@ export default function TarkovTD() {
         let best: Enemy | null = null;
         let bestProg = -1;
         for (const e of s.enemies) {
+          if (isSettledOut(e)) continue;
           const d = Math.hypot(e.x - cx, e.y - cy);
           if (d > st.range) continue;
           const prog = e.seg + e.t;
@@ -1061,7 +1091,8 @@ export default function TarkovTD() {
                     s.shake = 16;
                     spawnParticles(b.tx, b.ty, "#ff3c3c", 40, 150);
                     s.towers = s.towers.filter((t) => t.id !== tw.id);
-                    pushLog(`${metaRef.current.pmc.name} is dead. Everything he carried is gone.`);
+                    pushLog(`${metaRef.current.pmc.name} is dead. Everything they carried is gone.`);
+                    paySettledKills(s);
                     rerender();
                     return;
                   }
@@ -1087,7 +1118,9 @@ export default function TarkovTD() {
           continue;
         }
         if (b.pellet && !b.miss) {
-          const hit = s.enemies.find((e) => Math.hypot(e.x - b.x, e.y - b.y) < TILE * 0.36);
+          const hit = s.enemies.find(
+            (e) => !isSettledOut(e) && Math.hypot(e.x - b.x, e.y - b.y) < TILE * 0.36,
+          );
           if (hit) {
             hurtEnemy(hit, b.damage, b.pen ?? 0);
             spawnParticles(hit.x, hit.y, "#c94b3a", 3, 50);
@@ -1126,6 +1159,7 @@ export default function TarkovTD() {
         liveBullets.push(b);
       }
       s.bullets = liveBullets;
+      paySettledKills(s);
 
       for (const o of s.obstacles) {
         if (o.hp <= 0) {
@@ -1155,6 +1189,8 @@ export default function TarkovTD() {
         const found = rollChoices(s.wave, s.nextId, mapRef.current.def.lootMult);
         s.nextId += 3;
         setChoices(found.map((f) => ({ ...f, uid: newUid() })));
+        setPendingLoot(null);
+        setSwapUid(null);
         pushLog(`Wave ${s.wave} cleared. Pick your find.`);
         rerender();
       }
@@ -1381,7 +1417,7 @@ export default function TarkovTD() {
         hurt: 0,
       });
       s.place = null;
-      pushLog("Operator hired with a stock TOZ-106. Find him a better gun.");
+      pushLog("Operator hired with a stock break-action. Find them a better gun.");
       rerender();
       return;
     }
@@ -1465,11 +1501,53 @@ export default function TarkovTD() {
 
 
   const takeChoice = (item: Item) => {
-    addToBackpack([item]);
+    const cap = backpackSlots();
+    if (gs.current.backpack.length >= cap) {
+      setPendingLoot(item);
+      setSwapUid(null);
+      pushLog("BACKPACK FULL — swap one item out, or cancel.");
+      rerender();
+      return;
+    }
+    gs.current.backpack.push(item);
+    setPendingLoot(null);
+    setSwapUid(null);
     setChoices([]);
     gs.current.phase = "prep";
     pushLog(`Secured ${item.name}.`);
     rerender();
+  };
+
+  const confirmLootSwap = () => {
+    if (!pendingLoot || swapUid == null) return;
+    const pack = gs.current.backpack;
+    const idx = pack.findIndex((i) => i.uid === swapUid);
+    if (idx < 0) return;
+    const dropped = pack[idx]!;
+    pack.splice(idx, 1);
+    pack.push(pendingLoot);
+    pushLog(`Secured ${pendingLoot.name}. Left ${dropped.name} behind.`);
+    setPendingLoot(null);
+    setSwapUid(null);
+    setChoices([]);
+    gs.current.phase = "prep";
+    rerender();
+  };
+
+  const cancelLootSwap = () => {
+    setPendingLoot(null);
+    setSwapUid(null);
+    pushLog("Reward not taken. Backpack unchanged.");
+    rerender();
+  };
+
+  const toggleUidSet = (uid: number, setter: (fn: (cur: Set<number>) => Set<number>) => void) => {
+    setter((cur) => {
+      const next = new Set(cur);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
   };
 
   const doExtract = () => {
@@ -1490,9 +1568,11 @@ export default function TarkovTD() {
       0,
     );
     s.payout = value;
+    setSellValuableUids(new Set());
+    setLeaveUids(new Set());
     metaRef.current.quests.extracts += 1;
     s.phase = "extracted";
-    pushLog(`Extracted with ${s.backpack.length + carried.length} item(s).`);
+    pushLog(`Extracted with ${s.backpack.length + carried.length} item(s). Decide what to keep.`);
     rerender();
   };
 
@@ -1525,6 +1605,13 @@ export default function TarkovTD() {
   };
 
   const inRaid = s.phase !== "hideout";
+  const extractHaul = [...s.backpack, ...s.recovered];
+  const extractValuables = extractHaul.filter((i) => i.kind === "valuable");
+  const extractGear = extractHaul.filter((i) => i.kind !== "valuable");
+  const extractPreview = settleHaul(stash, extractHaul, sellValuableUids, stashSlots, leaveUids);
+  const extractSoldPreview = extractValuables
+    .filter((i) => sellValuableUids.has(i.uid) && !leaveUids.has(i.uid))
+    .reduce((a, i) => a + i.value, 0);
 
   return (
     <div className="min-h-[100dvh] bg-background text-foreground">
@@ -1536,12 +1623,12 @@ export default function TarkovTD() {
               {mapRef.current.def.name}
             </h1>
             <p className="mt-1 hidden font-mono text-xs uppercase tracking-widest text-muted-foreground sm:block td-hide-short">
-              8-bit tarkov tower defense roguelike · loot, mod, extract
+              8-bit extraction tower defense · loot, kit, extract
             </p>
           </div>
           <div className="flex flex-wrap justify-end gap-1 font-mono text-[10px] sm:gap-2 sm:text-xs">
-            <Stat label="ROUBLES" value={`${s.roubles.toLocaleString()}₽`} tone="gold" />
-            <Stat label="BANK" value={`${meta.bank.toLocaleString()}₽`} tone="gold" />
+            <Stat label="SCRIP" value={s.roubles.toLocaleString()} tone="gold" />
+            <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
             <Stat label="HEALTH" value={`${s.lives}/${START_LIVES}`} tone={s.lives < 7 ? "bad" : "good"} />
             <Stat label="WAVE" value={`${s.wave}`} />
             <Stat label="KILLS" value={`${s.killed}`} />
@@ -1624,7 +1711,7 @@ export default function TarkovTD() {
 
               {s.phase === "hideout" && screen === "gear" && (
                 <Overlay
-                  title="PMC EQUIPMENT"
+                  title="OPERATOR KIT"
                   subtitle={`${meta.pmc.name} · click stash gear to fit it, click a slot to strip it — die in raid and this kit is gone`}
                 >
                   <div className="grid gap-3 text-left sm:grid-cols-2">
@@ -1636,7 +1723,7 @@ export default function TarkovTD() {
                           className="pixel-card text-left hover:-translate-y-[2px]"
                         >
                           <div className="text-muted-foreground">PRIMARY</div>
-                          <div className="text-primary">{WEAPONS[meta.pmc.weapon]?.name ?? "TOZ-106"}</div>
+                          <div className="text-primary">{WEAPONS[meta.pmc.weapon]?.name ?? "BREAK-ACTION"}</div>
                         </button>
                         <button
                           onClick={() => unequipPmc("armor")}
@@ -1697,7 +1784,7 @@ export default function TarkovTD() {
               )}
 
               {s.phase === "hideout" && screen === "hideout" && (
-                <Overlay title="HIDEOUT" subtitle={`Run #${meta.runs + 1} — kit your PMC, then deploy`}>
+                <Overlay title="HIDEOUT" subtitle={`Run #${meta.runs + 1} — kit your operator, then deploy`}>
                   <div className="grid gap-3 text-left sm:grid-cols-2">
                     <div className="pixel-card sm:col-span-2 flex flex-wrap items-center justify-between gap-3">
                       <div className="font-mono text-[10px]">
@@ -1709,7 +1796,7 @@ export default function TarkovTD() {
                         </div>
                         <div className="text-muted-foreground">
                           XP {meta.pmc.xp}/{xpForLevel(meta.pmc.level)} · Deaths {meta.pmc.deaths} ·{" "}
-                          {WEAPONS[meta.pmc.weapon]?.name ?? "TOZ-106"}
+                          {WEAPONS[meta.pmc.weapon]?.name ?? "BREAK-ACTION"}
                           {meta.pmc.armor ? ` · ${ARMORS[meta.pmc.armor]?.name}` : " · NO ARMOR"}
                         </div>
                         <div className="mt-1 flex flex-wrap gap-1">
@@ -1730,7 +1817,7 @@ export default function TarkovTD() {
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <button onClick={() => setScreen("gear")} className="pixel-btn">
-                          EQUIP PMC
+                          EQUIP KIT
                         </button>
                         <button onClick={() => setScreen("skills")} className="pixel-btn">
                           SKILLS · {meta.skillPoints} PT
@@ -1812,7 +1899,7 @@ export default function TarkovTD() {
 
                     <div className="pixel-card max-h-[240px] overflow-auto">
                       <div className="font-display text-[10px] text-primary">
-                        FLEA MARKET · {meta.bank.toLocaleString()}₽
+                        BLACK MARKET · {meta.bank.toLocaleString()}₽
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1">
                         {(["weapon", "attachment", "armor", "backpack", "meds"] as const).map((t) => (
@@ -1915,37 +2002,200 @@ export default function TarkovTD() {
 
 
               {s.phase === "loot" && (
-                <Overlay title="LOOT FOUND" subtitle={`Wave ${s.wave} cleared — take one`}>
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    {choices.map((c) => (
-                      <button
-                        key={c.uid}
-                        onClick={() => takeChoice(c)}
-                        className="pixel-card text-left transition-transform hover:-translate-y-1"
-                      >
-                        <div className="font-display text-[10px]" style={{ color: RARITY_COLOR[c.rarity] }}>
-                          {c.name}
+                <Overlay
+                  title={pendingLoot ? "BACKPACK FULL" : "LOOT FOUND"}
+                  subtitle={
+                    pendingLoot
+                      ? `No free slots (${s.backpack.length}/${backpackSlots()}). Choose an item to replace, or cancel.`
+                      : `Wave ${s.wave} cleared — take one · BACKPACK ${s.backpack.length}/${backpackSlots()}${
+                          s.backpack.length >= backpackSlots() ? " FULL" : ""
+                        }`
+                  }
+                >
+                  {pendingLoot ? (
+                    <div className="space-y-3 text-left">
+                      <div className="pixel-card">
+                        <div className="font-mono text-[9px] uppercase text-muted-foreground">Selected reward</div>
+                        <div className="font-display text-[11px]" style={{ color: RARITY_COLOR[pendingLoot.rarity] }}>
+                          {pendingLoot.name}
                         </div>
-                        <div className="mt-1 font-mono text-[9px] uppercase text-muted-foreground">
-                          {c.kind}
-                        </div>
-                        <div className="mt-2 font-mono text-[11px] leading-snug text-muted-foreground">
-                          {c.desc}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                        <div className="mt-1 font-mono text-[10px] text-muted-foreground">{pendingLoot.desc}</div>
+                      </div>
+                      <div className="font-mono text-[9px] uppercase text-muted-foreground">
+                        Current backpack — pick one to discard
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {s.backpack.map((item) => (
+                          <button
+                            key={item.uid}
+                            onClick={() => setSwapUid(item.uid)}
+                            className={`pixel-card text-left ${swapUid === item.uid ? "ring-2 ring-primary" : ""}`}
+                          >
+                            <div className="font-display text-[10px]" style={{ color: RARITY_COLOR[item.rarity] }}>
+                              {item.name}
+                            </div>
+                            <div className="mt-1 font-mono text-[9px] uppercase text-muted-foreground">{item.kind}</div>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <button
+                          onClick={confirmLootSwap}
+                          disabled={swapUid == null}
+                          className="pixel-btn pixel-btn-primary disabled:opacity-40"
+                        >
+                          CONFIRM SWAP
+                        </button>
+                        <button onClick={cancelLootSwap} className="pixel-btn">
+                          CANCEL
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      {choices.map((c) => (
+                        <button
+                          key={c.uid}
+                          onClick={() => takeChoice(c)}
+                          className="pixel-card text-left transition-transform hover:-translate-y-1"
+                        >
+                          <div className="font-display text-[10px]" style={{ color: RARITY_COLOR[c.rarity] }}>
+                            {c.name}
+                          </div>
+                          <div className="mt-1 font-mono text-[9px] uppercase text-muted-foreground">
+                            {c.kind}
+                          </div>
+                          <div className="mt-2 font-mono text-[11px] leading-snug text-muted-foreground">
+                            {c.desc}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </Overlay>
               )}
 
               {s.phase === "extracted" && (
                 <Overlay
-                  title="EXTRACTED"
-                  subtitle={`Out on wave ${s.wave}. ${s.backpack.length + s.recovered.length} item(s) hauled out, valuables sold for ${s.payout.toLocaleString()}₽.`}
+                  title="RAID EXTRACTED"
+                  subtitle={`Out on wave ${s.wave}. Recovered ${extractHaul.length} item(s). Valuables default to KEEP.`}
                 >
-                  <button onClick={() => toHideout(true)} className="pixel-btn pixel-btn-primary">
-                    BACK TO HIDEOUT
-                  </button>
+                  <div className="space-y-3 text-left">
+                    <div className="pixel-card">
+                      <div className="font-mono text-[9px] uppercase text-muted-foreground">
+                        Equipment & loot · {extractGear.length}
+                      </div>
+                      <div className="mt-1 font-mono text-[10px] text-foreground">
+                        {extractGear.length
+                          ? extractGear.map((i) => i.name).join(" · ")
+                          : "None"}
+                      </div>
+                    </div>
+                    <div className="pixel-card">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-mono text-[9px] uppercase text-muted-foreground">
+                          Valuables · {extractValuables.length}
+                        </div>
+                        {extractValuables.length > 0 && (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => setSellValuableUids(new Set())}
+                              className="pixel-btn px-2 py-1 text-[9px]"
+                            >
+                              KEEP ALL
+                            </button>
+                            <button
+                              onClick={() => setSellValuableUids(new Set(extractValuables.map((i) => i.uid)))}
+                              className="pixel-btn px-2 py-1 text-[9px]"
+                            >
+                              SELL ALL
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      {extractValuables.length === 0 ? (
+                        <div className="mt-1 font-mono text-[10px] text-muted-foreground">None recovered.</div>
+                      ) : (
+                        <div className="mt-2 space-y-1">
+                          {extractValuables.map((i) => {
+                            const selling = sellValuableUids.has(i.uid);
+                            return (
+                              <div
+                                key={i.uid}
+                                className="flex items-center justify-between gap-2 border-b border-border/40 pb-1"
+                              >
+                                <span className="font-display text-[10px]" style={{ color: RARITY_COLOR[i.rarity] }}>
+                                  {i.name} · {i.value.toLocaleString()}₽
+                                </span>
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() =>
+                                      setSellValuableUids((cur) => {
+                                        const next = new Set(cur);
+                                        next.delete(i.uid);
+                                        return next;
+                                      })
+                                    }
+                                    className={`pixel-btn px-2 py-1 text-[9px] ${selling ? "" : "pixel-btn-primary"}`}
+                                  >
+                                    KEEP
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      setSellValuableUids((cur) => {
+                                        const next = new Set(cur);
+                                        next.add(i.uid);
+                                        return next;
+                                      })
+                                    }
+                                    className={`pixel-btn px-2 py-1 text-[9px] ${selling ? "pixel-btn-primary" : ""}`}
+                                  >
+                                    SELL
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    {!extractPreview.ok && (
+                      <div className="pixel-card">
+                        <div className="font-display text-[10px] text-destructive">STASH FULL</div>
+                        <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+                          Need {extractPreview.keptCount} slot(s), {extractPreview.room} free. Sell valuables or leave
+                          an incoming item — nothing is deleted automatically.
+                        </div>
+                        <div className="mt-2 space-y-1">
+                          {extractHaul
+                            .filter((i) => i.kind !== "valuable" || !sellValuableUids.has(i.uid))
+                            .map((i) => (
+                              <button
+                                key={i.uid}
+                                onClick={() => toggleUidSet(i.uid, setLeaveUids)}
+                                className={`pixel-btn w-full px-2 py-1 text-left text-[9px] ${
+                                  leaveUids.has(i.uid) ? "pixel-btn-primary" : ""
+                                }`}
+                              >
+                                {leaveUids.has(i.uid) ? "LEAVING" : "LEAVE"} · {i.name}
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="font-mono text-[10px] text-muted-foreground">
+                      Selling now: {extractSoldPreview.toLocaleString()}₽ · stash {stash.length}/{stashSlots}
+                    </div>
+                    <div className="flex justify-center">
+                      <button
+                        onClick={() => toHideout(true)}
+                        disabled={!extractPreview.ok}
+                        className="pixel-btn pixel-btn-primary disabled:opacity-40"
+                      >
+                        BACK TO HIDEOUT
+                      </button>
+                    </div>
+                  </div>
                 </Overlay>
               )}
 
@@ -1954,8 +2204,8 @@ export default function TarkovTD() {
                   title={s.pmcDown ? "GAME OVER" : "CHECKPOINT LOST"}
                   subtitle={
                     s.pmcDown
-                      ? `${meta.pmc.name} died on wave ${s.wave}. Level, scars and every piece of kit he carried are gone. A new PMC signs on.`
-                      : `Checkpoint fell on wave ${s.wave}. Everything in the pack is gone, your PMC crawled out with nothing.`
+                      ? `${meta.pmc.name} died on wave ${s.wave}. Level, scars and every piece of kit they carried are gone. A new operator takes the contract.`
+                      : `Checkpoint fell on wave ${s.wave}. Everything in the pack is gone, your operator crawled out with nothing.`
                   }
                 >
                   <button onClick={() => toHideout(false)} className="pixel-btn pixel-btn-primary">
@@ -2029,7 +2279,7 @@ export default function TarkovTD() {
 
             <div className="pixel-card">
               <div className="font-display text-[10px] text-primary">
-                {selected?.pmc ? `${meta.pmc.name} · YOUR PMC` : "OPERATOR"}
+                {selected?.pmc ? `${meta.pmc.name} · YOUR OPERATOR` : "OPERATOR"}
               </div>
               {selected ? (
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
@@ -2081,7 +2331,7 @@ export default function TarkovTD() {
                   )}
                   {selected.pmc ? (
                     <p className="text-[10px] text-destructive">
-                      If he dies the run ends for good — level, scars and kit are wiped.
+                      If they die the run ends for good — level, scars and kit are wiped.
                     </p>
                   ) : (
                     <button onClick={doDismiss} className="pixel-btn w-full">
@@ -2108,19 +2358,22 @@ export default function TarkovTD() {
                 </div>
               ) : (
                 <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-                  Your PMC deploys with you every raid. Hired operators start with a beat-up TOZ-106 —
-                  loot better guns, mods and armor, then drag them on.
+                  Your operator deploys with you every raid. Hired guns start with a beat-up break-action —
+                  loot better weapons, mods and armor, then drag them on.
                 </p>
               )}
             </div>
 
 
             <div className="pixel-card">
-              <div className="flex items-center justify-between">
-                <div className="font-display text-[10px] text-primary">BACKPACK</div>
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  {s.backpack.length}/{backpackSlots()}
-                </span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-display text-[10px] text-primary">
+                  BACKPACK {s.backpack.length}/{backpackSlots()}
+                  {s.backpack.length >= backpackSlots() ? " FULL" : ""}
+                </div>
+                {s.backpack.length >= backpackSlots() && (
+                  <span className="font-mono text-[10px] text-destructive">FULL</span>
+                )}
               </div>
               <div className="mt-2 grid grid-cols-2 gap-1">
                 {Array.from({ length: backpackSlots() }).map((_, i) => {
@@ -2144,15 +2397,16 @@ export default function TarkovTD() {
                 })}
               </div>
               <p className="mt-2 font-mono text-[10px] text-muted-foreground">
-                Extract to move this gear to the stash (money to the bank). Tap an item to equip it,
-                hold (or right-click) to scrap it on site for raid funds at a much better rate.
+                Extract to move this gear to the stash. Valuables can be kept or sold after extract.
+                Tap an item to equip it, hold (or right-click) to scrap it on site for raid funds at a
+                much better rate.
               </p>
             </div>
 
             <div className="pixel-card">
               <div className="font-display text-[10px] text-primary">FIELD NOTES</div>
               <div className="mt-2 space-y-1 font-mono text-[10px] text-muted-foreground">
-                <div>Operators are all identical — the gun makes the difference.</div>
+                <div>Hired guns are identical — the weapon makes the difference.</div>
                 <div>Crates only crack open during a wave — hold one for {CRATE_TIME}s.</div>
                 <div>Barricades give hard cover; barbed wire on the road cripples runners.</div>
                 <div>KIA operators drop their weapon and mods on the ground — click the bag.</div>

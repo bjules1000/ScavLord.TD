@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import TarkovTD from "@/game/TarkovTD";
 
-const title = "Kolkhoz Checkpoint — 8-Bit Tarkov Tower Defense";
+const title = "ScavLord TD";
 const description =
-  "Hold the extract in an 8-bit Escape from Tarkov tower defense roguelike: deploy PMC operators, farm roubles, loot perks and stop scavs, raiders and Reshala.";
+  "Prepare a rider, deploy into a hostile zone, hold the extract against scav factions, loot, and walk out alive.";
 
 export const Route = createFileRoute("/")({
   head: () => ({

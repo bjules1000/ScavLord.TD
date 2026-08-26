@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/**/*.test.ts",
+    "src/game/combat.ts",
+    "src/game/data.ts",
+    "src/game/gear.ts",
+    "src/game/meta.ts",
+    "src/game/types.ts"
+  ],
+  "exclude": [],
+  "compilerOptions": {
+    "types": ["bun"]
+  }
+}

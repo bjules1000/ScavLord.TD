@@ -109,7 +109,7 @@ const FACTORY_PAL: Palette = {
 export const MAP_DEFS: MapDef[] = [
   {
     id: "woods",
-    name: "WOODS",
+    name: "PINE CUT",
     threat: 1,
     threatLabel: "LOW THREAT",
     desc: "Long winding trail through the pines. Slow scav pressure, lots of room to set up.",
@@ -165,10 +165,10 @@ export const MAP_DEFS: MapDef[] = [
   },
   {
     id: "kolkhoz",
-    name: "KOLKHOZ CHECKPOINT",
+    name: "GRAIN GATE",
     threat: 2,
     threatLabel: "MEDIUM THREAT",
-    desc: "The old collective farm checkpoint. Balanced lanes, hard cover near the gates.",
+    desc: "Old collective-farm checkpoint. Balanced lanes, hard cover near the gates.",
     hpMult: 1,
     lootMult: 1,
     geo: { x: 52, y: 58 },
@@ -232,7 +232,7 @@ export const MAP_DEFS: MapDef[] = [
   },
   {
     id: "factory",
-    name: "FACTORY",
+    name: "THE WORKS",
     threat: 3,
     threatLabel: "HIGH THREAT",
     desc: "Motorized lift, office passage, tight concrete halls. Point-blank fights — best loot in the region.",

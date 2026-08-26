@@ -29,16 +29,14 @@ export interface Tower {
   hp: number;
   maxHp: number;
   hurt: number;
-  /** true for the player's own PMC — dies once, run over */
+  /** true for the player's own operator — dies once, run over */
   pmc?: boolean;
   level?: number;
   xp?: number;
-  /** armor id from gear.ts ARMORS (PMC only) */
+  /** armor id from gear.ts ARMORS (player operator only) */
   armor?: string | null;
   armorHp?: number;
 }
-
-
 
 export type EnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";
 
@@ -73,10 +71,13 @@ export interface Enemy {
   fireCd: number;
   aim: number;
   muzzle: number;
+  /** Reached the extract objective; lives already deducted. Not a kill. */
+  leaked?: boolean;
+  /** Bounty / XP / quest kill already paid. */
+  counted?: boolean;
 }
 
 export interface Bullet {
-
   id: number;
   x: number;
   y: number;
@@ -97,7 +98,6 @@ export interface Bullet {
   sx?: number;
   sy?: number;
 }
-
 
 export interface Particle {
   x: number;

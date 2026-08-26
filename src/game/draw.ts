@@ -13,6 +13,17 @@ function gunFrame(cls: WeaponClass, firing: boolean): GearFrameName {
   return (base + (firing ? "_fire" : "_idle")) as GearFrameName;
 }
 
+function enemyBodyFrame(kind: Enemy["kind"], walk: boolean): GearFrameName {
+  const heavy = kind === "raider" || kind === "pmc" || kind === "boss";
+  return `${heavy ? "unk" : "joe"}_${walk ? "2" : "1"}` as GearFrameName;
+}
+
+function enemyGunFrame(kind: Enemy["kind"], firing: boolean): GearFrameName {
+  if (kind === "sniperScav") return firing ? "sg_fire" : "sg_idle";
+  if (kind === "scav") return firing ? "uzi_fire" : "uzi_idle";
+  return firing ? "ak_fire" : "ak_idle";
+}
+
 
 const rnd = (seed: number) => {
   let s = seed * 9301 + 49297;
@@ -457,7 +468,11 @@ export function drawOperator(
   const bob = Math.sin(time / 260 + t.id) > 0 ? 0 : 1;
   const body = hurt ? "#ff8d7a" : w.color;
   const y = bob;
+  const drewBody = drawGear(ctx, (bob ? "unk_2" : "unk_1") as GearFrameName, 0, -1 + y, 18, {
+    anchor: "center",
+  });
 
+  if (!drewBody) {
   // legs + boots
   px(ctx, "#22201a", -6, 3 + y, 4, 7);
   px(ctx, "#22201a", 2, 3 + y, 4, 7);
@@ -518,10 +533,16 @@ export function drawOperator(
     px(ctx, "#7ddc5a", -2, -19 + y, 2, 2);
     px(ctx, "#7ddc5a", 1, -19 + y, 2, 2);
   }
+  }
   if (t.pmc) {
     // gold rank chevrons over the shoulder — one per level, capped
     const lvl = Math.min(6, t.level ?? 1);
     for (let i = 0; i < lvl; i++) px(ctx, "#f0b400", -9 + i * 3, -10 + y, 2, 2);
+  }
+  if (drewBody && hurt) {
+    ctx.globalAlpha = 0.45;
+    px(ctx, "#ff8d7a", -10, -16, 20, 26);
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
 
@@ -607,15 +628,16 @@ export function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy) {
   const gear = e.hitFlash > 0 ? "#ffd7d7" : def.gear;
   const h = Math.round(s * 0.85);
 
-  // scavs use the pixel-art bandit sprite; the rest stay procedural
-  const scavArt = e.kind === "scav" && drawGear(ctx, walk ? "joe_2" : "joe_1", x, y - 1, s + 5, { anchor: "center" });
-  if (scavArt && e.hitFlash > 0) {
+  // scavs/shotgun scavs use joe; rifle/raider/enforcer use unk
+  const bodyW = e.kind === "boss" ? s + 12 : s + 6;
+  const bodyArt = drawGear(ctx, enemyBodyFrame(e.kind, walk === 1), x, y - 1, bodyW, { anchor: "center" });
+  if (bodyArt && e.hitFlash > 0) {
     ctx.save();
     ctx.globalAlpha = 0.55;
-    px(ctx, "#ffffff", x - (s + 5) / 2, y - s / 2 - 8, s + 5, s + 10);
+    px(ctx, "#ffffff", x - bodyW / 2, y - s / 2 - 8, bodyW, s + 10);
     ctx.restore();
   }
-  if (!scavArt) {
+  if (!bodyArt) {
   // legs + boots
   px(ctx, gear, x - 4, y + s / 2 - 7 + walk, 3, 7);
   px(ctx, gear, x + 1, y + s / 2 - 7 - walk, 3, 7);
@@ -663,8 +685,7 @@ export function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy) {
   ctx.save();
   ctx.translate(x, y - 1);
   ctx.rotate(e.aim);
-  const eArt: GearFrameName =
-    e.kind === "scav" ? (e.muzzle > 0 ? "uzi_fire" : "uzi_idle") : e.muzzle > 0 ? "ak_fire" : "ak_idle";
+  const eArt = enemyGunFrame(e.kind, e.muzzle > 0);
   if (!drawGear(ctx, eArt, -4, 0, gunLen + 8)) px(ctx, "#1a1a16", 2, -1, gunLen, 3);
   if (e.muzzle > 0) {
     px(ctx, "#ffd166", gunLen + 2, -3, 5, 6);

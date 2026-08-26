@@ -5,7 +5,7 @@ export const SCALE = TILE / 32;
 export const COLS = 20;
 export const ROWS = 13;
 
-/** Custom map: "Kolkhoz Checkpoint" — waypoints in tile coords (center of tile). */
+/** Default lane waypoints (Kolkhoz / Grain Gate) — unused; live paths live in map.ts. */
 export const PATH: Array<[number, number]> = [
   [-1, 2],
   [5, 2],
@@ -36,7 +36,7 @@ export const TOWERS: Record<TowerKind, TowerDef> = {
   sniper: {
     kind: "sniper",
     name: "SNIPER",
-    role: "SV-98 / long",
+    role: "bolt / long",
     cost: 260,
     damage: 46,
     range: 190,
@@ -49,7 +49,7 @@ export const TOWERS: Record<TowerKind, TowerDef> = {
   gunner: {
     kind: "gunner",
     name: "GUNNER",
-    role: "PKM / suppress",
+    role: "lmg / suppress",
     cost: 320,
     damage: 14,
     range: 105,
@@ -79,7 +79,7 @@ export const TOWER_ORDER: TowerKind[] = ["scout", "sniper", "gunner", "grenadier
 export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   scav: {
     kind: "scav",
-    fireRange: 62, fireCooldown: 2100, towerDamage: 4,
+    fireRange: 58, fireCooldown: 2100, towerDamage: 4,
     name: "Scav",
     hp: 34,
     speed: 34,
@@ -90,38 +90,38 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     gear: "#4b4030",
     size: 13,
     },
+  sniperScav: {
+    kind: "sniperScav",
+    fireRange: 46, fireCooldown: 1700, towerDamage: 16,
+    name: "Shotgun Scav",
+    hp: 48,
+    speed: 32,
+    bounty: 36,
+    armor: 0,
+    damage: 1,
+    body: "#6b5340",
+    gear: "#3a2a1c",
+    size: 14,
+  },
   raider: {
     kind: "raider",
-    fireRange: 78, fireCooldown: 1600, towerDamage: 8,
-    name: "Raider",
-    hp: 100,
-    speed: 30,
-    bounty: 46,
-    armor: 4,
+    fireRange: 108, fireCooldown: 1550, towerDamage: 9,
+    name: "Rifle Scav",
+    hp: 72,
+    speed: 32,
+    bounty: 44,
+    armor: 2,
     damage: 2,
     body: "#5e6b4d",
     gear: "#2f3626",
     size: 15,
   },
-  sniperScav: {
-    kind: "sniperScav",
-    fireRange: 120, fireCooldown: 2900, towerDamage: 13,
-    name: "Sniper Scav",
-    hp: 56,
-    speed: 48,
-    bounty: 38,
-    armor: 1,
-    damage: 1,
-    body: "#7d6a4a",
-    gear: "#3a2f1e",
-    size: 13,
-  },
   pmc: {
     kind: "pmc",
-    fireRange: 92, fireCooldown: 1400, towerDamage: 12,
-    name: "PMC",
-    hp: 185,
-    speed: 38,
+    fireRange: 90, fireCooldown: 1450, towerDamage: 14,
+    name: "Armored Raider",
+    hp: 195,
+    speed: 26,
     bounty: 80,
     armor: 8,
     damage: 2,
@@ -132,14 +132,14 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   boss: {
     kind: "boss",
     fireRange: 100, fireCooldown: 1100, towerDamage: 20,
-    name: "Reshala",
+    name: "Enforcer",
     hp: 1150,
     speed: 24,
     bounty: 600,
     armor: 14,
     damage: 7,
-    body: "#6b2f2f",
-    gear: "#2a1414",
+    body: "#5a3a28",
+    gear: "#241810",
     size: 22,
   },
 };
@@ -167,7 +167,7 @@ export function buildWave(n: number, tuning?: WaveTuning): Wave {
   if (n % 10 === 0) {
     groups.push({ kind: "boss", count: 1 + Math.floor(n / 20), gap: 1600 });
     groups.push({ kind: "raider", count: amt(4 + n), gap: 500 });
-    return { name: `RAID BOSS — RESHALA`, groups };
+    return { name: `RAID BOSS — ENFORCER`, groups };
   }
   groups.push({ kind: "scav", count: amt(5 + n * 2), gap: Math.max(220, 620 - n * 22) });
   if (n >= 2 + hd) groups.push({ kind: "sniperScav", count: amt(1 + Math.floor(n / 2)), gap: 520 });
@@ -176,10 +176,10 @@ export function buildWave(n: number, tuning?: WaveTuning): Wave {
   const names = [
     "SCAV ROAMERS",
     "CHECKPOINT PROBE",
-    "MARKSMAN PATROL",
-    "RAIDER SQUAD",
-    "USEC INCURSION",
-    "BEAR STRIKE TEAM",
+    "SHOTGUN SWEEP",
+    "RIFLE LINE",
+    "ARMORED PUSH",
+    "RAIDERS INBOUND",
     "FULL SCALE ASSAULT",
   ];
   return { name: names[Math.min(names.length - 1, Math.floor((n - 1) / 2))]!, groups };
@@ -192,7 +192,7 @@ export function waveScale(n: number) {
 export const PERKS: Perk[] = [
   {
     id: "ap",
-    name: "M995 AMMO",
+    name: "AP ROUNDS",
     desc: "+4 armor penetration on all shots.",
     apply: (s) => (s.armorPierce += 4),
   },
