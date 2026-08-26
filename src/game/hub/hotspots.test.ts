@@ -29,4 +29,27 @@ describe("camp hub hotspots", () => {
       expect(h.action as string).toBe(h.id);
     }
   });
+
+  it("keeps presentation cues inside the interaction box", () => {
+    const enabled = HUB_HOTSPOTS.filter((h) => h.enabled);
+    for (const h of enabled) {
+      expect(h.cue).toBeDefined();
+      expect(h.labelPos).toBeDefined();
+      const c = h.cue!;
+      expect(c.x).toBeGreaterThanOrEqual(0);
+      expect(c.y).toBeGreaterThanOrEqual(0);
+      expect(c.x + c.w).toBeLessThanOrEqual(100);
+      expect(c.y + c.h).toBeLessThanOrEqual(100);
+      expect(c.w).toBeLessThanOrEqual(80);
+      expect(c.h).toBeLessThanOrEqual(85);
+      expect(h.labelPos!.x).toBeGreaterThanOrEqual(0);
+      expect(h.labelPos!.x).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("does not give the reserved radio a normal hover cue", () => {
+    const radio = HUB_HOTSPOTS.find((h) => h.id === "radio");
+    expect(radio?.cue).toBeUndefined();
+    expect(radio?.labelPos).toBeUndefined();
+  });
 });
