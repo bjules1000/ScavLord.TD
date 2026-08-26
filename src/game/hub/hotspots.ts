@@ -4,10 +4,11 @@ export const CAMP_IMAGE_SRC = "/game/hub/camp-base.png";
 export const CAMP_IMAGE_W = 1448;
 export const CAMP_IMAGE_H = 1086;
 
-export type HubAction = "stash" | "region" | "market" | "gear" | "skills";
+export type HubAction = "supplies" | "region" | "gear" | "skills";
+export type HubStationId = HubAction | "radio";
 
 export interface HubHotspot {
-  id: HubAction;
+  id: HubStationId;
   label: string;
   /** Left edge, 0–100 of the camp image. */
   xPercent: number;
@@ -15,30 +16,32 @@ export interface HubHotspot {
   yPercent: number;
   widthPercent: number;
   heightPercent: number;
-  action: HubAction;
+  enabled: boolean;
+  action?: HubAction;
 }
 
 /**
  * Rectangular hit areas over objects in camp-base.png.
  * Values are image-relative percentages (not viewport).
  *
- * stash        — crate/barrel pile left of the tent
- * region       — paper map on the workbench
- * market       — portable radio on the workbench
- * gear         — pack / armor on the right of the table
- * skills       — seated ScavLord
+ * supplies     — crate/barrel pile left of the tent → Stash + Black Market
+ * region       — paper map on the workbench → Destinations / Deploy
+ * radio        — portable radio on the workbench (reserved: Contacts / Acolytes)
+ * gear         — pack / armor on the right of the table → Equipment / Raid Prep
+ * skills       — seated ScavLord → Skills / Operator / Quests
  *
  * Rear left/right forest is intentionally empty (future systems).
  */
 export const HUB_HOTSPOTS: HubHotspot[] = [
   {
-    id: "stash",
-    label: "STASH",
+    id: "supplies",
+    label: "SUPPLIES",
     xPercent: 6,
     yPercent: 52,
     widthPercent: 26,
     heightPercent: 26,
-    action: "stash",
+    enabled: true,
+    action: "supplies",
   },
   {
     id: "skills",
@@ -47,6 +50,7 @@ export const HUB_HOTSPOTS: HubHotspot[] = [
     yPercent: 40,
     widthPercent: 16,
     heightPercent: 32,
+    enabled: true,
     action: "skills",
   },
   {
@@ -56,16 +60,17 @@ export const HUB_HOTSPOTS: HubHotspot[] = [
     yPercent: 53,
     widthPercent: 16,
     heightPercent: 11,
+    enabled: true,
     action: "region",
   },
   {
-    id: "market",
-    label: "BLACK MARKET",
+    id: "radio",
+    label: "RESERVED",
     xPercent: 67,
     yPercent: 43,
     widthPercent: 11,
     heightPercent: 10,
-    action: "market",
+    enabled: false,
   },
   {
     id: "gear",
@@ -74,6 +79,7 @@ export const HUB_HOTSPOTS: HubHotspot[] = [
     yPercent: 46,
     widthPercent: 16,
     heightPercent: 22,
+    enabled: true,
     action: "gear",
   },
 ];

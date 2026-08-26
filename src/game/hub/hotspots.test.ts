@@ -4,7 +4,7 @@ import { HUB_HOTSPOTS } from "./hotspots";
 describe("camp hub hotspots", () => {
   it("covers the five M2A objects with in-image percentage boxes", () => {
     const ids = HUB_HOTSPOTS.map((h) => h.id).sort();
-    expect(ids).toEqual(["gear", "market", "region", "skills", "stash"]);
+    expect(ids).toEqual(["gear", "radio", "region", "skills", "supplies"]);
     for (const h of HUB_HOTSPOTS) {
       expect(h.xPercent).toBeGreaterThanOrEqual(0);
       expect(h.yPercent).toBeGreaterThanOrEqual(0);
@@ -12,7 +12,21 @@ describe("camp hub hotspots", () => {
       expect(h.yPercent + h.heightPercent).toBeLessThanOrEqual(100);
       expect(h.widthPercent).toBeGreaterThan(4);
       expect(h.heightPercent).toBeGreaterThan(4);
-      expect(h.action).toBe(h.id);
+    }
+  });
+
+  it("keeps radio reserved without an action", () => {
+    const radio = HUB_HOTSPOTS.find((h) => h.id === "radio");
+    expect(radio?.enabled).toBe(false);
+    expect(radio?.action).toBeUndefined();
+  });
+
+  it("maps enabled stations to their overlays", () => {
+    const enabled = HUB_HOTSPOTS.filter((h) => h.enabled);
+    expect(enabled.map((h) => h.action).sort()).toEqual(["gear", "region", "skills", "supplies"]);
+    for (const h of enabled) {
+      expect(h.action).toBeDefined();
+      expect(h.action as string).toBe(h.id);
     }
   });
 });

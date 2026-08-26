@@ -49,6 +49,15 @@ export default function CampHub({ onAction }: { onAction: (action: HubAction) =>
   );
 }
 
+function boxStyle(spot: HubHotspot) {
+  return {
+    left: `${spot.xPercent}%`,
+    top: `${spot.yPercent}%`,
+    width: `${spot.widthPercent}%`,
+    height: `${spot.heightPercent}%`,
+  };
+}
+
 function HotspotButton({
   spot,
   debug,
@@ -64,24 +73,49 @@ function HotspotButton({
   onLeave: () => void;
   onAction: (action: HubAction) => void;
 }) {
-  const showChrome = active || debug;
   const labelAbove = spot.yPercent > 18;
+  const coords = `${spot.xPercent},${spot.yPercent} ${spot.widthPercent}×${spot.heightPercent}`;
+
+  if (!spot.enabled) {
+    if (!debug) return null;
+    return (
+      <div
+        aria-hidden
+        className="pointer-events-none absolute"
+        style={{
+          ...boxStyle(spot),
+          outline: "2px dashed #6f7f52",
+          outlineOffset: "-2px",
+        }}
+      >
+        <span
+          className={`pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap font-display text-[8px] tracking-wide text-muted-foreground sm:text-[9px] ${
+            labelAbove ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
+          style={{ textShadow: "0 1px 0 #000, 1px 0 0 #000, -1px 0 0 #000, 0 -1px 0 #000" }}
+        >
+          {spot.label} · RADIO {coords}
+        </span>
+      </div>
+    );
+  }
+
+  const showChrome = active || debug;
 
   return (
     <button
       type="button"
       aria-label={spot.label}
-      onClick={() => onAction(spot.action)}
+      onClick={() => {
+        if (spot.action) onAction(spot.action);
+      }}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       onFocus={onEnter}
       onBlur={onLeave}
       className="absolute cursor-pointer border-0 bg-transparent p-0"
       style={{
-        left: `${spot.xPercent}%`,
-        top: `${spot.yPercent}%`,
-        width: `${spot.widthPercent}%`,
-        height: `${spot.heightPercent}%`,
+        ...boxStyle(spot),
         outline: showChrome ? "2px solid #f0b400" : "2px solid transparent",
         outlineOffset: "-2px",
         boxShadow: active ? "inset 0 0 0 999px rgba(240,180,0,0.14)" : "none",
@@ -96,7 +130,7 @@ function HotspotButton({
           style={{ textShadow: "0 1px 0 #000, 1px 0 0 #000, -1px 0 0 #000, 0 -1px 0 #000" }}
         >
           {spot.label}
-          {debug ? `  ${spot.xPercent},${spot.yPercent} ${spot.widthPercent}×${spot.heightPercent}` : ""}
+          {debug ? `  ${coords}` : ""}
         </span>
       )}
     </button>
