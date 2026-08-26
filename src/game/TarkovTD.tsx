@@ -65,6 +65,7 @@ import {
 } from "./combat";
 import { settleHaul } from "./extract";
 import CampHub from "./hub/CampHub";
+import CampRail from "./hub/CampRail";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 
 const W = COLS * TILE;
@@ -1631,14 +1632,24 @@ export default function TarkovTD() {
           <div className="flex flex-wrap justify-end gap-1 font-mono text-[10px] sm:gap-2 sm:text-xs">
             <Stat label="SCRIP" value={s.roubles.toLocaleString()} tone="gold" />
             <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
-            <Stat label="HEALTH" value={`${s.lives}/${START_LIVES}`} tone={s.lives < 7 ? "bad" : "good"} />
-            <Stat label="WAVE" value={`${s.wave}`} />
-            <Stat label="KILLS" value={`${s.killed}`} />
+            {s.phase !== "hideout" && (
+              <>
+                <Stat label="HEALTH" value={`${s.lives}/${START_LIVES}`} tone={s.lives < 7 ? "bad" : "good"} />
+                <Stat label="WAVE" value={`${s.wave}`} />
+                <Stat label="KILLS" value={`${s.killed}`} />
+              </>
+            )}
           </div>
         </header>
 
 
-        <div className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_340px] td-grid">
+        <div
+          className={`grid gap-3 sm:gap-4 td-grid ${
+            s.phase === "hideout"
+              ? "lg:grid-cols-[minmax(0,1fr)_260px]"
+              : "lg:grid-cols-[minmax(0,1fr)_340px]"
+          }`}
+        >
           <div className="relative">
             <div
               className="pixel-frame relative mx-auto w-full overflow-hidden"
@@ -1784,40 +1795,30 @@ export default function TarkovTD() {
                   <RegionMap
                     mapId={mapId}
                     onPick={(id) => setMapId(id)}
-                    onBack={() => setScreen("hideout")}
+                    showBack={false}
                   />
-                  <div className="pixel-card mt-3 text-left">
-                    <div className="font-display text-[10px] text-primary">
-                      LOADOUT {loadout.length}/{loadoutSlots}
-                    </div>
-                    <div className="mt-2 grid grid-cols-3 gap-1">
-                      {Array.from({ length: loadoutSlots }).map((_, i) => {
-                        const item = loadout[i];
-                        if (!item)
-                          return (
-                            <div
-                              key={`empty-${i}`}
-                              className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                            />
-                          );
-                        return <ItemCell key={item.uid} item={item} onClick={() => fromLoadout(item.uid)} />;
-                      })}
-                    </div>
-                    <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-3 w-full">
-                      DEPLOY TO {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
-                    </button>
+                  <div className="mt-3 font-mono text-[10px] text-muted-foreground">
+                    PRIMARY: {WEAPONS[meta.pmc.weapon]?.name ?? "BREAK-ACTION"} · ARMOR:{" "}
+                    {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
+                    {loadout.length}/{loadoutSlots}
                   </div>
+                  <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-3 w-full">
+                    DEPLOY TO {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
+                  </button>
+                  <button onClick={() => setScreen("hideout")} className="pixel-btn mt-2 w-full">
+                    BACK TO CAMP
+                  </button>
                 </Overlay>
               )}
 
               {s.phase === "hideout" && screen === "gear" && (
                 <Overlay
-                  title="OPERATOR KIT"
-                  subtitle={`${meta.pmc.name} · click stash gear to fit it, click a slot to strip it — die in raid and this kit is gone`}
+                  title="EQUIPMENT"
+                  subtitle={`${meta.pmc.name} · kit stays on the operator; raid loadout is what you carry in`}
                 >
                   <div className="grid gap-3 text-left sm:grid-cols-2">
                     <div className="pixel-card">
-                      <div className="font-display text-[10px] text-primary">WORN</div>
+                      <div className="font-display text-[10px] text-primary">SCAVLORD KIT</div>
                       <div className="mt-2 grid gap-2 font-mono text-[10px]">
                         <button
                           onClick={() => unequipPmc("weapon")}
@@ -1877,6 +1878,27 @@ export default function TarkovTD() {
                           ))}
                       </div>
                     </div>
+                  </div>
+                  <div className="pixel-card mt-3 text-left">
+                    <div className="font-display text-[10px] text-primary">
+                      RAID LOADOUT {loadout.length}/{loadoutSlots}
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-1 sm:grid-cols-5">
+                      {Array.from({ length: loadoutSlots }).map((_, i) => {
+                        const item = loadout[i];
+                        if (!item)
+                          return (
+                            <div
+                              key={`empty-${i}`}
+                              className="h-[42px] border border-dashed border-border/60 bg-background/40"
+                            />
+                          );
+                        return <ItemCell key={item.uid} item={item} onClick={() => fromLoadout(item.uid)} />;
+                      })}
+                    </div>
+                    <p className="mt-2 font-mono text-[9px] text-muted-foreground">
+                      Tap a slot to return an item to stash. Add gear from the crates.
+                    </p>
                   </div>
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
                     BACK TO CAMP
@@ -2246,19 +2268,20 @@ export default function TarkovTD() {
             )}
           </div>
 
+          {s.phase === "hideout" ? (
+            <CampRail meta={meta} />
+          ) : (
           <aside className="flex flex-col gap-3 lg:max-h-[calc(100dvh-var(--td-chrome,13rem))] lg:overflow-y-auto lg:pr-1 td-side">
             <div className="pixel-card">
               <div className="font-display text-[10px] text-primary">RAID CONTROL</div>
               <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-                {s.phase === "hideout"
-                  ? "Camp. Hover or tap objects — stash, map, radio, kit, ScavLord."
-                  : s.phase === "prep"
-                    ? `Next: WAVE ${s.wave + 1} — ${nextWaveName}`
-                    : s.phase === "combat"
-                      ? `Contact! ${s.enemies.length} hostiles, ${s.queue.length} inbound.`
-                      : s.phase === "loot"
-                        ? "Choose your find."
-                        : "Raid over."}
+                {s.phase === "prep"
+                  ? `Next: WAVE ${s.wave + 1} — ${nextWaveName}`
+                  : s.phase === "combat"
+                    ? `Contact! ${s.enemies.length} hostiles, ${s.queue.length} inbound.`
+                    : s.phase === "loot"
+                      ? "Choose your find."
+                      : "Raid over."}
               </p>
             </div>
 
@@ -2410,6 +2433,7 @@ export default function TarkovTD() {
               </ul>
             </div>
           </aside>
+          )}
         </div>
       </div>
     </div>
@@ -2420,10 +2444,12 @@ function RegionMap({
   mapId,
   onPick,
   onBack,
+  showBack = true,
 }: {
   mapId: string;
   onPick: (id: string) => void;
-  onBack: () => void;
+  onBack?: () => void;
+  showBack?: boolean;
 }) {
   const active = MAP_BY_ID[mapId] ?? MAP_DEFS[1]!;
   return (
@@ -2491,9 +2517,11 @@ function RegionMap({
         </div>
       </div>
 
-      <button onClick={onBack} className="pixel-btn pixel-btn-primary w-full">
-        BACK TO CAMP
-      </button>
+      {showBack && (
+        <button onClick={onBack} className="pixel-btn pixel-btn-primary w-full">
+          BACK TO CAMP
+        </button>
+      )}
     </div>
   );
 }
@@ -2639,7 +2667,7 @@ function Overlay({
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 overflow-auto bg-background/90 p-4 text-center backdrop-blur-[2px]">
       <h2 className="font-display text-lg text-primary">{title}</h2>
       <p className="font-mono text-[11px] text-muted-foreground">{subtitle}</p>
-      <div className="w-full max-w-3xl">{children}</div>
+      <div className="w-full max-w-4xl">{children}</div>
     </div>
   );
 }
