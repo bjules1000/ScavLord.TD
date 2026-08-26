@@ -66,6 +66,7 @@ import {
 import { settleHaul } from "./extract";
 import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
+import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
 
 const W = COLS * TILE;
 const H = ROWS * TILE;
@@ -300,7 +301,7 @@ export default function TarkovTD() {
   const [mapId, setMapId] = useState<string>("kolkhoz");
   const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "supplies">("hideout");
   const [suppliesTab, setSuppliesTab] = useState<"stash" | "market">("stash");
-  const [prepMode, setPrepMode] = useState<"fit" | "pack">("pack");
+  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests">("overview");
   const [shopTab, setShopTab] = useState<"weapon" | "attachment" | "armor" | "backpack" | "meds">("weapon");
   const [stashTab, setStashTab] = useState<
     "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
@@ -1617,43 +1618,52 @@ export default function TarkovTD() {
     .filter((i) => sellValuableUids.has(i.uid) && !leaveUids.has(i.uid))
     .reduce((a, i) => a + i.value, 0);
 
+  const campScar = meta.pmc.debuffs[0] ? DEBUFF_BY_ID[meta.pmc.debuffs[0]] : null;
+  const kitActions = {
+    attachments: meta.pmc.attachments,
+    attachmentSlots: WEAPONS[meta.pmc.weapon]?.slots ?? 1,
+  };
+
   return (
     <div className="min-h-[100dvh] bg-background text-foreground">
-      <div className="mx-auto max-w-[1400px] px-2 py-3 sm:px-4 sm:py-6">
+      <div
+        className={`mx-auto max-w-[1400px] px-2 ${
+          s.phase === "hideout" ? "py-2 sm:px-4 sm:py-3" : "py-3 sm:px-4 sm:py-6"
+        }`}
+      >
 
-        <header className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 border-b-2 border-border pb-2 sm:mb-4 sm:gap-3 sm:pb-3">
-          <div className="min-w-0">
-            <h1 className="truncate font-display text-sm tracking-tight text-primary sm:text-2xl">
-              {s.phase === "hideout" ? "SCAV CAMP" : mapRef.current.def.name}
-            </h1>
-            {s.phase === "hideout" ? (
-              <p className="mt-1 truncate font-mono text-[10px] uppercase tracking-wide text-muted-foreground sm:text-xs">
-                {meta.pmc.name} · LVL {meta.pmc.level} · XP {meta.pmc.xp}/{xpForLevel(meta.pmc.level)} ·{" "}
-                <span className={meta.pmc.debuffs[0] ? "text-destructive" : "text-accent"}>
-                  {meta.pmc.debuffs[0] ? (DEBUFF_BY_ID[meta.pmc.debuffs[0]]?.name ?? meta.pmc.debuffs[0]) : "STABLE"}
-                </span>{" "}
-                · {meta.skillPoints} SP
-              </p>
-            ) : (
+        {s.phase === "hideout" ? (
+          <header className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 border-b-2 border-border pb-1 font-mono text-[10px] sm:text-[11px]">
+            <h1 className="font-display text-[11px] tracking-tight text-primary sm:text-sm">SCAV CAMP</h1>
+            <span className="text-foreground">
+              {meta.pmc.name} · LVL {meta.pmc.level}
+            </span>
+            <Stat label="XP" value={`${meta.pmc.xp}/${xpForLevel(meta.pmc.level)}`} />
+            <Stat label="COND" value={campScar ? campScar.name : "STABLE"} tone={campScar ? "bad" : "good"} />
+            <Stat label="SP" value={`${meta.skillPoints}`} />
+            <div className="ml-auto">
+              <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
+            </div>
+          </header>
+        ) : (
+          <header className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 border-b-2 border-border pb-2 sm:mb-4 sm:gap-3 sm:pb-3">
+            <div className="min-w-0">
+              <h1 className="truncate font-display text-sm tracking-tight text-primary sm:text-2xl">
+                {mapRef.current.def.name}
+              </h1>
               <p className="mt-1 hidden font-mono text-xs uppercase tracking-widest text-muted-foreground sm:block td-hide-short">
                 8-bit extraction tower defense · loot, kit, extract
               </p>
-            )}
-          </div>
-          <div className="flex flex-wrap justify-end gap-1 font-mono text-[10px] sm:gap-2 sm:text-xs">
-            {s.phase !== "hideout" && (
+            </div>
+            <div className="flex flex-wrap justify-end gap-1 font-mono text-[10px] sm:gap-2 sm:text-xs">
               <Stat label="SCRIP" value={s.roubles.toLocaleString()} tone="gold" />
-            )}
-            <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
-            {s.phase !== "hideout" && (
-              <>
-                <Stat label="HEALTH" value={`${s.lives}/${START_LIVES}`} tone={s.lives < 7 ? "bad" : "good"} />
-                <Stat label="WAVE" value={`${s.wave}`} />
-                <Stat label="KILLS" value={`${s.killed}`} />
-              </>
-            )}
-          </div>
-        </header>
+              <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
+              <Stat label="HEALTH" value={`${s.lives}/${START_LIVES}`} tone={s.lives < 7 ? "bad" : "good"} />
+              <Stat label="WAVE" value={`${s.wave}`} />
+              <Stat label="KILLS" value={`${s.killed}`} />
+            </div>
+          </header>
+        )}
 
 
         <div
@@ -1667,9 +1677,9 @@ export default function TarkovTD() {
             <div
               className="pixel-frame relative mx-auto w-full overflow-hidden"
               style={{
-                maxWidth: `min(100%, calc((100dvh - var(--td-chrome, 13rem)) * ${
-                  s.phase === "hideout" ? CAMP_IMAGE_W / CAMP_IMAGE_H : W / H
-                }))`,
+                maxWidth: `min(100%, calc((100dvh - ${
+                  s.phase === "hideout" ? "7rem" : "var(--td-chrome, 13rem)"
+                }) * ${s.phase === "hideout" ? CAMP_IMAGE_W / CAMP_IMAGE_H : W / H}))`,
               }}
             >
 
@@ -1678,7 +1688,7 @@ export default function TarkovTD() {
                 <CampHub
                   onAction={(action: HubAction) => {
                     if (action === "supplies") setSuppliesTab("stash");
-                    if (action === "gear") setPrepMode("pack");
+                    if (action === "skills") setScavTab("overview");
                     setScreen(action);
                   }}
                 />
@@ -1706,103 +1716,125 @@ export default function TarkovTD() {
               {s.phase === "hideout" && screen === "skills" && (
                 <Overlay
                   title="SCAVLORD"
-                  subtitle={`${meta.pmc.name} · ${meta.skillPoints} skill point(s) — quests pay them out`}
+                  subtitle={`${meta.pmc.name} · LVL ${meta.pmc.level} · ${meta.skillPoints} skill point(s)`}
                 >
-                  <div className="pixel-card mb-3 text-left font-mono text-[10px]">
-                    <div className="font-display text-[10px] text-primary">
-                      {meta.pmc.name} · LVL {meta.pmc.level}
-                    </div>
-                    <div className="text-muted-foreground">
-                      {BACKPACKS[meta.backpack]?.name ?? "SLING BAG"} ({backpackSlots()} slots) · XP {meta.pmc.xp}/
-                      {xpForLevel(meta.pmc.level)} · Deaths {meta.pmc.deaths}
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {meta.pmc.debuffs.length === 0 ? (
-                        <span className="text-accent">NO SCARS YET</span>
-                      ) : (
-                        meta.pmc.debuffs.map((d) => (
-                          <span
-                            key={d}
-                            title={DEBUFF_BY_ID[d]?.desc}
-                            className="border border-destructive/70 px-1 text-destructive"
-                          >
-                            {DEBUFF_BY_ID[d]?.name ?? d}
-                          </span>
-                        ))
-                      )}
-                    </div>
+                  <div className="mb-2 flex flex-wrap gap-1">
+                    {(["overview", "skills", "quests"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => setScavTab(tab)}
+                        className={`border px-2 py-1 font-mono text-[10px] uppercase ${
+                          scavTab === tab
+                            ? "border-primary text-primary"
+                            : "border-border/60 text-muted-foreground"
+                        }`}
+                      >
+                        {tab}
+                      </button>
+                    ))}
                   </div>
-                  <div className="grid gap-2 text-left sm:grid-cols-2">
-                    {SKILLS.map((sk) => {
-                      const owned = meta.skills.includes(sk.id);
-                      const afford = meta.skillPoints >= sk.cost;
-                      return (
-                        <button
-                          key={sk.id}
-                          onClick={() => buySkill(sk.id)}
-                          disabled={owned || !afford}
-                          className={`pixel-card text-left disabled:opacity-60 ${
-                            owned ? "border-accent" : ""
-                          }`}
-                        >
-                          <div className="flex items-center justify-between font-display text-[10px]">
-                            <span className={owned ? "text-accent" : "text-primary"}>{sk.name}</span>
-                            <span className="text-muted-foreground">
-                              {owned ? "TRAINED" : `${sk.cost} PT`}
+                  {scavTab === "overview" && (
+                    <div className="pixel-card text-left font-mono text-[10px]">
+                      <div className="font-display text-[10px] text-primary">
+                        {meta.pmc.name} · LVL {meta.pmc.level}
+                      </div>
+                      <div className="mt-1 text-muted-foreground">
+                        {BACKPACKS[meta.backpack]?.name ?? "SLING BAG"} ({backpackSlots()} slots) · XP {meta.pmc.xp}/
+                        {xpForLevel(meta.pmc.level)} · Deaths {meta.pmc.deaths}
+                      </div>
+                      <div className="mt-2 text-muted-foreground">CONDITION</div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {meta.pmc.debuffs.length === 0 ? (
+                          <span className="text-accent">STABLE</span>
+                        ) : (
+                          meta.pmc.debuffs.map((d) => (
+                            <span
+                              key={d}
+                              title={DEBUFF_BY_ID[d]?.desc}
+                              className="border border-destructive/70 px-1 text-destructive"
+                            >
+                              {DEBUFF_BY_ID[d]?.name ?? d}
                             </span>
-                          </div>
-                          <div className="mt-1 font-mono text-[10px] text-muted-foreground">{sk.desc}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="pixel-card mt-3 max-h-[200px] overflow-auto text-left">
-                    <div className="font-display text-[10px] text-primary">QUESTS</div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {(["all", "open", "done"] as const).map((t) => (
-                        <button
-                          key={t}
-                          onClick={() => setQuestFilter(t)}
-                          className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                            questFilter === t
-                              ? "border-primary text-primary"
-                              : "border-border/60 text-muted-foreground"
-                          }`}
-                        >
-                          {t === "open" ? "not completed" : t === "done" ? "completed" : "all"}
-                        </button>
-                      ))}
+                          ))
+                        )}
+                      </div>
+                      <div className="mt-2 text-muted-foreground">SKILL POINTS {meta.skillPoints}</div>
                     </div>
-                    <div className="mt-2 space-y-1 font-mono text-[10px]">
-                      {QUESTS.filter((q) => {
-                        const d = q.done(meta.quests);
-                        return questFilter === "all" || (questFilter === "done" ? d : !d);
-                      }).map((q) => {
-                        const done = q.done(meta.quests);
-                        const claimed = meta.claimed.includes(q.id);
+                  )}
+                  {scavTab === "skills" && (
+                    <div className="grid gap-2 text-left sm:grid-cols-2">
+                      {SKILLS.map((sk) => {
+                        const owned = meta.skills.includes(sk.id);
+                        const afford = meta.skillPoints >= sk.cost;
                         return (
-                          <div
-                            key={q.id}
-                            className={`flex items-center justify-between gap-2 border-b border-border/40 pb-1 ${
-                              claimed ? "text-muted-foreground" : done ? "text-accent" : "text-muted-foreground"
+                          <button
+                            key={sk.id}
+                            onClick={() => buySkill(sk.id)}
+                            disabled={owned || !afford}
+                            className={`pixel-card text-left disabled:opacity-60 ${
+                              owned ? "border-accent" : ""
                             }`}
                           >
-                            <span>
-                              [{claimed ? "✓" : done ? "!" : q.progress(meta.quests)}] {q.name} — {q.desc}
-                            </span>
-                            {done && !claimed && (
-                              <button
-                                onClick={() => redeem(q.id)}
-                                className="pixel-btn pixel-btn-primary shrink-0 px-2 py-1 text-[9px]"
-                              >
-                                REDEEM +{q.reward}₽{q.skillPoints ? ` +${q.skillPoints}SP` : ""}
-                              </button>
-                            )}
-                          </div>
+                            <div className="flex items-center justify-between font-display text-[10px]">
+                              <span className={owned ? "text-accent" : "text-primary"}>{sk.name}</span>
+                              <span className="text-muted-foreground">
+                                {owned ? "TRAINED" : `${sk.cost} PT`}
+                              </span>
+                            </div>
+                            <div className="mt-1 font-mono text-[10px] text-muted-foreground">{sk.desc}</div>
+                          </button>
                         );
                       })}
                     </div>
-                  </div>
+                  )}
+                  {scavTab === "quests" && (
+                    <div className="pixel-card max-h-[280px] overflow-auto text-left">
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {(["all", "open", "done"] as const).map((t) => (
+                          <button
+                            key={t}
+                            onClick={() => setQuestFilter(t)}
+                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+                              questFilter === t
+                                ? "border-primary text-primary"
+                                : "border-border/60 text-muted-foreground"
+                            }`}
+                          >
+                            {t === "open" ? "not completed" : t === "done" ? "completed" : "all"}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-2 space-y-1 font-mono text-[10px]">
+                        {QUESTS.filter((q) => {
+                          const d = q.done(meta.quests);
+                          return questFilter === "all" || (questFilter === "done" ? d : !d);
+                        }).map((q) => {
+                          const done = q.done(meta.quests);
+                          const claimed = meta.claimed.includes(q.id);
+                          return (
+                            <div
+                              key={q.id}
+                              className={`flex items-center justify-between gap-2 border-b border-border/40 pb-1 ${
+                                claimed ? "text-muted-foreground" : done ? "text-accent" : "text-muted-foreground"
+                              }`}
+                            >
+                              <span>
+                                [{claimed ? "✓" : done ? "!" : q.progress(meta.quests)}] {q.name} — {q.desc}
+                              </span>
+                              {done && !claimed && (
+                                <button
+                                  onClick={() => redeem(q.id)}
+                                  className="pixel-btn pixel-btn-primary shrink-0 px-2 py-1 text-[9px]"
+                                >
+                                  REDEEM +{q.reward}₽{q.skillPoints ? ` +${q.skillPoints}SP` : ""}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
                     BACK TO CAMP
                   </button>
@@ -1833,11 +1865,12 @@ export default function TarkovTD() {
               {s.phase === "hideout" && screen === "gear" && (
                 <Overlay
                   title="EQUIPMENT / RAID PREP"
-                  subtitle={`${meta.pmc.name} · kit stays on the operator; raid loadout is what you carry in`}
+                  subtitle="Worn kit · carried loadout · owned stash. EQUIP and PACK are chosen per item."
                 >
                   <div className="grid gap-3 text-left sm:grid-cols-2">
                     <div className="pixel-card">
                       <div className="font-display text-[10px] text-primary">SCAVLORD KIT</div>
+                      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Worn · tap a slot to return it to stash</p>
                       <div className="mt-2 grid gap-2 font-mono text-[10px]">
                         <button
                           onClick={() => unequipPmc("weapon")}
@@ -1889,6 +1922,7 @@ export default function TarkovTD() {
                       <div className="font-display text-[10px] text-primary">
                         RAID LOADOUT {loadout.length}/{loadoutSlots}
                       </div>
+                      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Carried in · tap a slot to return it to stash</p>
                       <div className="mt-2 grid grid-cols-3 gap-1 sm:grid-cols-4">
                         {Array.from({ length: loadoutSlots }).map((_, i) => {
                           const item = loadout[i];
@@ -1902,32 +1936,15 @@ export default function TarkovTD() {
                           return <ItemCell key={item.uid} item={item} onClick={() => fromLoadout(item.uid)} />;
                         })}
                       </div>
-                      <p className="mt-2 font-mono text-[9px] text-muted-foreground">
-                        Tap a loadout slot to return it to stash.
-                      </p>
                     </div>
                   </div>
-                  <div className="pixel-card mt-3 max-h-[240px] overflow-auto text-left">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="font-display text-[10px] text-primary">
-                        STASH {stash.length}/{stashSlots}
-                      </div>
-                      <div className="flex gap-1">
-                        {(["fit", "pack"] as const).map((mode) => (
-                          <button
-                            key={mode}
-                            onClick={() => setPrepMode(mode)}
-                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                              prepMode === mode
-                                ? "border-primary text-primary"
-                                : "border-border/60 text-muted-foreground"
-                            }`}
-                          >
-                            {mode === "fit" ? "fit kit" : "pack"}
-                          </button>
-                        ))}
-                      </div>
+                  <div className="pixel-card mt-3 max-h-[260px] overflow-auto text-left">
+                    <div className="font-display text-[10px] text-primary">
+                      STASH {stash.length}/{stashSlots}
                     </div>
+                    <p className="mt-1 font-mono text-[9px] text-muted-foreground">
+                      EQUIP → ScavLord kit · PACK → raid loadout
+                    </p>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
                         <button
@@ -1943,29 +1960,20 @@ export default function TarkovTD() {
                         </button>
                       ))}
                     </div>
-                    <p className="mt-1 font-mono text-[9px] text-muted-foreground">
-                      {prepMode === "fit"
-                        ? "Tap guns, armor, or mods to fit the operator."
-                        : "Tap an item to add it to raid loadout."}
-                    </p>
-                    <div className="mt-2 grid grid-cols-4 gap-1 sm:grid-cols-5">
-                      {Array.from({ length: stashSlots }).map((_, i) => {
-                        const item = sortedStash[i];
-                        if (!item)
-                          return (
-                            <div
-                              key={`empty-prep-${i}`}
-                              className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                            />
-                          );
-                        return (
-                          <ItemCell
+                    <div className="mt-2 space-y-1">
+                      {sortedStash.length === 0 ? (
+                        <div className="font-mono text-[9px] text-muted-foreground">Nothing in this category.</div>
+                      ) : (
+                        sortedStash.map((item) => (
+                          <PrepItemRow
                             key={item.uid}
                             item={item}
-                            onClick={() => (prepMode === "fit" ? equipOnPmc(item.uid) : toLoadout(item.uid))}
+                            actions={raidPrepActions(item, kitActions)}
+                            onEquip={() => equipOnPmc(item.uid)}
+                            onPack={() => toLoadout(item.uid)}
                           />
-                        );
-                      })}
+                        ))
+                      )}
                     </div>
                   </div>
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
@@ -1977,13 +1985,9 @@ export default function TarkovTD() {
               {s.phase === "hideout" && screen === "supplies" && (
                 <Overlay
                   title="SUPPLIES"
-                  subtitle={
-                    suppliesTab === "stash"
-                      ? `What you own · hold / right-click to sell · ${stash.length}/${stashSlots}`
-                      : `${meta.bank.toLocaleString()}₽ banked · redeem quests to unlock stock`
-                  }
+                  subtitle={`What you own / what you need · BANK ${meta.bank.toLocaleString()}₽`}
                 >
-                  <div className="mb-2 flex gap-1">
+                  <div className="mb-2 flex gap-1 md:hidden">
                     {(["stash", "market"] as const).map((tab) => (
                       <button
                         key={tab}
@@ -1998,91 +2002,30 @@ export default function TarkovTD() {
                       </button>
                     ))}
                   </div>
-                  {suppliesTab === "stash" ? (
-                    <div className="pixel-card max-h-[360px] overflow-auto text-left">
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
-                          <button
-                            key={t}
-                            onClick={() => setStashTab(t)}
-                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                              stashTab === t
-                                ? "border-primary text-primary"
-                                : "border-border/60 text-muted-foreground"
-                            }`}
-                          >
-                            {t === "all" ? "all" : t + "s"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-2 grid grid-cols-4 gap-1">
-                        {Array.from({ length: stashSlots }).map((_, i) => {
-                          const item = sortedStash[i];
-                          if (!item)
-                            return (
-                              <div
-                                key={`empty-${i}`}
-                                className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                              />
-                            );
-                          return (
-                            <ItemCell
-                              key={item.uid}
-                              item={item}
-                              onContext={() => sellFromStash(item.uid)}
-                            />
-                          );
-                        })}
-                      </div>
+                  <div className="grid gap-3 text-left md:grid-cols-2">
+                    <div className={suppliesTab === "stash" ? "" : "hidden md:block"}>
+                      <StashPanel
+                        stashSlots={stashSlots}
+                        stashCount={stash.length}
+                        sortedStash={sortedStash}
+                        stashTab={stashTab}
+                        setStashTab={setStashTab}
+                        onSell={sellFromStash}
+                      />
                     </div>
-                  ) : (
-                    <div className="pixel-card max-h-[360px] overflow-auto text-left">
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {(["weapon", "attachment", "armor", "backpack", "meds"] as const).map((t) => (
-                          <button
-                            key={t}
-                            onClick={() => setShopTab(t)}
-                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                              shopTab === t
-                                ? "border-primary text-primary"
-                                : "border-border/60 text-muted-foreground"
-                            }`}
-                          >
-                            {t === "backpack" ? "packs" : t + "s"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-2 space-y-1">
-                        {shopIds
-                          .filter((id) => ITEM_BY_ID[id]!.kind === shopTab)
-                          .map((id) => {
-                            const def = ITEM_BY_ID[id]!;
-                            const price = Math.round(def.price! * mods.buyMult);
-                            const owned =
-                              def.kind === "backpack" &&
-                              (BACKPACKS[def.ref!]?.bonus ?? 0) <= (BACKPACKS[meta.backpack]?.bonus ?? 0);
-                            return (
-                              <button
-                                key={id}
-                                onClick={() => buy(id)}
-                                disabled={owned}
-                                title={def.desc}
-                                className="flex w-full items-center justify-between border border-border/60 px-2 py-1 font-mono text-[10px] hover:border-primary disabled:opacity-40"
-                              >
-                                <span style={{ color: RARITY_COLOR[def.rarity] }}>{def.name}</span>
-                                <span className="text-primary">{owned ? "OWNED" : `${price}₽`}</span>
-                              </button>
-                            );
-                          })}
-                        {shopIds.filter((id) => ITEM_BY_ID[id]!.kind === shopTab).length === 0 && (
-                          <div className="font-mono text-[9px] text-muted-foreground">
-                            Nothing unlocked in this section yet.
-                          </div>
-                        )}
-                      </div>
+                    <div className={suppliesTab === "market" ? "" : "hidden md:block"}>
+                      <MarketPanel
+                        shopIds={shopIds}
+                        shopTab={shopTab}
+                        setShopTab={setShopTab}
+                        buyMult={mods.buyMult}
+                        backpack={meta.backpack}
+                        onBuy={buy}
+                      />
                     </div>
-                  )}
-                  <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
+                  </div>
+                  <div className="mt-2 font-display text-[10px] text-primary">BANK {meta.bank.toLocaleString()}₽</div>
+                  <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-2 w-full">
                     BACK TO CAMP
                   </button>
                 </Overlay>
@@ -2667,6 +2610,148 @@ function useLongPress(onLong?: () => void, ms = 450) {
       onPointerCancel: clear,
     },
   };
+}
+
+function PrepItemRow({
+  item,
+  actions,
+  onEquip,
+  onPack,
+}: {
+  item: Item;
+  actions: RaidPrepAction[];
+  onEquip: () => void;
+  onPack: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 border-b border-border/40 py-1">
+      <div className="min-w-0 flex-1 text-left font-mono text-[9px] leading-tight" style={{ color: RARITY_COLOR[item.rarity] }}>
+        <div className="truncate">{item.name}</div>
+        <div className="uppercase text-muted-foreground">{item.kind}</div>
+      </div>
+      {actions.includes("equip") && (
+        <button type="button" onClick={onEquip} className="pixel-btn shrink-0 px-1 py-1 text-[8px]">
+          EQUIP
+        </button>
+      )}
+      {actions.includes("pack") && (
+        <button type="button" onClick={onPack} className="pixel-btn shrink-0 px-1 py-1 text-[8px]">
+          PACK
+        </button>
+      )}
+    </div>
+  );
+}
+
+type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable";
+type ShopKindTab = "weapon" | "attachment" | "armor" | "backpack" | "meds";
+
+function StashPanel({
+  stashSlots,
+  stashCount,
+  sortedStash,
+  stashTab,
+  setStashTab,
+  onSell,
+}: {
+  stashSlots: number;
+  stashCount: number;
+  sortedStash: Item[];
+  stashTab: StashKindTab;
+  setStashTab: (tab: StashKindTab) => void;
+  onSell: (uid: number) => void;
+}) {
+  return (
+    <div className="pixel-card max-h-[360px] overflow-auto text-left">
+      <div className="font-display text-[10px] text-primary">
+        STASH {stashCount}/{stashSlots}
+      </div>
+      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Hold / right-click to sell</p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setStashTab(t)}
+            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+              stashTab === t ? "border-primary text-primary" : "border-border/60 text-muted-foreground"
+            }`}
+          >
+            {t === "all" ? "all" : t + "s"}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-1 sm:grid-cols-4">
+        {Array.from({ length: stashSlots }).map((_, i) => {
+          const item = sortedStash[i];
+          if (!item)
+            return (
+              <div key={`empty-${i}`} className="h-[42px] border border-dashed border-border/60 bg-background/40" />
+            );
+          return <ItemCell key={item.uid} item={item} onContext={() => onSell(item.uid)} />;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MarketPanel({
+  shopIds,
+  shopTab,
+  setShopTab,
+  buyMult,
+  backpack,
+  onBuy,
+}: {
+  shopIds: string[];
+  shopTab: ShopKindTab;
+  setShopTab: (tab: ShopKindTab) => void;
+  buyMult: number;
+  backpack: string;
+  onBuy: (id: string) => void;
+}) {
+  const rows = shopIds.filter((id) => ITEM_BY_ID[id]!.kind === shopTab);
+  return (
+    <div className="pixel-card max-h-[360px] overflow-auto text-left">
+      <div className="font-display text-[10px] text-primary">BLACK MARKET</div>
+      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Buy into stash · quests unlock stock</p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {(["weapon", "attachment", "armor", "backpack", "meds"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setShopTab(t)}
+            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+              shopTab === t ? "border-primary text-primary" : "border-border/60 text-muted-foreground"
+            }`}
+          >
+            {t === "backpack" ? "packs" : t + "s"}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 space-y-1">
+        {rows.map((id) => {
+          const def = ITEM_BY_ID[id]!;
+          const price = Math.round(def.price! * buyMult);
+          const owned =
+            def.kind === "backpack" && (BACKPACKS[def.ref!]?.bonus ?? 0) <= (BACKPACKS[backpack]?.bonus ?? 0);
+          return (
+            <button
+              key={id}
+              onClick={() => onBuy(id)}
+              disabled={owned}
+              title={def.desc}
+              className="flex w-full items-center justify-between border border-border/60 px-2 py-1 font-mono text-[10px] hover:border-primary disabled:opacity-40"
+            >
+              <span style={{ color: RARITY_COLOR[def.rarity] }}>{def.name}</span>
+              <span className="text-primary">{owned ? "OWNED" : `${price}₽`}</span>
+            </button>
+          );
+        })}
+        {rows.length === 0 && (
+          <div className="font-mono text-[9px] text-muted-foreground">Nothing unlocked in this section yet.</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ItemCell({
