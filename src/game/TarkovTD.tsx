@@ -1633,16 +1633,36 @@ export default function TarkovTD() {
       >
 
         {s.phase === "hideout" ? (
-          <header className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 border-b-2 border-border pb-1 font-mono text-[10px] sm:text-[11px]">
-            <h1 className="font-display text-[11px] tracking-tight text-primary sm:text-sm">SCAV CAMP</h1>
-            <span className="text-foreground">
-              {meta.pmc.name} · LVL {meta.pmc.level}
-            </span>
-            <Stat label="XP" value={`${meta.pmc.xp}/${xpForLevel(meta.pmc.level)}`} />
-            <Stat label="COND" value={campScar ? campScar.name : "STABLE"} tone={campScar ? "bad" : "good"} />
-            <Stat label="SP" value={`${meta.skillPoints}`} />
-            <div className="ml-auto">
-              <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
+          <header className="mb-1.5 border-b-2 border-border pb-1.5">
+            <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+              <div className="min-w-0">
+                <h1 className="font-display text-xs tracking-tight text-primary sm:text-sm">SCAV CAMP</h1>
+                <div className="mt-1 font-display text-[11px] leading-tight text-foreground sm:text-xs">
+                  {meta.pmc.name} · LVL {meta.pmc.level}
+                </div>
+              </div>
+              <div className="min-w-[148px] flex-1 basis-[148px] sm:max-w-[240px]">
+                <div className="font-mono text-[10px] text-muted-foreground sm:text-[11px]">
+                  XP <span className="text-foreground">{meta.pmc.xp} / {xpForLevel(meta.pmc.level)}</span>
+                </div>
+                <div className="mt-1 h-2.5 border-2 border-border bg-background">
+                  <div
+                    className="h-full bg-primary"
+                    style={{
+                      width: `${Math.min(100, xpForLevel(meta.pmc.level) ? (meta.pmc.xp / xpForLevel(meta.pmc.level)) * 100 : 0)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] sm:text-xs">
+                <span className={campScar ? "text-destructive" : "text-accent"}>
+                  {campScar ? campScar.name : "STABLE"}
+                </span>
+                <span className="text-foreground">{meta.skillPoints} SP</span>
+              </div>
+              <div className="ml-auto">
+                <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
+              </div>
             </div>
           </header>
         ) : (
@@ -1678,7 +1698,7 @@ export default function TarkovTD() {
               className="pixel-frame relative mx-auto w-full overflow-hidden"
               style={{
                 maxWidth: `min(100%, calc((100dvh - ${
-                  s.phase === "hideout" ? "7rem" : "var(--td-chrome, 13rem)"
+                  s.phase === "hideout" ? "8.25rem" : "var(--td-chrome, 13rem)"
                 }) * ${s.phase === "hideout" ? CAMP_IMAGE_W / CAMP_IMAGE_H : W / H}))`,
               }}
             >
@@ -1788,7 +1808,7 @@ export default function TarkovTD() {
                     </div>
                   )}
                   {scavTab === "quests" && (
-                    <div className="pixel-card max-h-[280px] overflow-auto text-left">
+                    <div className="pixel-card pixel-scrollbar max-h-[280px] overflow-auto text-left">
                       <div className="mt-2 flex flex-wrap gap-1">
                         {(["all", "open", "done"] as const).map((t) => (
                           <button
@@ -1866,9 +1886,11 @@ export default function TarkovTD() {
                 <Overlay
                   title="EQUIPMENT / RAID PREP"
                   subtitle="Worn kit · carried loadout · owned stash. EQUIP and PACK are chosen per item."
+                  layout="fill"
                 >
-                  <div className="grid gap-3 text-left sm:grid-cols-2">
-                    <div className="pixel-card">
+                  <div className="flex h-full min-h-0 flex-col gap-2">
+                    <div className="grid min-h-0 flex-1 gap-3 text-left sm:grid-cols-2 lg:grid-cols-[minmax(190px,0.28fr)_minmax(150px,0.22fr)_minmax(0,1fr)] lg:items-stretch">
+                    <div className="pixel-card lg:self-start">
                       <div className="font-display text-[10px] text-primary">SCAVLORD KIT</div>
                       <p className="mt-1 font-mono text-[9px] text-muted-foreground">Worn · tap a slot to return it to stash</p>
                       <div className="mt-2 grid gap-2 font-mono text-[10px]">
@@ -1918,12 +1940,12 @@ export default function TarkovTD() {
                       </div>
                     </div>
 
-                    <div className="pixel-card">
+                    <div className="pixel-card lg:self-start">
                       <div className="font-display text-[10px] text-primary">
                         RAID LOADOUT {loadout.length}/{loadoutSlots}
                       </div>
                       <p className="mt-1 font-mono text-[9px] text-muted-foreground">Carried in · tap a slot to return it to stash</p>
-                      <div className="mt-2 grid grid-cols-3 gap-1 sm:grid-cols-4">
+                      <div className="mt-2 grid grid-cols-3 gap-1">
                         {Array.from({ length: loadoutSlots }).map((_, i) => {
                           const item = loadout[i];
                           if (!item)
@@ -1937,48 +1959,51 @@ export default function TarkovTD() {
                         })}
                       </div>
                     </div>
+                    <div className="pixel-card flex min-h-0 flex-col sm:col-span-2 lg:col-span-1 lg:h-full">
+                      <div className="shrink-0">
+                        <div className="font-display text-[10px] text-primary">
+                          STASH {stash.length}/{stashSlots}
+                        </div>
+                        <p className="mt-1 font-mono text-[9px] text-muted-foreground">
+                          EQUIP → ScavLord kit · PACK → raid loadout
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
+                            <button
+                              key={t}
+                              onClick={() => setStashTab(t)}
+                              className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+                                stashTab === t
+                                  ? "border-primary text-primary"
+                                  : "border-border/60 text-muted-foreground"
+                              }`}
+                            >
+                              {t === "all" ? "all" : t + "s"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="pixel-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto max-h-[36vh] lg:max-h-none">
+                        {sortedStash.length === 0 ? (
+                          <div className="font-mono text-[9px] text-muted-foreground">Nothing in this category.</div>
+                        ) : (
+                          sortedStash.map((item) => (
+                            <PrepItemRow
+                              key={item.uid}
+                              item={item}
+                              actions={raidPrepActions(item, kitActions)}
+                              onEquip={() => equipOnPmc(item.uid)}
+                              onPack={() => toLoadout(item.uid)}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </div>
+                    </div>
+                    <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary w-full shrink-0">
+                      BACK TO CAMP
+                    </button>
                   </div>
-                  <div className="pixel-card mt-3 max-h-[260px] overflow-auto text-left">
-                    <div className="font-display text-[10px] text-primary">
-                      STASH {stash.length}/{stashSlots}
-                    </div>
-                    <p className="mt-1 font-mono text-[9px] text-muted-foreground">
-                      EQUIP → ScavLord kit · PACK → raid loadout
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
-                        <button
-                          key={t}
-                          onClick={() => setStashTab(t)}
-                          className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                            stashTab === t
-                              ? "border-primary text-primary"
-                              : "border-border/60 text-muted-foreground"
-                          }`}
-                        >
-                          {t === "all" ? "all" : t + "s"}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mt-2 space-y-1">
-                      {sortedStash.length === 0 ? (
-                        <div className="font-mono text-[9px] text-muted-foreground">Nothing in this category.</div>
-                      ) : (
-                        sortedStash.map((item) => (
-                          <PrepItemRow
-                            key={item.uid}
-                            item={item}
-                            actions={raidPrepActions(item, kitActions)}
-                            onEquip={() => equipOnPmc(item.uid)}
-                            onPack={() => toLoadout(item.uid)}
-                          />
-                        ))
-                      )}
-                    </div>
-                  </div>
-                  <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
-                    BACK TO CAMP
-                  </button>
                 </Overlay>
               )}
 
@@ -1986,8 +2011,10 @@ export default function TarkovTD() {
                 <Overlay
                   title="SUPPLIES"
                   subtitle={`What you own / what you need · BANK ${meta.bank.toLocaleString()}₽`}
+                  layout="fill"
                 >
-                  <div className="mb-2 flex gap-1 md:hidden">
+                  <div className="flex h-full min-h-0 flex-col">
+                  <div className="mb-2 flex shrink-0 gap-1 md:hidden">
                     {(["stash", "market"] as const).map((tab) => (
                       <button
                         key={tab}
@@ -2002,8 +2029,8 @@ export default function TarkovTD() {
                       </button>
                     ))}
                   </div>
-                  <div className="grid gap-3 text-left md:grid-cols-2">
-                    <div className={suppliesTab === "stash" ? "" : "hidden md:block"}>
+                  <div className="grid min-h-0 flex-1 gap-3 text-left md:grid-cols-2">
+                    <div className={suppliesTab === "stash" ? "min-h-0" : "hidden min-h-0 md:block"}>
                       <StashPanel
                         stashSlots={stashSlots}
                         stashCount={stash.length}
@@ -2013,7 +2040,7 @@ export default function TarkovTD() {
                         onSell={sellFromStash}
                       />
                     </div>
-                    <div className={suppliesTab === "market" ? "" : "hidden md:block"}>
+                    <div className={suppliesTab === "market" ? "min-h-0" : "hidden min-h-0 md:block"}>
                       <MarketPanel
                         shopIds={shopIds}
                         shopTab={shopTab}
@@ -2024,10 +2051,11 @@ export default function TarkovTD() {
                       />
                     </div>
                   </div>
-                  <div className="mt-2 font-display text-[10px] text-primary">BANK {meta.bank.toLocaleString()}₽</div>
-                  <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-2 w-full">
+                  <div className="mt-2 shrink-0 font-display text-[10px] text-primary">BANK {meta.bank.toLocaleString()}₽</div>
+                  <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-2 w-full shrink-0">
                     BACK TO CAMP
                   </button>
+                  </div>
                 </Overlay>
               )}
 
@@ -2147,7 +2175,7 @@ export default function TarkovTD() {
                       {extractValuables.length === 0 ? (
                         <div className="mt-1 font-mono text-[10px] text-muted-foreground">None recovered.</div>
                       ) : (
-                        <div className="mt-2 space-y-1">
+                        <div className="pixel-scrollbar mt-2 max-h-[180px] space-y-1 overflow-y-auto">
                           {extractValuables.map((i) => {
                             const selling = sellValuableUids.has(i.uid);
                             return (
@@ -2293,7 +2321,7 @@ export default function TarkovTD() {
           </div>
 
           {s.phase !== "hideout" && (
-          <aside className="flex flex-col gap-3 lg:max-h-[calc(100dvh-var(--td-chrome,13rem))] lg:overflow-y-auto lg:pr-1 td-side">
+          <aside className="pixel-scrollbar flex flex-col gap-3 lg:max-h-[calc(100dvh-var(--td-chrome,13rem))] lg:overflow-y-auto lg:pr-1 td-side">
             <div className="pixel-card">
               <div className="font-display text-[10px] text-primary">RAID CONTROL</div>
               <p className="mt-2 font-mono text-[11px] text-muted-foreground">
@@ -2662,33 +2690,37 @@ function StashPanel({
   onSell: (uid: number) => void;
 }) {
   return (
-    <div className="pixel-card max-h-[360px] overflow-auto text-left">
-      <div className="font-display text-[10px] text-primary">
-        STASH {stashCount}/{stashSlots}
+    <div className="pixel-card flex max-h-[min(360px,50dvh)] min-h-0 flex-col text-left md:max-h-[min(440px,58dvh)]">
+      <div className="shrink-0">
+        <div className="font-display text-[10px] text-primary">
+          STASH {stashCount}/{stashSlots}
+        </div>
+        <p className="mt-1 font-mono text-[9px] text-muted-foreground">Hold / right-click to sell</p>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setStashTab(t)}
+              className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+                stashTab === t ? "border-primary text-primary" : "border-border/60 text-muted-foreground"
+              }`}
+            >
+              {t === "all" ? "all" : t + "s"}
+            </button>
+          ))}
+        </div>
       </div>
-      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Hold / right-click to sell</p>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setStashTab(t)}
-            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-              stashTab === t ? "border-primary text-primary" : "border-border/60 text-muted-foreground"
-            }`}
-          >
-            {t === "all" ? "all" : t + "s"}
-          </button>
-        ))}
-      </div>
-      <div className="mt-2 grid grid-cols-3 gap-1 sm:grid-cols-4">
-        {Array.from({ length: stashSlots }).map((_, i) => {
-          const item = sortedStash[i];
-          if (!item)
-            return (
-              <div key={`empty-${i}`} className="h-[42px] border border-dashed border-border/60 bg-background/40" />
-            );
-          return <ItemCell key={item.uid} item={item} onContext={() => onSell(item.uid)} />;
-        })}
+      <div className="pixel-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto">
+        <div className="grid grid-cols-3 gap-1 sm:grid-cols-4">
+          {Array.from({ length: stashSlots }).map((_, i) => {
+            const item = sortedStash[i];
+            if (!item)
+              return (
+                <div key={`empty-${i}`} className="h-[42px] border border-dashed border-border/60 bg-background/40" />
+              );
+            return <ItemCell key={item.uid} item={item} onContext={() => onSell(item.uid)} />;
+          })}
+        </div>
       </div>
     </div>
   );
@@ -2711,44 +2743,48 @@ function MarketPanel({
 }) {
   const rows = shopIds.filter((id) => ITEM_BY_ID[id]!.kind === shopTab);
   return (
-    <div className="pixel-card max-h-[360px] overflow-auto text-left">
-      <div className="font-display text-[10px] text-primary">BLACK MARKET</div>
-      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Buy into stash · quests unlock stock</p>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {(["weapon", "attachment", "armor", "backpack", "meds"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setShopTab(t)}
-            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-              shopTab === t ? "border-primary text-primary" : "border-border/60 text-muted-foreground"
-            }`}
-          >
-            {t === "backpack" ? "packs" : t + "s"}
-          </button>
-        ))}
-      </div>
-      <div className="mt-2 space-y-1">
-        {rows.map((id) => {
-          const def = ITEM_BY_ID[id]!;
-          const price = Math.round(def.price! * buyMult);
-          const owned =
-            def.kind === "backpack" && (BACKPACKS[def.ref!]?.bonus ?? 0) <= (BACKPACKS[backpack]?.bonus ?? 0);
-          return (
+    <div className="pixel-card flex max-h-[min(360px,50dvh)] min-h-0 flex-col text-left md:max-h-[min(440px,58dvh)]">
+      <div className="shrink-0">
+        <div className="font-display text-[10px] text-primary">BLACK MARKET</div>
+        <p className="mt-1 font-mono text-[9px] text-muted-foreground">Buy into stash · quests unlock stock</p>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {(["weapon", "attachment", "armor", "backpack", "meds"] as const).map((t) => (
             <button
-              key={id}
-              onClick={() => onBuy(id)}
-              disabled={owned}
-              title={def.desc}
-              className="flex w-full items-center justify-between border border-border/60 px-2 py-1 font-mono text-[10px] hover:border-primary disabled:opacity-40"
+              key={t}
+              onClick={() => setShopTab(t)}
+              className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+                shopTab === t ? "border-primary text-primary" : "border-border/60 text-muted-foreground"
+              }`}
             >
-              <span style={{ color: RARITY_COLOR[def.rarity] }}>{def.name}</span>
-              <span className="text-primary">{owned ? "OWNED" : `${price}₽`}</span>
+              {t === "backpack" ? "packs" : t + "s"}
             </button>
-          );
-        })}
-        {rows.length === 0 && (
-          <div className="font-mono text-[9px] text-muted-foreground">Nothing unlocked in this section yet.</div>
-        )}
+          ))}
+        </div>
+      </div>
+      <div className="pixel-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto">
+        <div className="space-y-1">
+          {rows.map((id) => {
+            const def = ITEM_BY_ID[id]!;
+            const price = Math.round(def.price! * buyMult);
+            const owned =
+              def.kind === "backpack" && (BACKPACKS[def.ref!]?.bonus ?? 0) <= (BACKPACKS[backpack]?.bonus ?? 0);
+            return (
+              <button
+                key={id}
+                onClick={() => onBuy(id)}
+                disabled={owned}
+                title={def.desc}
+                className="flex w-full items-center justify-between border border-border/60 px-2 py-1 font-mono text-[10px] hover:border-primary disabled:opacity-40"
+              >
+                <span style={{ color: RARITY_COLOR[def.rarity] }}>{def.name}</span>
+                <span className="text-primary">{owned ? "OWNED" : `${price}₽`}</span>
+              </button>
+            );
+          })}
+          {rows.length === 0 && (
+            <div className="font-mono text-[9px] text-muted-foreground">Nothing unlocked in this section yet.</div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -2822,16 +2858,29 @@ function Overlay({
   title,
   subtitle,
   children,
+  layout = "center",
 }: {
   title: string;
   subtitle: string;
   children: React.ReactNode;
+  layout?: "center" | "fill";
 }) {
+  const fill = layout === "fill";
   return (
-    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 overflow-auto bg-background/90 p-4 text-center backdrop-blur-[2px]">
-      <h2 className="font-display text-lg text-primary">{title}</h2>
-      <p className="font-mono text-[11px] text-muted-foreground">{subtitle}</p>
-      <div className="w-full max-w-4xl">{children}</div>
+    <div
+      className={`absolute inset-0 z-10 flex flex-col items-center gap-2 bg-background/90 p-3 text-center backdrop-blur-[2px] pixel-scrollbar sm:p-4 ${
+        fill ? "overflow-hidden" : "justify-center overflow-auto"
+      }`}
+    >
+      <h2 className="shrink-0 font-display text-base text-primary sm:text-lg">{title}</h2>
+      <p className="shrink-0 font-mono text-[11px] text-muted-foreground">{subtitle}</p>
+      <div
+        className={`w-full ${
+          fill ? "flex min-h-0 flex-1 flex-col overflow-hidden max-w-6xl" : "max-w-4xl"
+        }`}
+      >
+        {children}
+      </div>
     </div>
   );
 }
