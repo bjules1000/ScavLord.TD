@@ -64,6 +64,8 @@ import {
   type KillBook,
 } from "./combat";
 import { settleHaul } from "./extract";
+import CampHub from "./hub/CampHub";
+import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 
 const W = COLS * TILE;
 const H = ROWS * TILE;
@@ -296,7 +298,7 @@ export default function TarkovTD() {
   const metaRef = useRef<Meta>(loadMeta());
   const uidRef = useRef(1);
   const [mapId, setMapId] = useState<string>("kolkhoz");
-  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear">("hideout");
+  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "stash" | "market">("hideout");
   const [shopTab, setShopTab] = useState<"weapon" | "attachment" | "armor" | "backpack" | "meds">("weapon");
   const [stashTab, setStashTab] = useState<
     "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
@@ -1620,7 +1622,7 @@ export default function TarkovTD() {
         <header className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 border-b-2 border-border pb-2 sm:mb-4 sm:gap-3 sm:pb-3">
           <div className="min-w-0">
             <h1 className="truncate font-display text-sm tracking-tight text-primary sm:text-2xl">
-              {mapRef.current.def.name}
+              {s.phase === "hideout" ? "SCAV CAMP" : mapRef.current.def.name}
             </h1>
             <p className="mt-1 hidden font-mono text-xs uppercase tracking-widest text-muted-foreground sm:block td-hide-short">
               8-bit extraction tower defense · loot, kit, extract
@@ -1641,34 +1643,65 @@ export default function TarkovTD() {
             <div
               className="pixel-frame relative mx-auto w-full overflow-hidden"
               style={{
-                maxWidth: `min(100%, calc((100dvh - var(--td-chrome, 13rem)) * ${W} / ${H}))`,
+                maxWidth: `min(100%, calc((100dvh - var(--td-chrome, 13rem)) * ${
+                  s.phase === "hideout" ? CAMP_IMAGE_W / CAMP_IMAGE_H : W / H
+                }))`,
               }}
             >
 
-              <canvas
-                ref={canvasRef}
-                width={W}
-                height={H}
-                onMouseMove={(ev) => {
-                  const [tx, ty] = toTile(ev);
-                  gs.current.hoverTx = tx;
-                  gs.current.hoverTy = ty;
-                }}
-                onMouseLeave={() => {
-                  gs.current.hoverTx = -1;
-                }}
-                onClick={onClick}
-                onDragOver={(ev) => ev.preventDefault()}
-                onDrop={canvasDrop}
-                className="block w-full cursor-crosshair"
-                style={{ imageRendering: "pixelated", aspectRatio: `${W} / ${H}` }}
-              />
+              {s.phase === "hideout" ? (
+                /* M2A camp home. Pre-M2A box-menu dashboard is replaced by hotspots + the overlays below. */
+                <CampHub onAction={(action: HubAction) => setScreen(action)} />
+              ) : (
+                <canvas
+                  ref={canvasRef}
+                  width={W}
+                  height={H}
+                  onMouseMove={(ev) => {
+                    const [tx, ty] = toTile(ev);
+                    gs.current.hoverTx = tx;
+                    gs.current.hoverTy = ty;
+                  }}
+                  onMouseLeave={() => {
+                    gs.current.hoverTx = -1;
+                  }}
+                  onClick={onClick}
+                  onDragOver={(ev) => ev.preventDefault()}
+                  onDrop={canvasDrop}
+                  className="block w-full cursor-crosshair"
+                  style={{ imageRendering: "pixelated", aspectRatio: `${W} / ${H}` }}
+                />
+              )}
 
               {s.phase === "hideout" && screen === "skills" && (
                 <Overlay
-                  title="SKILLS"
-                  subtitle={`${meta.skillPoints} skill point(s) available — quests pay them out`}
+                  title="SCAVLORD"
+                  subtitle={`${meta.pmc.name} · ${meta.skillPoints} skill point(s) — quests pay them out`}
                 >
+                  <div className="pixel-card mb-3 text-left font-mono text-[10px]">
+                    <div className="font-display text-[10px] text-primary">
+                      {meta.pmc.name} · LVL {meta.pmc.level}
+                    </div>
+                    <div className="text-muted-foreground">
+                      {BACKPACKS[meta.backpack]?.name ?? "SLING BAG"} ({backpackSlots()} slots) · XP {meta.pmc.xp}/
+                      {xpForLevel(meta.pmc.level)} · Deaths {meta.pmc.deaths}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {meta.pmc.debuffs.length === 0 ? (
+                        <span className="text-accent">NO SCARS YET</span>
+                      ) : (
+                        meta.pmc.debuffs.map((d) => (
+                          <span
+                            key={d}
+                            title={DEBUFF_BY_ID[d]?.desc}
+                            className="border border-destructive/70 px-1 text-destructive"
+                          >
+                            {DEBUFF_BY_ID[d]?.name ?? d}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
                   <div className="grid gap-2 text-left sm:grid-cols-2">
                     {SKILLS.map((sk) => {
                       const owned = meta.skills.includes(sk.id);
@@ -1693,19 +1726,87 @@ export default function TarkovTD() {
                       );
                     })}
                   </div>
+                  <div className="pixel-card mt-3 max-h-[200px] overflow-auto text-left">
+                    <div className="font-display text-[10px] text-primary">QUESTS</div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {(["all", "open", "done"] as const).map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setQuestFilter(t)}
+                          className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+                            questFilter === t
+                              ? "border-primary text-primary"
+                              : "border-border/60 text-muted-foreground"
+                          }`}
+                        >
+                          {t === "open" ? "not completed" : t === "done" ? "completed" : "all"}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-2 space-y-1 font-mono text-[10px]">
+                      {QUESTS.filter((q) => {
+                        const d = q.done(meta.quests);
+                        return questFilter === "all" || (questFilter === "done" ? d : !d);
+                      }).map((q) => {
+                        const done = q.done(meta.quests);
+                        const claimed = meta.claimed.includes(q.id);
+                        return (
+                          <div
+                            key={q.id}
+                            className={`flex items-center justify-between gap-2 border-b border-border/40 pb-1 ${
+                              claimed ? "text-muted-foreground" : done ? "text-accent" : "text-muted-foreground"
+                            }`}
+                          >
+                            <span>
+                              [{claimed ? "✓" : done ? "!" : q.progress(meta.quests)}] {q.name} — {q.desc}
+                            </span>
+                            {done && !claimed && (
+                              <button
+                                onClick={() => redeem(q.id)}
+                                className="pixel-btn pixel-btn-primary shrink-0 px-2 py-1 text-[9px]"
+                              >
+                                REDEEM +{q.reward}₽{q.skillPoints ? ` +${q.skillPoints}SP` : ""}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
-                    BACK TO HIDEOUT
+                    BACK TO CAMP
                   </button>
                 </Overlay>
               )}
 
               {s.phase === "hideout" && screen === "region" && (
-                <Overlay title="REGION MAP" subtitle="Pick your insertion point. Higher threat, better loot.">
+                <Overlay title="DESTINATIONS" subtitle="Pick your insertion point. Higher threat, better loot.">
                   <RegionMap
                     mapId={mapId}
                     onPick={(id) => setMapId(id)}
                     onBack={() => setScreen("hideout")}
                   />
+                  <div className="pixel-card mt-3 text-left">
+                    <div className="font-display text-[10px] text-primary">
+                      LOADOUT {loadout.length}/{loadoutSlots}
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-1">
+                      {Array.from({ length: loadoutSlots }).map((_, i) => {
+                        const item = loadout[i];
+                        if (!item)
+                          return (
+                            <div
+                              key={`empty-${i}`}
+                              className="h-[42px] border border-dashed border-border/60 bg-background/40"
+                            />
+                          );
+                        return <ItemCell key={item.uid} item={item} onClick={() => fromLoadout(item.uid)} />;
+                      })}
+                    </div>
+                    <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-3 w-full">
+                      DEPLOY TO {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
+                    </button>
+                  </div>
                 </Overlay>
               )}
 
@@ -1778,225 +1879,109 @@ export default function TarkovTD() {
                     </div>
                   </div>
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
-                    BACK TO HIDEOUT
+                    BACK TO CAMP
                   </button>
                 </Overlay>
               )}
 
-              {s.phase === "hideout" && screen === "hideout" && (
-                <Overlay title="HIDEOUT" subtitle={`Run #${meta.runs + 1} — kit your operator, then deploy`}>
-                  <div className="grid gap-3 text-left sm:grid-cols-2">
-                    <div className="pixel-card sm:col-span-2 flex flex-wrap items-center justify-between gap-3">
-                      <div className="font-mono text-[10px]">
-                        <div className="font-display text-[10px] text-primary">
-                          {meta.pmc.name} · LVL {meta.pmc.level}
-                        </div>
-                        <div className="text-muted-foreground">
-                          {BACKPACKS[meta.backpack]?.name ?? "SLING BAG"} ({backpackSlots()} slots) ·{" "}
-                        </div>
-                        <div className="text-muted-foreground">
-                          XP {meta.pmc.xp}/{xpForLevel(meta.pmc.level)} · Deaths {meta.pmc.deaths} ·{" "}
-                          {WEAPONS[meta.pmc.weapon]?.name ?? "BREAK-ACTION"}
-                          {meta.pmc.armor ? ` · ${ARMORS[meta.pmc.armor]?.name}` : " · NO ARMOR"}
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {meta.pmc.debuffs.length === 0 ? (
-                            <span className="text-accent">NO SCARS YET</span>
-                          ) : (
-                            meta.pmc.debuffs.map((d) => (
-                              <span
-                                key={d}
-                                title={DEBUFF_BY_ID[d]?.desc}
-                                className="border border-destructive/70 px-1 text-destructive"
-                              >
-                                {DEBUFF_BY_ID[d]?.name ?? d}
-                              </span>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button onClick={() => setScreen("gear")} className="pixel-btn">
-                          EQUIP KIT
+              {s.phase === "hideout" && screen === "stash" && (
+                <Overlay
+                  title="STASH"
+                  subtitle={`Tap to send into loadout · hold / right-click to sell · ${stash.length}/${stashSlots}`}
+                >
+                  <div className="pixel-card max-h-[360px] overflow-auto text-left">
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setStashTab(t)}
+                          className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+                            stashTab === t
+                              ? "border-primary text-primary"
+                              : "border-border/60 text-muted-foreground"
+                          }`}
+                        >
+                          {t === "all" ? "all" : t + "s"}
                         </button>
-                        <button onClick={() => setScreen("skills")} className="pixel-btn">
-                          SKILLS · {meta.skillPoints} PT
-                        </button>
-                        <button onClick={() => setScreen("region")} className="pixel-btn">
-                          REGION MAP · {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
-                        </button>
-                      </div>
+                      ))}
                     </div>
-
-                    <div className="pixel-card">
-                      <div className="font-display text-[10px] text-primary">
-                        LOADOUT {loadout.length}/{loadoutSlots}
-                      </div>
-                      <div className="mt-2 grid grid-cols-3 gap-1">
-                        {Array.from({ length: loadoutSlots }).map((_, i) => {
-                          const item = loadout[i];
-                          if (!item)
-                            return (
-                              <div
-                                key={`empty-${i}`}
-                                className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                              />
-                            );
-                          return <ItemCell key={item.uid} item={item} onClick={() => fromLoadout(item.uid)} />;
-                        })}
-                      </div>
-                      <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-3 w-full">
-                        DEPLOY TO {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
-                      </button>
-                    </div>
-
-
-                    <div className="pixel-card max-h-[240px] overflow-auto">
-                      <div className="flex items-center justify-between">
-                        <div className="font-display text-[10px] text-primary">
-                          STASH <span className="text-muted-foreground">· TAP TO EQUIP · HOLD TO SELL</span>
-                        </div>
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {stash.length}/{stashSlots}
-                        </span>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
-                          <button
-                            key={t}
-                            onClick={() => setStashTab(t)}
-                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                              stashTab === t
-                                ? "border-primary text-primary"
-                                : "border-border/60 text-muted-foreground"
-                            }`}
-                          >
-                            {t === "all" ? "all" : t + "s"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-2 grid grid-cols-4 gap-1">
-                        {Array.from({ length: stashSlots }).map((_, i) => {
-                          const item = sortedStash[i];
-                          if (!item)
-                            return (
-                              <div
-                                key={`empty-${i}`}
-                                className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                              />
-                            );
-                          return (
-                            <ItemCell
-                              key={item.uid}
-                              item={item}
-                              onClick={() => toLoadout(item.uid)}
-                              onContext={() => sellFromStash(item.uid)}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="pixel-card max-h-[240px] overflow-auto">
-                      <div className="font-display text-[10px] text-primary">
-                        BLACK MARKET · {meta.bank.toLocaleString()}₽
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {(["weapon", "attachment", "armor", "backpack", "meds"] as const).map((t) => (
-                          <button
-                            key={t}
-                            onClick={() => setShopTab(t)}
-                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                              shopTab === t
-                                ? "border-primary text-primary"
-                                : "border-border/60 text-muted-foreground"
-                            }`}
-                          >
-                            {t === "backpack" ? "packs" : t + "s"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-2 space-y-1">
-                        {shopIds
-                          .filter((id) => ITEM_BY_ID[id]!.kind === shopTab)
-                          .map((id) => {
-                            const def = ITEM_BY_ID[id]!;
-                            const price = Math.round(def.price! * mods.buyMult);
-                            const owned =
-                              def.kind === "backpack" &&
-                              (BACKPACKS[def.ref!]?.bonus ?? 0) <= (BACKPACKS[meta.backpack]?.bonus ?? 0);
-                            return (
-                              <button
-                                key={id}
-                                onClick={() => buy(id)}
-                                disabled={owned}
-                                title={def.desc}
-                                className="flex w-full items-center justify-between border border-border/60 px-2 py-1 font-mono text-[10px] hover:border-primary disabled:opacity-40"
-                              >
-                                <span style={{ color: RARITY_COLOR[def.rarity] }}>{def.name}</span>
-                                <span className="text-primary">{owned ? "OWNED" : `${price}₽`}</span>
-                              </button>
-                            );
-                          })}
-                        {shopIds.filter((id) => ITEM_BY_ID[id]!.kind === shopTab).length === 0 && (
-                          <div className="font-mono text-[9px] text-muted-foreground">
-                            Nothing unlocked in this section yet.
-                          </div>
-                        )}
-                        <div className="pt-1 font-mono text-[9px] text-muted-foreground">
-                          Redeem quests to unlock more stock.
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pixel-card max-h-[240px] overflow-auto">
-                      <div className="font-display text-[10px] text-primary">QUESTS</div>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {(["all", "open", "done"] as const).map((t) => (
-                          <button
-                            key={t}
-                            onClick={() => setQuestFilter(t)}
-                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                              questFilter === t
-                                ? "border-primary text-primary"
-                                : "border-border/60 text-muted-foreground"
-                            }`}
-                          >
-                            {t === "open" ? "not completed" : t === "done" ? "completed" : "all"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-2 space-y-1 font-mono text-[10px]">
-                        {QUESTS.filter((q) => {
-                          const d = q.done(meta.quests);
-                          return questFilter === "all" || (questFilter === "done" ? d : !d);
-                        }).map((q) => {
-                          const done = q.done(meta.quests);
-                          const claimed = meta.claimed.includes(q.id);
+                    <div className="mt-2 grid grid-cols-4 gap-1">
+                      {Array.from({ length: stashSlots }).map((_, i) => {
+                        const item = sortedStash[i];
+                        if (!item)
                           return (
                             <div
-                              key={q.id}
-                              className={`flex items-center justify-between gap-2 border-b border-border/40 pb-1 ${
-                                claimed ? "text-muted-foreground" : done ? "text-accent" : "text-muted-foreground"
-                              }`}
-                            >
-                              <span>
-                                [{claimed ? "✓" : done ? "!" : q.progress(meta.quests)}] {q.name} — {q.desc}
-                              </span>
-                              {done && !claimed && (
-                                <button
-                                  onClick={() => redeem(q.id)}
-                                  className="pixel-btn pixel-btn-primary shrink-0 px-2 py-1 text-[9px]"
-                                >
-                                  REDEEM +{q.reward}₽{q.skillPoints ? ` +${q.skillPoints}SP` : ""}
-                                </button>
-                              )}
-                            </div>
+                              key={`empty-${i}`}
+                              className="h-[42px] border border-dashed border-border/60 bg-background/40"
+                            />
                           );
-                        })}
-                      </div>
+                        return (
+                          <ItemCell
+                            key={item.uid}
+                            item={item}
+                            onClick={() => toLoadout(item.uid)}
+                            onContext={() => sellFromStash(item.uid)}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
+                  <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
+                    BACK TO CAMP
+                  </button>
+                </Overlay>
+              )}
+
+              {s.phase === "hideout" && screen === "market" && (
+                <Overlay title="BLACK MARKET" subtitle={`${meta.bank.toLocaleString()}₽ on hand · redeem quests to unlock stock`}>
+                  <div className="pixel-card max-h-[360px] overflow-auto text-left">
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {(["weapon", "attachment", "armor", "backpack", "meds"] as const).map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setShopTab(t)}
+                          className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
+                            shopTab === t
+                              ? "border-primary text-primary"
+                              : "border-border/60 text-muted-foreground"
+                          }`}
+                        >
+                          {t === "backpack" ? "packs" : t + "s"}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {shopIds
+                        .filter((id) => ITEM_BY_ID[id]!.kind === shopTab)
+                        .map((id) => {
+                          const def = ITEM_BY_ID[id]!;
+                          const price = Math.round(def.price! * mods.buyMult);
+                          const owned =
+                            def.kind === "backpack" &&
+                            (BACKPACKS[def.ref!]?.bonus ?? 0) <= (BACKPACKS[meta.backpack]?.bonus ?? 0);
+                          return (
+                            <button
+                              key={id}
+                              onClick={() => buy(id)}
+                              disabled={owned}
+                              title={def.desc}
+                              className="flex w-full items-center justify-between border border-border/60 px-2 py-1 font-mono text-[10px] hover:border-primary disabled:opacity-40"
+                            >
+                              <span style={{ color: RARITY_COLOR[def.rarity] }}>{def.name}</span>
+                              <span className="text-primary">{owned ? "OWNED" : `${price}₽`}</span>
+                            </button>
+                          );
+                        })}
+                      {shopIds.filter((id) => ITEM_BY_ID[id]!.kind === shopTab).length === 0 && (
+                        <div className="font-mono text-[9px] text-muted-foreground">
+                          Nothing unlocked in this section yet.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
+                    BACK TO CAMP
+                  </button>
                 </Overlay>
               )}
 
@@ -2192,7 +2177,7 @@ export default function TarkovTD() {
                         disabled={!extractPreview.ok}
                         className="pixel-btn pixel-btn-primary disabled:opacity-40"
                       >
-                        BACK TO HIDEOUT
+                        BACK TO CAMP
                       </button>
                     </div>
                   </div>
@@ -2209,7 +2194,7 @@ export default function TarkovTD() {
                   }
                 >
                   <button onClick={() => toHideout(false)} className="pixel-btn pixel-btn-primary">
-                    BACK TO HIDEOUT
+                    BACK TO CAMP
                   </button>
                 </Overlay>
               )}
@@ -2266,7 +2251,7 @@ export default function TarkovTD() {
               <div className="font-display text-[10px] text-primary">RAID CONTROL</div>
               <p className="mt-2 font-mono text-[11px] text-muted-foreground">
                 {s.phase === "hideout"
-                  ? "In the hideout. Pick a loadout and deploy."
+                  ? "Camp. Hover or tap objects — stash, map, radio, kit, ScavLord."
                   : s.phase === "prep"
                     ? `Next: WAVE ${s.wave + 1} — ${nextWaveName}`
                     : s.phase === "combat"
@@ -2507,7 +2492,7 @@ function RegionMap({
       </div>
 
       <button onClick={onBack} className="pixel-btn pixel-btn-primary w-full">
-        CONFIRM INSERTION
+        BACK TO CAMP
       </button>
     </div>
   );
@@ -2651,7 +2636,7 @@ function Overlay({
   children: React.ReactNode;
 }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-auto bg-background/90 p-4 text-center backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 overflow-auto bg-background/90 p-4 text-center backdrop-blur-[2px]">
       <h2 className="font-display text-lg text-primary">{title}</h2>
       <p className="font-mono text-[11px] text-muted-foreground">{subtitle}</p>
       <div className="w-full max-w-3xl">{children}</div>
