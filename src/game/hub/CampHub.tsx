@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import CampAtmosphere from "./CampAtmosphere";
 import {
   CAMP_IMAGE_H,
   CAMP_IMAGE_SRC,
@@ -35,6 +36,8 @@ export default function CampHub({ onAction }: { onAction: (action: HubAction) =>
         className="pointer-events-none absolute inset-0 h-full w-full select-none"
         style={{ imageRendering: "pixelated", objectFit: "contain" }}
       />
+
+      <CampAtmosphere />
 
       {HUB_HOTSPOTS.map((spot) => (
         <HotspotButton
@@ -97,7 +100,7 @@ function HotspotButton({
     return (
       <div
         aria-hidden
-        className="pointer-events-none absolute"
+        className="pointer-events-none absolute z-[3]"
         style={{
           ...boxStyle(spot),
           outline: "2px dashed #6f7f52",
@@ -161,7 +164,7 @@ function HotspotButton({
         outline: debug ? "2px solid #f0b400" : "none",
         outlineOffset: debug ? "-2px" : undefined,
         boxShadow: debug && raised ? "inset 0 0 0 999px rgba(240,180,0,0.14)" : "none",
-        zIndex: raised ? 2 : 1,
+        zIndex: raised ? 4 : 3,
       }}
     >
       <span
