@@ -93,7 +93,7 @@ describe("camp atmosphere contract", () => {
     expect(FIRE_1_OBJECT.label).toBe("FIRE-1");
     expect(FIRE_1_OBJECT.fullCanvas).toBe(true);
     expect(FIRE_1_OBJECT.src).toBe(CAMP_FIRE_TEST_SRC);
-    expect(FIRE_1_OBJECT.bounds).toEqual({ x: 634, y: 559, width: 90, height: 161 });
+    expect(FIRE_1_OBJECT.bounds).toEqual({ x: 659, y: 575, width: 90, height: 161 });
     expect(editorOffset(true, undefined)).toEqual({ offsetX: 0, offsetY: 0 });
     expect(CAMP_FIRE_TEST).toBe(true);
     expect(campPlateSrc(false)).toBe(CAMP_CLEAN_SRC);

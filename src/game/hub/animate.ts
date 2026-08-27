@@ -41,7 +41,7 @@ export const CAMP_FIRE_TEST_SRC = "/game/hub/animated/fire/fire-1.png";
 export const FIRE_1_OBJECT: EditableObject = {
   id: "fire-1",
   label: "FIRE-1",
-  bounds: { x: 634, y: 559, width: 90, height: 161 },
+  bounds: { x: 659, y: 575, width: 90, height: 161 },
   src: CAMP_FIRE_TEST_SRC,
   fullCanvas: true,
   zIndex: 1,
