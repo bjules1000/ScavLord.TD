@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import PlacementLayer from "../dev/PlacementLayer";
+import { type EditableObject, type PlacementOffset } from "../dev/placement";
 import { CAMP_FIRE_TEST, CAMP_FIRE_TEST_SRC, campPlateSrc } from "./animate";
 import CampAtmosphere, { usePrefersReducedMotion } from "./CampAtmosphere";
 import {
@@ -16,19 +18,46 @@ function readDebugHub(): boolean {
   return new URLSearchParams(window.location.search).get("debugHub") === "1";
 }
 
-export default function CampHub({ onAction }: { onAction: (action: HubAction) => void }) {
+export default function CampHub({
+  onAction,
+  editMode = false,
+  controlsEnabled = false,
+  objects = [],
+}: {
+  onAction: (action: HubAction) => void;
+  editMode?: boolean;
+  controlsEnabled?: boolean;
+  objects?: readonly EditableObject[];
+}) {
+  const frameRef = useRef<HTMLDivElement>(null);
   const [debug, setDebug] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [offsets, setOffsets] = useState<Record<string, PlacementOffset>>({});
   const reducedMotion = usePrefersReducedMotion();
 
   useEffect(() => {
     setDebug(readDebugHub());
   }, []);
 
+  useEffect(() => {
+    if (!editMode) setSelectedId(null);
+  }, [editMode]);
+
+  const onSelect = useCallback((id: string) => setSelectedId(id), []);
+  const onDeselect = useCallback(() => setSelectedId(null), []);
+  const onOffsetChange = useCallback((id: string, offset: PlacementOffset) => {
+    setOffsets((prev) => ({ ...prev, [id]: offset }));
+  }, []);
+
   return (
     <div
+      ref={frameRef}
       className="relative mx-auto w-full bg-[#12180f]"
       style={{ aspectRatio: `${CAMP_IMAGE_W} / ${CAMP_IMAGE_H}` }}
+      onPointerDown={() => {
+        if (controlsEnabled) setSelectedId(null);
+      }}
     >
       <img
         src={campPlateSrc(reducedMotion)}
@@ -50,12 +79,27 @@ export default function CampHub({ onAction }: { onAction: (action: HubAction) =>
 
       <CampAtmosphere reducedMotion={reducedMotion} />
 
+      <PlacementLayer
+        objects={objects}
+        offsets={offsets}
+        selectedId={selectedId}
+        editMode={editMode}
+        controlsEnabled={controlsEnabled}
+        imageW={CAMP_IMAGE_W}
+        imageH={CAMP_IMAGE_H}
+        frameRef={frameRef}
+        onSelect={onSelect}
+        onOffsetChange={onOffsetChange}
+        onDeselect={onDeselect}
+      />
+
       {HUB_HOTSPOTS.map((spot) => (
         <HotspotButton
           key={spot.id}
           spot={spot}
           debug={debug}
           raised={activeId === spot.id}
+          inert={controlsEnabled}
           onEnter={() => setActiveId(spot.id)}
           onLeave={() => setActiveId((id) => (id === spot.id ? null : id))}
           onAction={onAction}
@@ -78,6 +122,7 @@ function HotspotButton({
   spot,
   debug,
   raised,
+  inert,
   onEnter,
   onLeave,
   onAction,
@@ -85,6 +130,7 @@ function HotspotButton({
   spot: HubHotspot;
   debug: boolean;
   raised: boolean;
+  inert: boolean;
   onEnter: () => void;
   onLeave: () => void;
   onAction: (action: HubAction) => void;
@@ -142,10 +188,13 @@ function HotspotButton({
     <button
       type="button"
       aria-label={spot.label}
+      tabIndex={inert ? -1 : 0}
       onClick={() => {
+        if (inert) return;
         if (spot.action) onAction(spot.action);
       }}
       onMouseEnter={() => {
+        if (inert) return;
         onEnter();
         setHovered(true);
         clearLabelTimer();
@@ -158,6 +207,7 @@ function HotspotButton({
         if (!focused) setShowLabel(false);
       }}
       onFocus={() => {
+        if (inert) return;
         onEnter();
         setFocused(true);
         clearLabelTimer();
@@ -176,6 +226,7 @@ function HotspotButton({
         outlineOffset: debug ? "-2px" : undefined,
         boxShadow: debug && raised ? "inset 0 0 0 999px rgba(240,180,0,0.14)" : "none",
         zIndex: raised ? 4 : 3,
+        pointerEvents: inert ? "none" : "auto",
       }}
     >
       <span

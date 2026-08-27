@@ -300,6 +300,7 @@ export default function TarkovTD() {
   const uidRef = useRef(1);
   const [mapId, setMapId] = useState<string>("kolkhoz");
   const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "supplies">("hideout");
+  const [editMode, setEditMode] = useState(false);
   const [suppliesTab, setSuppliesTab] = useState<"stash" | "market">("stash");
   const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests">("overview");
   const [shopTab, setShopTab] = useState<"weapon" | "attachment" | "armor" | "backpack" | "meds">("weapon");
@@ -1660,7 +1661,16 @@ export default function TarkovTD() {
                 </span>
                 <span className="text-foreground">{meta.skillPoints} SP</span>
               </div>
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-pressed={editMode}
+                  aria-label="Toggle placement editor"
+                  onClick={() => setEditMode((on) => !on)}
+                  className="pixel-chip font-mono text-[11px] sm:text-xs"
+                >
+                  <span className={editMode ? "text-primary" : "text-muted-foreground"}>EDIT</span>
+                </button>
                 <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
               </div>
             </div>
@@ -1706,6 +1716,8 @@ export default function TarkovTD() {
               {s.phase === "hideout" ? (
                 /* M2A camp home. Pre-M2A box-menu dashboard is replaced by hotspots + the overlays below. */
                 <CampHub
+                  editMode={editMode}
+                  controlsEnabled={editMode && screen === "hideout"}
                   onAction={(action: HubAction) => {
                     if (action === "supplies") setSuppliesTab("stash");
                     if (action === "skills") setScavTab("overview");
