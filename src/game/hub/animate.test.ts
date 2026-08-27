@@ -5,9 +5,13 @@ import {
   ATMOSPHERE_LAYERS,
   CAMP_ATMOSPHERE_READY,
   CAMP_CLEAN_SRC,
+  CAMP_EDITABLES,
+  CAMP_FIRE_2_SRC,
+  CAMP_FIRE_PREVIEW_FRAME,
   CAMP_FIRE_TEST,
   CAMP_FIRE_TEST_SRC,
   FIRE_1_OBJECT,
+  FIRE_2_OBJECT,
   FIRE_LAYER,
   LANTERN_LEFT_LAYER,
   LANTERN_RIGHT_LAYER,
@@ -16,6 +20,7 @@ import {
   atmosphereLayersToRender,
   boxIsInImage,
   campPlateSrc,
+  firePreviewObjects,
   sequenceFitsFrames,
   shouldRenderAtmosphere,
 } from "./animate";
@@ -98,6 +103,25 @@ describe("camp atmosphere contract", () => {
     expect(CAMP_FIRE_TEST).toBe(true);
     expect(campPlateSrc(false)).toBe(CAMP_CLEAN_SRC);
     expect(shouldRenderAtmosphere(false)).toBe(false);
+  });
+
+  it("keeps Fire 1 locked while previewing Fire 2 alone", () => {
+    expect(FIRE_1_OBJECT.bounds).toEqual({ x: 659, y: 575, width: 90, height: 161 });
+    expect(FIRE_1_OBJECT.src).toBe("/game/hub/animated/fire/fire-1.png");
+    expect(FIRE_2_OBJECT.id).toBe("fire-2");
+    expect(FIRE_2_OBJECT.label).toBe("FIRE-2");
+    expect(FIRE_2_OBJECT.fullCanvas).toBe(true);
+    expect(FIRE_2_OBJECT.src).toBe(CAMP_FIRE_2_SRC);
+    expect(FIRE_2_OBJECT.bounds).toEqual({ x: 670, y: 594, width: 80, height: 146 });
+    expect(FIRE_2_OBJECT.bounds).not.toEqual(FIRE_1_OBJECT.bounds);
+    expect(FIRE_2_OBJECT.zIndex).toBe(FIRE_1_OBJECT.zIndex);
+    expect(editorOffset(true, undefined)).toEqual({ offsetX: 0, offsetY: 0 });
+    expect(CAMP_FIRE_PREVIEW_FRAME).toBe("fire-2");
+    expect(CAMP_EDITABLES).toEqual([FIRE_2_OBJECT]);
+    expect(CAMP_EDITABLES).toHaveLength(1);
+    expect(CAMP_EDITABLES.some((obj) => obj.id === "fire-1")).toBe(false);
+    expect(firePreviewObjects("fire-1")).toEqual([FIRE_1_OBJECT]);
+    expect(firePreviewObjects("fire-2")).toEqual([FIRE_2_OBJECT]);
   });
 
   it("returns a stable frame when reduced motion is on", () => {
