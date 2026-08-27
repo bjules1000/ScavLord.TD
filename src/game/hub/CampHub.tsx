@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import CampAtmosphere from "./CampAtmosphere";
+import { CAMP_FIRE_TEST, CAMP_FIRE_TEST_SRC, campPlateSrc } from "./animate";
+import CampAtmosphere, { usePrefersReducedMotion } from "./CampAtmosphere";
 import {
   CAMP_IMAGE_H,
-  CAMP_IMAGE_SRC,
   CAMP_IMAGE_W,
   HUB_HOTSPOTS,
   type HubAction,
@@ -19,6 +19,7 @@ function readDebugHub(): boolean {
 export default function CampHub({ onAction }: { onAction: (action: HubAction) => void }) {
   const [debug, setDebug] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const reducedMotion = usePrefersReducedMotion();
 
   useEffect(() => {
     setDebug(readDebugHub());
@@ -30,14 +31,24 @@ export default function CampHub({ onAction }: { onAction: (action: HubAction) =>
       style={{ aspectRatio: `${CAMP_IMAGE_W} / ${CAMP_IMAGE_H}` }}
     >
       <img
-        src={CAMP_IMAGE_SRC}
+        src={campPlateSrc(reducedMotion)}
         alt="Scav camp"
         draggable={false}
         className="pointer-events-none absolute inset-0 h-full w-full select-none"
         style={{ imageRendering: "pixelated", objectFit: "contain" }}
       />
 
-      <CampAtmosphere />
+      {CAMP_FIRE_TEST && (
+        <img
+          src={CAMP_FIRE_TEST_SRC}
+          alt=""
+          draggable={false}
+          className="pointer-events-none absolute inset-0 z-[1] h-full w-full select-none"
+          style={{ imageRendering: "pixelated", objectFit: "contain" }}
+        />
+      )}
+
+      <CampAtmosphere reducedMotion={reducedMotion} />
 
       {HUB_HOTSPOTS.map((spot) => (
         <HotspotButton

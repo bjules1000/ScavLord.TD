@@ -1,5 +1,6 @@
-/** Percent boxes relative to public/game/hub/camp-base.png (1448×1086). Same model as hotspots. */
+import { CAMP_IMAGE_SRC } from "./hotspots";
 
+/** Percent boxes relative to the camp image (1448×1086). Same model as hotspots. */
 export interface AtmosphereBox {
   xPercent: number;
   yPercent: number;
@@ -10,11 +11,30 @@ export interface AtmosphereBox {
 export interface AtmosphereLayer {
   id: string;
   box: AtmosphereBox;
+  /** Transparent authored PNGs of the animated object only — not a full camp plate. */
   frames: readonly string[];
   /** Playback order into `frames` (may repeat indices). */
   sequence: readonly number[];
   intervalMs: number;
+  zIndex: number;
 }
+
+/**
+ * Atomic switch for the full sprite system. Stay false during the fire alignment test.
+ */
+export const CAMP_ATMOSPHERE_READY = false;
+
+/**
+ * Temporary alignment pass: clean plate + a single full-canvas fire overlay.
+ * No timers, no extra frames. Flip to false to hide the overlay.
+ */
+export const CAMP_FIRE_TEST = true;
+
+/** Authored clean plate. Do not overwrite camp-base.png. */
+export const CAMP_CLEAN_SRC = "/game/hub/camp-base-clean.png";
+
+/** Full-canvas transparent fire frame, stacked with inset-0 over the clean plate. */
+export const CAMP_FIRE_TEST_SRC = "/game/hub/animated/fire/fire-1.png";
 
 function box(
   xPercent: number,
@@ -25,54 +45,61 @@ function box(
   return { xPercent, yPercent, widthPercent, heightPercent };
 }
 
-/** Derived covering extracts from camp-base.png. Frame 0 matches the baked pixels in each box. */
+/**
+ * Authored sprite contract. Frames are not in the repo yet.
+ * Each PNG is a transparent crop that fills the layer's single stable box.
+ */
 export const FIRE_LAYER: AtmosphereLayer = {
   id: "fire",
   box: box(43.508, 55.064, 8.84, 16.575),
   frames: [
-    "/game/hub/animated/fire/f0.png",
-    "/game/hub/animated/fire/f1.png",
-    "/game/hub/animated/fire/f2.png",
-    "/game/hub/animated/fire/f3.png",
+    "/game/hub/animated/fire/fire-01.png",
+    "/game/hub/animated/fire/fire-02.png",
+    "/game/hub/animated/fire/fire-03.png",
+    "/game/hub/animated/fire/fire-04.png",
   ],
   sequence: [0, 1, 2, 1, 3, 1],
   intervalMs: 150,
+  zIndex: 1,
 };
 
 export const SCAVLORD_LAYER: AtmosphereLayer = {
   id: "scavlord",
   box: box(48.619, 39.411, 12.983, 19.337),
   frames: [
-    "/game/hub/animated/scavlord/s0.png",
-    "/game/hub/animated/scavlord/s1.png",
-    "/game/hub/animated/scavlord/s2.png",
+    "/game/hub/animated/scavlord/scavlord-idle-01.png",
+    "/game/hub/animated/scavlord/scavlord-idle-02.png",
+    "/game/hub/animated/scavlord/scavlord-idle-03.png",
   ],
   sequence: [0, 0, 1, 0, 2, 0],
   intervalMs: 650,
+  zIndex: 2,
 };
 
 export const LANTERN_LEFT_LAYER: AtmosphereLayer = {
   id: "lantern-left",
   box: box(37.845, 47.145, 3.039, 4.42),
   frames: [
-    "/game/hub/animated/lantern/left-0.png",
-    "/game/hub/animated/lantern/left-1.png",
-    "/game/hub/animated/lantern/left-2.png",
+    "/game/hub/animated/lantern/left-01.png",
+    "/game/hub/animated/lantern/left-02.png",
+    "/game/hub/animated/lantern/left-03.png",
   ],
   sequence: [0, 1, 0, 2],
   intervalMs: 310,
+  zIndex: 1,
 };
 
 export const LANTERN_RIGHT_LAYER: AtmosphereLayer = {
   id: "lantern-right",
   box: box(83.149, 43.462, 2.762, 4.236),
   frames: [
-    "/game/hub/animated/lantern/right-0.png",
-    "/game/hub/animated/lantern/right-1.png",
-    "/game/hub/animated/lantern/right-2.png",
+    "/game/hub/animated/lantern/right-01.png",
+    "/game/hub/animated/lantern/right-02.png",
+    "/game/hub/animated/lantern/right-03.png",
   ],
   sequence: [0, 2, 1, 0, 1],
   intervalMs: 430,
+  zIndex: 1,
 };
 
 export const ATMOSPHERE_LAYERS: readonly AtmosphereLayer[] = [
@@ -81,6 +108,20 @@ export const ATMOSPHERE_LAYERS: readonly AtmosphereLayer[] = [
   LANTERN_RIGHT_LAYER,
   SCAVLORD_LAYER,
 ];
+
+export function campPlateSrc(reducedMotion = false): string {
+  if (CAMP_FIRE_TEST) return CAMP_CLEAN_SRC;
+  if (!CAMP_ATMOSPHERE_READY || reducedMotion) return CAMP_IMAGE_SRC;
+  return CAMP_CLEAN_SRC;
+}
+
+export function shouldRenderAtmosphere(reducedMotion = false): boolean {
+  return CAMP_ATMOSPHERE_READY && !reducedMotion;
+}
+
+export function atmosphereLayersToRender(reducedMotion = false): readonly AtmosphereLayer[] {
+  return shouldRenderAtmosphere(reducedMotion) ? ATMOSPHERE_LAYERS : [];
+}
 
 export function atmosphereFrameIndex(
   sequence: readonly number[],
@@ -100,4 +141,8 @@ export function boxIsInImage(b: AtmosphereBox): boolean {
     b.xPercent + b.widthPercent <= 100 &&
     b.yPercent + b.heightPercent <= 100
   );
+}
+
+export function sequenceFitsFrames(layer: AtmosphereLayer): boolean {
+  return layer.sequence.every((i) => i >= 0 && i < layer.frames.length);
 }

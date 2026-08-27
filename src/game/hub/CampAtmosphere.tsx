@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
-import { ATMOSPHERE_LAYERS, atmosphereFrameIndex, type AtmosphereLayer } from "./animate";
+import {
+  atmosphereFrameIndex,
+  atmosphereLayersToRender,
+  shouldRenderAtmosphere,
+  type AtmosphereLayer,
+} from "./animate";
 
-function usePrefersReducedMotion(): boolean {
+export function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
 
   useEffect(() => {
@@ -34,7 +39,7 @@ function LayerSprite({ layer, reducedMotion }: { layer: AtmosphereLayer; reduced
   const step = useSequenceStep(layer.intervalMs, reducedMotion);
   const frame = atmosphereFrameIndex(layer.sequence, step, reducedMotion);
   const src = layer.frames[frame] ?? layer.frames[0] ?? "";
-  const aboveFire = layer.id === "scavlord";
+  if (!src) return null;
 
   return (
     <img
@@ -48,19 +53,19 @@ function LayerSprite({ layer, reducedMotion }: { layer: AtmosphereLayer; reduced
         width: `${layer.box.widthPercent}%`,
         height: `${layer.box.heightPercent}%`,
         imageRendering: "pixelated",
-        zIndex: aboveFire ? 2 : 1,
+        zIndex: layer.zIndex,
       }}
     />
   );
 }
 
-/** Presentation-only camp motion. Does not persist. Continues under station overlays. */
-export default function CampAtmosphere() {
-  const reducedMotion = usePrefersReducedMotion();
+/** Presentation-only camp sprites. Does not persist. Continues under station overlays. */
+export default function CampAtmosphere({ reducedMotion }: { reducedMotion: boolean }) {
+  if (!shouldRenderAtmosphere(reducedMotion)) return null;
 
   return (
     <div className="pointer-events-none absolute inset-0 z-[1]" aria-hidden>
-      {ATMOSPHERE_LAYERS.map((layer) => (
+      {atmosphereLayersToRender(reducedMotion).map((layer) => (
         <LayerSprite key={layer.id} layer={layer} reducedMotion={reducedMotion} />
       ))}
     </div>
