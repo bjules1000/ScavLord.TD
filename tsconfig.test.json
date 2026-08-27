@@ -2,6 +2,7 @@
   "extends": "./tsconfig.json",
   "include": [
     "src/**/*.test.ts",
+    "src/game/dev/placement.ts",
     "src/game/combat.ts",
     "src/game/data.ts",
     "src/game/gear.ts",
