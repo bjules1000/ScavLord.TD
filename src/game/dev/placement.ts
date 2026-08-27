@@ -92,6 +92,27 @@ export function formatSigned(n: number): string {
   return n > 0 ? `+${n}` : `${n}`;
 }
 
+/** Current top-left content position on the source-image pixel grid. */
+export function absolutePosition(bounds: PixelBox, offset: PlacementOffset): { x: number; y: number } {
+  return {
+    x: bounds.x + offset.offsetX,
+    y: bounds.y + offset.offsetY,
+  };
+}
+
+export function formatPlacementPopup(
+  label: string,
+  bounds: PixelBox,
+  offset: PlacementOffset,
+): { label: string; pos: string; move: string } {
+  const pos = absolutePosition(bounds, offset);
+  return {
+    label,
+    pos: `POS   X ${pos.x}   Y ${pos.y}`,
+    move: `MOVE  X ${formatSigned(offset.offsetX)}   Y ${formatSigned(offset.offsetY)}`,
+  };
+}
+
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!target || typeof target !== "object") return false;
   const el = target as { tagName?: string; isContentEditable?: boolean };

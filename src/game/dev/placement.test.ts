@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import {
   ZERO_OFFSET,
+  absolutePosition,
   clientToImagePixel,
   editorOffset,
+  formatPlacementPopup,
   formatSigned,
   hitTestEditable,
   integerOffset,
@@ -87,6 +89,46 @@ describe("placement editor", () => {
     expect(formatSigned(6)).toBe("+6");
     expect(formatSigned(0)).toBe("+0");
     expect(formatSigned(-3)).toBe("-3");
+  });
+
+  it("computes absolute X and Y from authored bounds plus offset", () => {
+    expect(absolutePosition(fire.bounds, { offsetX: 24, offsetY: 17 })).toEqual({ x: 658, y: 576 });
+    expect(absolutePosition(lantern.bounds, { offsetX: 24, offsetY: 17 }).x).toBe(572);
+    expect(absolutePosition(lantern.bounds, { offsetX: 24, offsetY: 17 }).y).toBe(529);
+  });
+
+  it("keeps absolute position generic across positive, negative, and zero offsets", () => {
+    expect(absolutePosition(lantern.bounds, { offsetX: 12, offsetY: 8 })).toEqual({ x: 560, y: 520 });
+    expect(absolutePosition(lantern.bounds, { offsetX: -4, offsetY: -2 })).toEqual({ x: 544, y: 510 });
+    expect(absolutePosition(lantern.bounds, ZERO_OFFSET)).toEqual({ x: 548, y: 512 });
+  });
+
+  it("formats popup POS and MOVE from generic object bounds", () => {
+    const crate: EditableObject = {
+      id: "crate-1",
+      label: "CRATE-1",
+      bounds: { x: 100, y: 200, width: 32, height: 32 },
+    };
+    expect(formatPlacementPopup(crate.label, crate.bounds, { offsetX: 24, offsetY: 17 })).toEqual({
+      label: "CRATE-1",
+      pos: "POS   X 124   Y 217",
+      move: "MOVE  X +24   Y +17",
+    });
+    expect(formatPlacementPopup(crate.label, crate.bounds, { offsetX: -4, offsetY: -2 })).toEqual({
+      label: "CRATE-1",
+      pos: "POS   X 96   Y 198",
+      move: "MOVE  X -4   Y -2",
+    });
+    expect(formatPlacementPopup(crate.label, crate.bounds, ZERO_OFFSET)).toEqual({
+      label: "CRATE-1",
+      pos: "POS   X 100   Y 200",
+      move: "MOVE  X +0   Y +0",
+    });
+    expect(formatPlacementPopup(fire.label, fire.bounds, { offsetX: 24, offsetY: 17 })).toEqual({
+      label: "FIRE-1",
+      pos: "POS   X 658   Y 576",
+      move: "MOVE  X +24   Y +17",
+    });
   });
 
   it("treats form fields as typing targets", () => {

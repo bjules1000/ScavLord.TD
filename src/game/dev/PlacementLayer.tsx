@@ -2,7 +2,7 @@ import { useEffect, useRef, type RefObject } from "react";
 import {
   boxPercentStyle,
   editorOffset,
-  formatSigned,
+  formatPlacementPopup,
   integerOffset,
   isTypingTarget,
   nudgeOffset,
@@ -74,6 +74,7 @@ export default function PlacementLayer({
 
   const selected = objects.find((o) => o.id === selectedId) ?? null;
   const selectedOffset = selectedId ? (offsets[selectedId] ?? ZERO_OFFSET) : ZERO_OFFSET;
+  const popup = selected ? formatPlacementPopup(selected.label, selected.bounds, selectedOffset) : null;
 
   return (
     <>
@@ -170,7 +171,7 @@ export default function PlacementLayer({
         );
       })}
 
-      {editMode && selected && (
+      {editMode && popup && (
         <div
           className="pointer-events-none absolute left-1 top-1 z-30 font-mono text-[9px] leading-tight sm:text-[10px]"
           style={{
@@ -182,11 +183,9 @@ export default function PlacementLayer({
             letterSpacing: "0.06em",
           }}
         >
-          <div className="text-primary">{selected.label}</div>
-          <div className="text-muted-foreground">
-            X {formatSigned(selectedOffset.offsetX)}{" "}
-            <span className="ml-2">Y {formatSigned(selectedOffset.offsetY)}</span>
-          </div>
+          <div className="text-primary">{popup.label}</div>
+          <div className="whitespace-pre text-muted-foreground">{popup.pos}</div>
+          <div className="whitespace-pre text-muted-foreground">{popup.move}</div>
         </div>
       )}
     </>
