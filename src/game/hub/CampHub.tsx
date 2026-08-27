@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import PlacementLayer from "../dev/PlacementLayer";
 import { type EditableObject, type PlacementOffset } from "../dev/placement";
-import { CAMP_FIRE_TEST, CAMP_FIRE_TEST_SRC, campPlateSrc } from "./animate";
+import { campPlateSrc } from "./animate";
 import CampAtmosphere, { usePrefersReducedMotion } from "./CampAtmosphere";
 import {
   CAMP_IMAGE_H,
@@ -66,16 +66,6 @@ export default function CampHub({
         className="pointer-events-none absolute inset-0 h-full w-full select-none"
         style={{ imageRendering: "pixelated", objectFit: "contain" }}
       />
-
-      {CAMP_FIRE_TEST && (
-        <img
-          src={CAMP_FIRE_TEST_SRC}
-          alt=""
-          draggable={false}
-          className="pointer-events-none absolute inset-0 z-[1] h-full w-full select-none"
-          style={{ imageRendering: "pixelated", objectFit: "contain" }}
-        />
-      )}
 
       <CampAtmosphere reducedMotion={reducedMotion} />
 

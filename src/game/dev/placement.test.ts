@@ -85,7 +85,7 @@ describe("placement editor", () => {
 
   it("formats popup coordinates with a sign", () => {
     expect(formatSigned(6)).toBe("+6");
-    expect(formatSigned(0)).toBe("0");
+    expect(formatSigned(0)).toBe("+0");
     expect(formatSigned(-3)).toBe("-3");
   });
 

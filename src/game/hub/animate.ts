@@ -1,3 +1,4 @@
+import type { EditableObject } from "../dev/placement";
 import { CAMP_IMAGE_SRC } from "./hotspots";
 
 /** Percent boxes relative to the camp image (1448×1086). Same model as hotspots. */
@@ -35,6 +36,18 @@ export const CAMP_CLEAN_SRC = "/game/hub/camp-base-clean.png";
 
 /** Full-canvas transparent fire frame, stacked with inset-0 over the clean plate. */
 export const CAMP_FIRE_TEST_SRC = "/game/hub/animated/fire/fire-1.png";
+
+/** Measured opaque content of fire-1.png (1448×1086). Authoring offset starts at 0,0. */
+export const FIRE_1_OBJECT: EditableObject = {
+  id: "fire-1",
+  label: "FIRE-1",
+  bounds: { x: 634, y: 559, width: 90, height: 161 },
+  src: CAMP_FIRE_TEST_SRC,
+  fullCanvas: true,
+  zIndex: 1,
+};
+
+export const CAMP_EDITABLES: readonly EditableObject[] = [FIRE_1_OBJECT];
 
 function box(
   xPercent: number,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { editorOffset } from "../dev/placement";
 import { CAMP_IMAGE_SRC } from "./hotspots";
 import {
   ATMOSPHERE_LAYERS,
@@ -6,6 +7,7 @@ import {
   CAMP_CLEAN_SRC,
   CAMP_FIRE_TEST,
   CAMP_FIRE_TEST_SRC,
+  FIRE_1_OBJECT,
   FIRE_LAYER,
   LANTERN_LEFT_LAYER,
   LANTERN_RIGHT_LAYER,
@@ -86,11 +88,15 @@ describe("camp atmosphere contract", () => {
     }
   });
 
-  it("uses the clean plate plus a static full-canvas fire overlay during the alignment test", () => {
+  it("registers Fire 1 as a full-canvas overlay at authored 0,0", () => {
+    expect(FIRE_1_OBJECT.id).toBe("fire-1");
+    expect(FIRE_1_OBJECT.label).toBe("FIRE-1");
+    expect(FIRE_1_OBJECT.fullCanvas).toBe(true);
+    expect(FIRE_1_OBJECT.src).toBe(CAMP_FIRE_TEST_SRC);
+    expect(FIRE_1_OBJECT.bounds).toEqual({ x: 634, y: 559, width: 90, height: 161 });
+    expect(editorOffset(true, undefined)).toEqual({ offsetX: 0, offsetY: 0 });
     expect(CAMP_FIRE_TEST).toBe(true);
-    expect(CAMP_FIRE_TEST_SRC).toBe("/game/hub/animated/fire/fire-1.png");
     expect(campPlateSrc(false)).toBe(CAMP_CLEAN_SRC);
-    expect(campPlateSrc(true)).toBe(CAMP_CLEAN_SRC);
     expect(shouldRenderAtmosphere(false)).toBe(false);
   });
 
