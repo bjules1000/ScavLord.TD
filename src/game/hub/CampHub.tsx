@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import PlacementLayer from "../dev/PlacementLayer";
-import { DEBUG_PLACE_OBJECT, type EditableObject, type PlacementOffset } from "../dev/placement";
+import { type EditableObject, type PlacementOffset } from "../dev/placement";
 import {
   CAMP_IMAGE_H,
   CAMP_IMAGE_SRC,
@@ -42,8 +42,7 @@ export default function CampHub({
     if (!editMode) setSelectedId(null);
   }, [editMode]);
 
-  const registered =
-    objects.length > 0 ? objects : editMode ? [DEBUG_PLACE_OBJECT] : [];
+  const registered = objects;
 
   const onSelect = useCallback((id: string) => setSelectedId(id), []);
   const onDeselect = useCallback(() => setSelectedId(null), []);

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-  DEBUG_PLACE_OBJECT,
   ZERO_OFFSET,
   clientToImagePixel,
   editorOffset,
@@ -96,11 +95,7 @@ describe("placement editor", () => {
     expect(isTypingTarget({ tagName: "BUTTON" } as unknown as EventTarget)).toBe(false);
   });
 
-  it("keeps the review fixture inside the camp image", () => {
-    const b = DEBUG_PLACE_OBJECT.bounds;
-    expect(b.x).toBeGreaterThanOrEqual(0);
-    expect(b.y).toBeGreaterThanOrEqual(0);
-    expect(b.x + b.width).toBeLessThanOrEqual(1448);
-    expect(b.y + b.height).toBeLessThanOrEqual(1086);
+  it("has nothing to select when no objects are registered", () => {
+    expect(hitTestEditable([], {}, true, 720, 520)).toBeNull();
   });
 });

@@ -106,11 +106,3 @@ export function boxPercentStyle(box: PixelBox, imageW: number, imageH: number) {
     height: `${(box.height / imageH) * 100}%`,
   };
 }
-
-/** Review fixture only. Not a production camp sprite. Enable with ?debugPlace=1 */
-export const DEBUG_PLACE_OBJECT: EditableObject = {
-  id: "place-1",
-  label: "PLACE-1",
-  bounds: { x: 708, y: 496, width: 28, height: 28 },
-  zIndex: 8,
-};
