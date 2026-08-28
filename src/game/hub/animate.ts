@@ -70,11 +70,11 @@ export const FIRE_3_OBJECT: EditableObject = {
   zIndex: 1,
 };
 
-/** Measured opaque content of fire-4.png (1448×1086). Authoring offset starts at 0,0. */
+/** Measured opaque content of fire-4.png (1448×1086). Authoring offset starts at 0,0. LOCKED. */
 export const FIRE_4_OBJECT: EditableObject = {
   id: "fire-4",
   label: "FIRE-4",
-  bounds: { x: 634, y: 534, width: 98, height: 182 },
+  bounds: { x: 651, y: 554, width: 98, height: 182 },
   src: CAMP_FIRE_4_SRC,
   fullCanvas: true,
   zIndex: 1,
