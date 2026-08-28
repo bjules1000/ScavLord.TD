@@ -14,6 +14,11 @@ export function magSizeOf(weaponId: string): number {
   return weaponDef(weaponId).magSize;
 }
 
+/** Loaded rounds never exceed the current magazine and never go negative. */
+export function clampAmmo(ammo: number, magSize: number): number {
+  return Math.max(0, Math.min(ammo, magSize));
+}
+
 export function reloadMsOf(weaponId: string): number {
   return weaponDef(weaponId).reloadMs;
 }

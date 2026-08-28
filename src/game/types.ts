@@ -104,6 +104,8 @@ export interface Bullet {
   miss?: boolean;
   /** shotgun pellet: hits the first enemy it passes through */
   pellet?: boolean;
+  /** Visual-only shot line. Never deals damage. */
+  tracer?: boolean;
   hostile?: boolean;
   towerId?: number;
   sx?: number;

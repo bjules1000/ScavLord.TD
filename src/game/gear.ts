@@ -27,6 +27,10 @@ export interface WeaponDef {
   pellets?: number;
   /** cone half-angle in radians for multi-pellet weapons */
   spread?: number;
+  /** Max living enemies one pellet may strike (primary + limited penetration). */
+  maxPelletHits?: number;
+  /** Damage multiplier for the second enemy along a pellet trace. */
+  secondaryHitMult?: number;
   color: string;
   accent: string;
   gunLen: number;
@@ -54,7 +58,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "toz",
     name: "SAWED-OFF",
     cls: "shotgun",
-    damage: 14,
+    damage: 7,
     range: 56,
     cooldown: 720,
     accuracy: 0.55,
@@ -63,8 +67,10 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 2,
     reloadType: "PER_ROUND",
     reloadMs: 950,
-    pellets: 5,
+    pellets: 9,
     spread: 0.32,
+    maxPelletHits: 2,
+    secondaryHitMult: 0.5,
     color: "#7d8c5c",
     accent: "#d9e07a",
     gunLen: 11,
@@ -84,6 +90,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     reloadMs: 800,
     pellets: 7,
     spread: 0.34,
+    maxPelletHits: 2,
+    secondaryHitMult: 0.5,
     color: "#6b4f3a",
     accent: "#ffb35c",
     gunLen: 13,
@@ -234,6 +242,8 @@ export interface AttachmentDef {
   rofMult: number;
   accuracy: number;
   pen: number;
+  /** Extra loaded rounds. Combat still reloads from infinite reserve. */
+  magSizeAdd?: number;
 }
 
 export const ATTACHMENTS: Record<string, AttachmentDef> = {
@@ -241,11 +251,43 @@ export const ATTACHMENTS: Record<string, AttachmentDef> = {
   thermal: { id: "thermal", name: "THERMAL SIGHT", damageMult: 1, rangeMult: 1.3, rofMult: 1, accuracy: 0.2, pen: 0 },
   grip: { id: "grip", name: "FOREGRIP", damageMult: 1, rangeMult: 1, rofMult: 1, accuracy: 0.14, pen: 0 },
   brake: { id: "brake", name: "MUZZLE BRAKE", damageMult: 1, rangeMult: 1.04, rofMult: 1.05, accuracy: 0.1, pen: 0 },
-  mag: { id: "mag", name: "DRUM MAG", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0 },
+  mag: { id: "mag", name: "DRUM MAG", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0, magSizeAdd: 4 },
   supp: { id: "supp", name: "SUPPRESSOR", damageMult: 1.12, rangeMult: 1.06, rofMult: 1, accuracy: 0.07, pen: 0 },
   m995: { id: "m995", name: "AP ROUNDS", damageMult: 1.1, rangeMult: 1, rofMult: 1, accuracy: 0, pen: 6 },
   laser: { id: "laser", name: "TAC LASER", damageMult: 1, rangeMult: 1, rofMult: 1.08, accuracy: 0.13, pen: 0 },
 };
+
+/** Canonical attachment folding. Combat and the operator sidebar both read this. */
+export function applyAttachmentMods(weapon: WeaponDef, attachments: readonly string[]) {
+  let damage = weapon.damage;
+  let range = weapon.range;
+  let cooldown = weapon.cooldown;
+  let accuracy = weapon.accuracy;
+  let pen = 0;
+  let magSize = weapon.magSize;
+  for (const id of attachments) {
+    const a = ATTACHMENTS[id];
+    if (!a) continue;
+    damage *= a.damageMult;
+    range *= a.rangeMult;
+    cooldown /= a.rofMult;
+    accuracy += a.accuracy;
+    pen += a.pen;
+    magSize += a.magSizeAdd ?? 0;
+  }
+  return {
+    damage,
+    range,
+    cooldown,
+    accuracy: Math.max(0.15, Math.min(0.99, accuracy)),
+    pen,
+    magSize: Math.max(1, magSize),
+    splash: weapon.splash,
+    slots: weapon.slots,
+    reloadMs: weapon.reloadMs,
+    reloadType: weapon.reloadType,
+  };
+}
 
 export interface ArmorDef {
   id: string;
@@ -297,12 +339,14 @@ export interface ItemDef {
 
 export interface Item extends ItemDef {
   uid: number;
+  /** Attachments kept on a packed raid weapon until the player detaches them. */
+  installed?: string[];
 }
 
 export const ITEMS: ItemDef[] = [
   // weapons
   { id: "w_pm", kind: "weapon", ref: "pm", name: "SIDEARM", rarity: "common", value: 80, desc: "7-round pistol. Steady fire, magazine reload.", price: 250 },
-  { id: "w_toz", kind: "weapon", ref: "toz", name: "SAWED-OFF", rarity: "common", value: 70, desc: "Two shells. Brutal up close, loads one round at a time.", price: 300 },
+  { id: "w_toz", kind: "weapon", ref: "toz", name: "SAWED-OFF", rarity: "common", value: 70, desc: "Two shells, nine pellets. Brutal on clusters, loads one round at a time.", price: 300 },
   { id: "w_mp133", kind: "weapon", ref: "mp133", name: "PUMP 12", rarity: "rare", value: 480, desc: "7-pellet spread, brutal up close, no reach.", price: 1700 },
   { id: "w_adar", kind: "weapon", ref: "adar", name: "SPORT CARBINE", rarity: "common", value: 260, desc: "More range and punch, slower cycle.", price: 900 },
   { id: "w_ak74", kind: "weapon", ref: "ak74", name: "KALASH RIFLE", rarity: "rare", value: 420, desc: "Fast, loose, three mod slots.", price: 1500 },
@@ -316,7 +360,7 @@ export const ITEMS: ItemDef[] = [
   { id: "a_grip", kind: "attachment", ref: "grip", name: "FOREGRIP", rarity: "common", value: 110, desc: "+14% hit chance.", price: 450 },
   { id: "a_brake", kind: "attachment", ref: "brake", name: "MUZZLE BRAKE", rarity: "common", value: 130, desc: "+10% hit chance, small ROF/range.", price: 500 },
   { id: "a_optic", kind: "attachment", ref: "optic", name: "4x SCOPE", rarity: "rare", value: 240, desc: "+18% range, +12% hit chance.", price: 950 },
-  { id: "a_mag", kind: "attachment", ref: "mag", name: "DRUM MAG", rarity: "rare", value: 220, desc: "+28% rate of fire.", price: 900 },
+  { id: "a_mag", kind: "attachment", ref: "mag", name: "DRUM MAG", rarity: "rare", value: 220, desc: "+28% rate of fire, +4 magazine capacity.", price: 900 },
   { id: "a_supp", kind: "attachment", ref: "supp", name: "SUPPRESSOR", rarity: "rare", value: 300, desc: "+12% damage, +6% range, +7% hit chance.", price: 1200 },
   { id: "a_laser", kind: "attachment", ref: "laser", name: "TAC LASER", rarity: "rare", value: 260, desc: "+13% hit chance, +8% ROF.", price: 1000 },
   { id: "a_m995", kind: "attachment", ref: "m995", name: "AP ROUNDS", rarity: "epic", value: 420, desc: "+6 armor pen, +10% damage.", price: 1800 },

@@ -34,7 +34,9 @@ describe("starter weapon identities", () => {
     expect(reloadTypeOf("toz")).toBe("PER_ROUND");
     expect(reloadMsOf("toz")).toBe(950);
     expect(initAmmo("toz")).toBe(2);
-    expect((WEAPONS["toz"]!.damage) * (WEAPONS["toz"]!.pellets ?? 1)).toBeGreaterThan(WEAPONS["pm"]!.damage);
+    expect((WEAPONS["toz"]!.damage) * (WEAPONS["toz"]!.pellets ?? 1)).toBe(63);
+    expect(WEAPONS["toz"]?.pellets).toBe(9);
+    expect(WEAPONS["toz"]?.damage).toBe(7);
     expect(WEAPONS["toz"]?.range).toBeLessThan(WEAPONS["pm"]!.range);
     expect(WEAPONS["toz"]?.cooldown).toBeGreaterThan(WEAPONS["pm"]!.cooldown);
   });
