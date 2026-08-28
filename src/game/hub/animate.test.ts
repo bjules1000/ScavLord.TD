@@ -142,28 +142,34 @@ describe("camp atmosphere contract", () => {
     expect(CAMP_ATMOSPHERE_READY).toBe(false);
     expect(shouldRenderAtmosphere(false)).toBe(false);
     expect(atmosphereLayersToRender(false)).toEqual([]);
-    expect(FIRE_SEQUENCE).toEqual([1, 0, 2, 1, 3, 2, 0, 3, 1, 2]);
-    expect(FIRE_FRAME_MS).toBe(180);
+    expect(FIRE_SEQUENCE).toEqual([0, 3, 1, 0, 2, 3, 0, 1, 3, 2]);
+    expect(FIRE_FRAME_MS).toBe(150);
     expect(FIRE_SEQUENCE.map((i) => FIRE_ANIMATION_FRAMES[i]?.id)).toEqual([
-      "fire-2",
-      "fire-1",
-      "fire-3",
-      "fire-2",
-      "fire-4",
-      "fire-3",
       "fire-1",
       "fire-4",
       "fire-2",
+      "fire-1",
+      "fire-3",
+      "fire-4",
+      "fire-1",
+      "fire-2",
+      "fire-4",
       "fire-3",
     ]);
-    expect(fireSequenceIndex(0, false)).toBe(1);
-    expect(fireSequenceIndex(4, false)).toBe(3);
+    expect(FIRE_SEQUENCE.every((i, n, seq) => {
+      const next = seq[(n + 1) % seq.length];
+      const pair = [i, next].sort().join(",");
+      return pair !== "1,2";
+    })).toBe(true);
+    expect(fireSequenceIndex(0, false)).toBe(0);
+    expect(fireSequenceIndex(2, false)).toBe(1);
+    expect(fireSequenceIndex(4, false)).toBe(2);
     expect(fireSequenceIndex(9, false)).toBe(2);
-    expect(fireSequenceIndex(10, false)).toBe(1);
-    expect(fireVisibleFrame(0, false)).toBe(FIRE_2_OBJECT);
-    expect(fireVisibleFrame(4, false)).toBe(FIRE_4_OBJECT);
-    expect(fireVisibleObjects(1, false)).toEqual([FIRE_1_OBJECT]);
-    expect(fireVisibleObjects(1, false)).toHaveLength(1);
+    expect(fireSequenceIndex(10, false)).toBe(0);
+    expect(fireVisibleFrame(0, false)).toBe(FIRE_1_OBJECT);
+    expect(fireVisibleFrame(1, false)).toBe(FIRE_4_OBJECT);
+    expect(fireVisibleObjects(2, false)).toEqual([FIRE_2_OBJECT]);
+    expect(fireVisibleObjects(2, false)).toHaveLength(1);
   });
 
   it("pauses fire animation in EDIT and uses static Fire 1 for reduced motion", () => {
