@@ -96,7 +96,7 @@ export const FIRE_ANIMATION_FRAMES: readonly EditableObject[] = [
 
 /** 2 → 1 → 3 → 2 → 4 → 3 → 1 → 4 → 2 → 3 */
 export const FIRE_SEQUENCE: readonly number[] = [1, 0, 2, 1, 3, 2, 0, 3, 1, 2];
-export const FIRE_FRAME_MS = 150;
+export const FIRE_FRAME_MS = 180;
 
 /**
  * Authored fire loop only. Do not flip CAMP_ATMOSPHERE_READY — that would
