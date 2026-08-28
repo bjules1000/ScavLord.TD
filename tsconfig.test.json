@@ -3,6 +3,9 @@
   "include": [
     "src/**/*.test.ts",
     "src/game/dev/placement.ts",
+    "src/game/hub/animate.ts",
+    "src/game/hub/hotspots.ts",
+    "src/game/hub/prep.ts",
     "src/game/combat.ts",
     "src/game/data.ts",
     "src/game/gear.ts",

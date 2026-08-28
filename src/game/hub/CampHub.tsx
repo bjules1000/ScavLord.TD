@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import PlacementLayer from "../dev/PlacementLayer";
-import { type EditableObject, type PlacementOffset } from "../dev/placement";
+import { type PlacementOffset } from "../dev/placement";
+import {
+  FIRE_FRAME_MS,
+  campPlateSrc,
+  fireVisibleObjects,
+  shouldAnimateFire,
+} from "./animate";
+import CampAtmosphere, { usePrefersReducedMotion } from "./CampAtmosphere";
 import {
   CAMP_IMAGE_H,
-  CAMP_IMAGE_SRC,
   CAMP_IMAGE_W,
   HUB_HOTSPOTS,
   type HubAction,
@@ -11,6 +17,18 @@ import {
 } from "./hotspots";
 
 const LABEL_DELAY_MS = 180;
+
+function useFireStep(intervalMs: number, running: boolean): number {
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => setStep((n) => n + 1), intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs, running]);
+
+  return step;
+}
 
 function readDebugHub(): boolean {
   if (typeof window === "undefined") return false;
@@ -21,18 +39,20 @@ export default function CampHub({
   onAction,
   editMode = false,
   controlsEnabled = false,
-  objects = [],
 }: {
   onAction: (action: HubAction) => void;
   editMode?: boolean;
   controlsEnabled?: boolean;
-  objects?: readonly EditableObject[];
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [debug, setDebug] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [offsets, setOffsets] = useState<Record<string, PlacementOffset>>({});
+  const reducedMotion = usePrefersReducedMotion();
+  const fireRunning = shouldAnimateFire(reducedMotion, editMode);
+  const fireStep = useFireStep(FIRE_FRAME_MS, fireRunning);
+  const fireObjects = fireVisibleObjects(fireStep, reducedMotion);
 
   useEffect(() => {
     setDebug(readDebugHub());
@@ -41,8 +61,6 @@ export default function CampHub({
   useEffect(() => {
     if (!editMode) setSelectedId(null);
   }, [editMode]);
-
-  const registered = objects;
 
   const onSelect = useCallback((id: string) => setSelectedId(id), []);
   const onDeselect = useCallback(() => setSelectedId(null), []);
@@ -60,15 +78,17 @@ export default function CampHub({
       }}
     >
       <img
-        src={CAMP_IMAGE_SRC}
+        src={campPlateSrc(reducedMotion)}
         alt="Scav camp"
         draggable={false}
         className="pointer-events-none absolute inset-0 h-full w-full select-none"
         style={{ imageRendering: "pixelated", objectFit: "contain" }}
       />
 
+      <CampAtmosphere reducedMotion={reducedMotion} />
+
       <PlacementLayer
-        objects={registered}
+        objects={fireObjects}
         offsets={offsets}
         selectedId={selectedId}
         editMode={editMode}
@@ -145,7 +165,7 @@ function HotspotButton({
     return (
       <div
         aria-hidden
-        className="pointer-events-none absolute"
+        className="pointer-events-none absolute z-[3]"
         style={{
           ...boxStyle(spot),
           outline: "2px dashed #6f7f52",
@@ -213,7 +233,7 @@ function HotspotButton({
         outline: debug ? "2px solid #f0b400" : "none",
         outlineOffset: debug ? "-2px" : undefined,
         boxShadow: debug && raised ? "inset 0 0 0 999px rgba(240,180,0,0.14)" : "none",
-        zIndex: raised ? 2 : 1,
+        zIndex: raised ? 4 : 3,
         pointerEvents: inert ? "none" : "auto",
       }}
     >
