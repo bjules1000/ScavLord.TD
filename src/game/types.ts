@@ -1,3 +1,5 @@
+import type { TargetMode } from "./targeting";
+
 export type TowerKind = "scout" | "sniper" | "gunner" | "grenadier";
 
 export interface TowerDef {
@@ -36,6 +38,15 @@ export interface Tower {
   /** armor id from gear.ts ARMORS (player operator only) */
   armor?: string | null;
   armorHp?: number;
+  /** Rounds currently loaded. Raid runtime only. */
+  ammo: number;
+  /** Milliseconds remaining on the current reload action. 0 = not reloading. */
+  reloadLeft: number;
+  targetMode: TargetMode;
+  /** MANUAL lock. Null means hold fire. */
+  manualTargetId: number | null;
+  /** Last chosen target this tick, for UI. */
+  engageTargetId: number | null;
 }
 
 export type EnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";
@@ -93,6 +104,8 @@ export interface Bullet {
   miss?: boolean;
   /** shotgun pellet: hits the first enemy it passes through */
   pellet?: boolean;
+  /** Visual-only shot line. Never deals damage. */
+  tracer?: boolean;
   hostile?: boolean;
   towerId?: number;
   sx?: number;

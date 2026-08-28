@@ -21,6 +21,7 @@ import {
   ITEM_BY_ID,
   RARITY_COLOR,
   WEAPONS,
+  applyAttachmentMods,
   makeItem,
   rollChoices,
   rollCrate,
@@ -64,6 +65,41 @@ import {
   type KillBook,
 } from "./combat";
 import { settleHaul } from "./extract";
+import {
+  TARGET_MODES,
+  hitTestEnemy,
+  pathProgress,
+  selectTarget,
+} from "./targeting";
+import {
+  HIRED_WEAPON_ID,
+  STARTER_WEAPON_ID,
+  canShoot,
+  combatStatus,
+  consumeRound,
+  maybeStartReload,
+  reloadProgress,
+  tickReload,
+  weaponRuntimeFields,
+} from "./weapons";
+import {
+  PELLET_HIT_RADIUS,
+  isShotgunWeapon,
+  resolveShotgunBlast,
+  shotgunMaxHits,
+  shotgunPelletCount,
+  shotgunSecondaryMult,
+} from "./shotgun";
+import {
+  SLOT_LABEL,
+  detachAttachment,
+  equippedMagSize,
+  equipAttachment,
+  expandPackedWeapon,
+  slotOf,
+  swapRaidWeapon,
+  type AttachSlot,
+} from "./raidGear";
 import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
@@ -233,21 +269,13 @@ function coverList(map: GameMap, s: GameState): CoverPiece[] {
 
 export function towerStats(t: Tower, mods?: DebuffMods) {
   const w = WEAPONS[t.weapon] ?? WEAPONS["toz"]!;
-  let damage = w.damage;
-  let range = w.range * SCALE;
-  let cooldown = w.cooldown;
-  let accuracy = w.accuracy;
-  let pen = 0;
-  const splash = w.splash * SCALE;
-  for (const id of t.attachments) {
-    const a = ATTACHMENTS[id];
-    if (!a) continue;
-    damage *= a.damageMult;
-    range *= a.rangeMult;
-    cooldown /= a.rofMult;
-    accuracy += a.accuracy;
-    pen += a.pen;
-  }
+  const folded = applyAttachmentMods(w, t.attachments);
+  let damage = folded.damage;
+  let range = folded.range * SCALE;
+  let cooldown = folded.cooldown;
+  let accuracy = folded.accuracy;
+  let pen = folded.pen;
+  const splash = folded.splash * SCALE;
   if (t.pmc) {
     const lvl = t.level ?? 1;
     damage *= 1 + (lvl - 1) * 0.05;
@@ -265,7 +293,10 @@ export function towerStats(t: Tower, mods?: DebuffMods) {
     accuracy: Math.max(0.15, Math.min(0.99, accuracy)),
     pen,
     splash,
-    slots: w.slots,
+    slots: folded.slots,
+    magSize: folded.magSize,
+    reloadMs: folded.reloadMs,
+    reloadType: folded.reloadType,
   };
 }
 
@@ -405,6 +436,7 @@ export default function TarkovTD() {
       xp: m.pmc.xp,
       armor: m.pmc.armor,
       armorHp: armorDef ? armorDef.durability : 0,
+      ...weaponRuntimeFields(m.pmc.weapon),
     });
     gs.current = s;
     setChoices([]);
@@ -450,7 +482,7 @@ export default function TarkovTD() {
       } else if (pmc) {
         m.pmc.level = pmc.level ?? m.pmc.level;
         m.pmc.xp = pmc.xp ?? m.pmc.xp;
-        m.pmc.weapon = keepBackpack ? pmc.weapon : "toz";
+        m.pmc.weapon = keepBackpack ? pmc.weapon : STARTER_WEAPON_ID;
         m.pmc.attachments = keepBackpack ? [...pmc.attachments] : [];
         m.pmc.armor = keepBackpack ? (pmc.armor ?? null) : null;
       }
@@ -642,10 +674,10 @@ export default function TarkovTD() {
       const m = metaRef.current;
       let defId: string | null = null;
       if (slot === "weapon") {
-        if (m.pmc.weapon === "toz") return pushLog("They keep a break-action as a fallback.");
+        if (m.pmc.weapon === STARTER_WEAPON_ID) return pushLog("They keep a sidearm as a fallback.");
         defId = weaponItemId(m.pmc.weapon);
-        m.pmc.weapon = "toz";
-        const slots = WEAPONS["toz"]!.slots;
+        m.pmc.weapon = STARTER_WEAPON_ID;
+        const slots = WEAPONS[STARTER_WEAPON_ID]!.slots;
         const spill: Item[] = [];
         while (m.pmc.attachments.length > slots) {
           const popped = m.pmc.attachments.pop()!;
@@ -698,25 +730,28 @@ export default function TarkovTD() {
       const tower = s.towers.find((t) => t.id === towerId);
       if (!item || !tower) return;
       if (item.kind === "weapon" && item.ref) {
-        const oldWeaponItem = weaponItemId(tower.weapon);
-        tower.weapon = item.ref;
-        s.backpack = s.backpack.filter((i) => i.uid !== uid);
-        const slots = towerStats(tower).slots;
-        while (tower.attachments.length > slots) {
-          const popped = tower.attachments.pop()!;
-          const aid = attachItemId(popped);
-          if (aid) addToBackpack([makeItem(aid, newUid())!]);
-        }
-        if (oldWeaponItem) addToBackpack([makeItem(oldWeaponItem, newUid())!]);
-        pushLog(`Operator now running the ${item.name}.`);
+        const result = swapRaidWeapon(item, tower.weapon, tower.attachments, s.backpack, tower.ammo);
+        if (!result.ok) return pushLog(result.reason);
+        tower.weapon = result.weapon;
+        tower.attachments = result.attachments;
+        s.backpack = result.backpack;
+        Object.assign(tower, weaponRuntimeFields(result.weapon));
+        tower.ammo = equippedMagSize(result.weapon, result.attachments);
+        pushLog(result.message);
       } else if (item.kind === "attachment" && item.ref) {
-        const st = towerStats(tower);
-        if (tower.attachments.length >= st.slots)
-          return pushLog(`${st.weapon.name} has no free slots (${st.slots}).`);
-        if (tower.attachments.includes(item.ref)) return pushLog("Already installed.");
-        tower.attachments.push(item.ref);
-        s.backpack = s.backpack.filter((i) => i.uid !== uid);
-        pushLog(`${item.name} installed.`);
+        const result = equipAttachment(
+          item,
+          tower.attachments,
+          s.backpack,
+          towerStats(tower).slots,
+          tower.ammo,
+          tower.weapon,
+        );
+        if (!result.ok) return pushLog(result.reason);
+        tower.attachments = result.attachments;
+        s.backpack = result.backpack;
+        tower.ammo = result.ammo;
+        pushLog(result.message);
       } else if (item.kind === "armor" && item.ref) {
         if (!tower.pmc) return pushLog("Only your own operator can strap on body armor.");
         const def = ARMORS[item.ref];
@@ -739,6 +774,30 @@ export default function TarkovTD() {
       rerender();
     },
     [addToBackpack, pushLog, rerender],
+  );
+
+  const detachFromTower = useCallback(
+    (towerId: number, attachId: string) => {
+      const s = gs.current;
+      const tower = s.towers.find((t) => t.id === towerId);
+      if (!tower) return;
+      const result = detachAttachment(
+        attachId,
+        tower.attachments,
+        s.backpack,
+        backpackSlots(),
+        newUid(),
+        tower.ammo,
+        tower.weapon,
+      );
+      if (!result.ok) return pushLog(result.reason);
+      tower.attachments = result.attachments;
+      s.backpack = result.backpack;
+      tower.ammo = result.ammo;
+      pushLog(result.message);
+      rerender();
+    },
+    [backpackSlots, pushLog, rerender],
   );
 
   /* ---------------- game loop ---------------- */
@@ -995,63 +1054,109 @@ export default function TarkovTD() {
         t.hurt = Math.max(0, t.hurt - dt);
         const cx = t.tx * TILE + TILE / 2;
         const cy = t.ty * TILE + TILE / 2;
-        let best: Enemy | null = null;
-        let bestProg = -1;
-        for (const e of s.enemies) {
-          if (isSettledOut(e)) continue;
-          const d = Math.hypot(e.x - cx, e.y - cy);
-          if (d > st.range) continue;
-          const prog = e.seg + e.t;
-          if (prog > bestProg) {
-            bestProg = prog;
-            best = e;
-          }
+        const live = s.enemies
+          .filter((e) => !isSettledOut(e))
+          .map((e) => ({ ...e, pathProgress: pathProgress(e.seg, e.t) }));
+        const best = selectTarget(t.targetMode, { x: cx, y: cy }, st.range, live, t.manualTargetId);
+        const hasTarget = !!best;
+        if (t.targetMode === "MANUAL" && t.manualTargetId != null && !hasTarget) {
+          t.manualTargetId = null;
         }
+        const reloaded = tickReload(
+          t.ammo,
+          t.reloadLeft,
+          dt * 1000,
+          st.magSize,
+          st.reloadMs,
+          st.reloadType,
+          hasTarget,
+        );
+        t.ammo = reloaded.ammo;
+        t.reloadLeft = reloaded.reloadLeft;
+        t.engageTargetId = best?.id ?? null;
         if (best) {
           t.angle = Math.atan2(best.y - cy - 4, best.x - cx);
-          if (t.cd <= 0) {
+        }
+        if (best && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft)) {
             t.cd = st.cooldown;
             t.flash = 0.06;
-            const pellets = Math.max(1, st.weapon.pellets ?? 1);
-            const cone = st.weapon.spread ?? 0;
-            const dist = Math.hypot(best.x - cx, best.y - cy - 4) || 1;
-            for (let p = 0; p < pellets; p++) {
+            t.ammo = consumeRound(t.ammo);
+            const ox = cx + Math.cos(t.angle) * 12;
+            const oy = cy - 4 + Math.sin(t.angle) * 12;
+            if (isShotgunWeapon(st.weapon)) {
+              const { strikes, angles } = resolveShotgunBlast({
+                origin: { x: ox, y: oy },
+                aim: t.angle,
+                range: st.range,
+                hitRadius: PELLET_HIT_RADIUS,
+                pelletCount: shotgunPelletCount(st.weapon),
+                spread: st.weapon.spread ?? 0,
+                primaryDamage: st.damage,
+                secondaryMult: shotgunSecondaryMult(st.weapon),
+                maxHits: shotgunMaxHits(st.weapon),
+                enemies: s.enemies,
+                armorOf: (e) => ENEMIES[e.kind].armor,
+                pen: st.pen,
+              });
+              for (const strike of strikes) {
+                const e = s.enemies.find((en) => en.id === strike.enemyId);
+                if (!e) continue;
+                e.hitFlash = 0.07;
+                spawnParticles(e.x, e.y, "#c94b3a", 2, 36);
+              }
+              for (const ang of angles) {
+                s.bullets.push({
+                  id: s.nextId++,
+                  x: ox,
+                  y: oy,
+                  tx: ox + Math.cos(ang) * st.range,
+                  ty: oy + Math.sin(ang) * st.range,
+                  targetId: 0,
+                  speed: 540 * SCALE,
+                  damage: 0,
+                  splash: 0,
+                  pen: 0,
+                  tracer: true,
+                  color: st.weapon.accent,
+                  trail: 0,
+                });
+              }
+            } else {
               const miss = Math.random() > st.accuracy;
-              const off = pellets > 1 ? (Math.random() - 0.5) * 2 * cone : 0;
-              const ang = t.angle + off;
               const scatter = miss ? (Math.random() - 0.5) * TILE * 1.6 : 0;
-              const aimX = pellets > 1 ? cx + Math.cos(ang) * dist : best.x + scatter;
-              const aimY =
-                pellets > 1
-                  ? cy - 4 + Math.sin(ang) * dist
-                  : best.y + (miss ? (Math.random() - 0.5) * TILE * 1.6 : 0);
+              const aimX = best.x + scatter;
+              const aimY = best.y + (miss ? (Math.random() - 0.5) * TILE * 1.6 : 0);
               s.bullets.push({
                 id: s.nextId++,
-                x: cx + Math.cos(ang) * 12,
-                y: cy - 4 + Math.sin(ang) * 12,
+                x: ox,
+                y: oy,
                 tx: aimX,
                 ty: aimY,
-                targetId: miss || pellets > 1 ? 0 : best.id,
+                targetId: miss ? 0 : best.id,
                 speed:
                   (st.weapon.cls === "sniper"
                     ? 900
                     : st.weapon.cls === "launcher"
                       ? 340
-                      : st.weapon.cls === "shotgun"
-                        ? 540
-                        : 620) * SCALE,
+                      : 620) * SCALE,
                 damage: st.damage,
                 splash: st.splash,
                 pen: st.pen,
                 miss,
-                pellet: pellets > 1,
                 color: st.weapon.accent,
                 trail: 0,
               });
             }
             spawnParticles(cx + Math.cos(t.angle) * 14, cy - 4 + Math.sin(t.angle) * 14, "#d8c98a", 2, 30);
-          }
         }
+        t.reloadLeft = maybeStartReload(
+          t.ammo,
+          t.reloadLeft,
+          st.magSize,
+          st.reloadMs,
+          st.reloadType,
+          hasTarget,
+        );
       }
 
       // bullets
@@ -1123,6 +1228,17 @@ export default function TarkovTD() {
           liveBullets.push(b);
           continue;
         }
+        if (b.tracer) {
+          const dxt = b.tx - b.x;
+          const dyt = b.ty - b.y;
+          const dtm = Math.hypot(dxt, dyt);
+          const stepT = b.speed * dt;
+          if (dtm <= stepT || dtm < 4) continue;
+          b.x += (dxt / dtm) * stepT;
+          b.y += (dyt / dtm) * stepT;
+          liveBullets.push(b);
+          continue;
+        }
         if (b.pellet && !b.miss) {
           const hit = s.enemies.find(
             (e) => !isSettledOut(e) && Math.hypot(e.x - b.x, e.y - b.y) < TILE * 0.36,
@@ -1187,7 +1303,7 @@ export default function TarkovTD() {
         return f.life > 0;
       });
 
-      if (s.clock % 1000 < dt * 1000) rerender();
+      if (s.clock % (s.selectedId != null ? 120 : 1000) < dt * 1000) rerender();
 
       if (s.phase === "combat" && s.queue.length === 0 && s.enemies.length === 0) {
         s.phase = "loot";
@@ -1270,12 +1386,12 @@ export default function TarkovTD() {
         const st = towerStats(sel);
         ctx.beginPath();
         ctx.arc(sel.tx * TILE + TILE / 2, sel.ty * TILE + TILE / 2, st.range, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(110,220,255,0.7)";
-        ctx.setLineDash([5, 5]);
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = sel.targetMode === "MANUAL" ? "rgba(232,140,48,0.75)" : "rgba(110,220,255,0.7)";
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1;
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.strokeStyle = "#6edcff";
+        ctx.strokeStyle = sel.targetMode === "MANUAL" ? "#e88c30" : "#6edcff";
         ctx.strokeRect(sel.tx * TILE + 1, sel.ty * TILE + 1, TILE - 2, TILE - 2);
         const scx = sel.tx * TILE + TILE / 2;
         const scy = sel.ty * TILE + TILE / 2;
@@ -1302,6 +1418,16 @@ export default function TarkovTD() {
 
       for (const t of [...s.towers].sort((a, b) => a.ty - b.ty)) drawTower(ctx, t, performance.now());
       for (const e of [...s.enemies].sort((a, b) => a.y - b.y)) drawEnemy(ctx, e);
+
+      if (sel) {
+        const mark = s.enemies.find((e) => e.id === sel.engageTargetId && !isSettledOut(e));
+        if (mark) {
+          const r = 7;
+          ctx.strokeStyle = sel.targetMode === "MANUAL" ? "#f0b400" : "#c94b3a";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(Math.round(mark.x) - r, Math.round(mark.y) - r, r * 2, r * 2);
+        }
+      }
 
       for (const b of s.bullets) {
         ctx.fillStyle = b.hostile ? "#ff6b4a" : b.color;
@@ -1343,11 +1469,17 @@ export default function TarkovTD() {
   }, [addToBackpack, pushLog, rerender]);
 
   /* ---------------- input ---------------- */
-  const toTile = (ev: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }) => {
+  const toWorld = (ev: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }) => {
     const rect = ev.currentTarget.getBoundingClientRect();
-    const x = ((ev.clientX - rect.left) / rect.width) * W;
-    const y = ((ev.clientY - rect.top) / rect.height) * H;
-    return [Math.floor(x / TILE), Math.floor(y / TILE)] as const;
+    return {
+      x: ((ev.clientX - rect.left) / rect.width) * W,
+      y: ((ev.clientY - rect.top) / rect.height) * H,
+    };
+  };
+
+  const toTile = (ev: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }) => {
+    const w = toWorld(ev);
+    return [Math.floor(w.x / TILE), Math.floor(w.y / TILE)] as const;
   };
 
   const recruitCost = () => Math.round(RECRUIT_BASE * Math.pow(1.4, gs.current.towers.length));
@@ -1394,6 +1526,18 @@ export default function TarkovTD() {
       return;
     }
 
+    const selManual = s.towers.find((t) => t.id === s.selectedId);
+    if (selManual && selManual.targetMode === "MANUAL" && !s.place) {
+      const world = toWorld(ev);
+      const live = s.enemies.filter((e) => !isSettledOut(e));
+      const clicked = hitTestEnemy(world.x, world.y, live, TILE * 0.6);
+      if (clicked) {
+        selManual.manualTargetId = clicked.id;
+        rerender();
+        return;
+      }
+    }
+
     const barricade = s.obstacles.find((o) => o.tx === tx && o.ty === ty && o.kind === "barricade");
     if (barricade && !s.place) {
       s.selectedObstacle = barricade.id === s.selectedObstacle ? null : barricade.id;
@@ -1412,7 +1556,7 @@ export default function TarkovTD() {
         id: s.nextId++,
         tx,
         ty,
-        weapon: "toz",
+        weapon: HIRED_WEAPON_ID,
         attachments: [],
         cd: 0,
         angle: 0,
@@ -1421,9 +1565,10 @@ export default function TarkovTD() {
         hp: TOWER_BASE_HP,
         maxHp: TOWER_BASE_HP,
         hurt: 0,
+        ...weaponRuntimeFields(HIRED_WEAPON_ID),
       });
       s.place = null;
-      pushLog("Operator hired with a stock break-action. Find them a better gun.");
+      pushLog("Operator hired with a stock sawed-off. Find them a better gun.");
       rerender();
       return;
     }
@@ -1569,6 +1714,7 @@ export default function TarkovTD() {
       }
     }
     s.recovered = carried;
+    s.backpack = s.backpack.flatMap((item) => expandPackedWeapon(item, newUid));
     const value = [...s.backpack, ...carried].reduce(
       (a, i) => a + (i.kind === "valuable" ? i.value : 0),
       0,
@@ -1881,7 +2027,7 @@ export default function TarkovTD() {
                     showBack={false}
                   />
                   <div className="mt-3 font-mono text-[10px] text-muted-foreground">
-                    PRIMARY: {WEAPONS[meta.pmc.weapon]?.name ?? "BREAK-ACTION"} · ARMOR:{" "}
+                    PRIMARY: {WEAPONS[meta.pmc.weapon]?.name ?? "SIDEARM"} · ARMOR:{" "}
                     {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
                     {loadout.length}/{loadoutSlots}
                   </div>
@@ -1911,7 +2057,7 @@ export default function TarkovTD() {
                           className="pixel-card text-left hover:-translate-y-[2px]"
                         >
                           <div className="text-muted-foreground">PRIMARY</div>
-                          <div className="text-primary">{WEAPONS[meta.pmc.weapon]?.name ?? "BREAK-ACTION"}</div>
+                          <div className="text-primary">{WEAPONS[meta.pmc.weapon]?.name ?? "SIDEARM"}</div>
                         </button>
                         <button
                           onClick={() => unequipPmc("armor")}
@@ -2353,19 +2499,67 @@ export default function TarkovTD() {
               </div>
               {selected ? (
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
-                  <div className="text-foreground">{towerStats(selected).weapon.name}</div>
+                  {(() => {
+                    const st = towerStats(selected);
+                    const status = combatStatus(
+                      selected.reloadLeft,
+                      selected.engageTargetId != null,
+                      selected.targetMode === "MANUAL" && selected.manualTargetId == null,
+                    );
+                    const mag = st.magSize;
+                    return (
+                      <>
+                  <div className="flex justify-between text-foreground">
+                    <span>{st.weapon.name}</span>
+                    <span className="text-primary">{status}</span>
+                  </div>
                   {selected.pmc && (
                     <StatRow
                       label="LEVEL"
                       value={`${selected.level ?? 1} (${selected.xp ?? 0}/${xpForLevel(selected.level ?? 1)} XP)`}
                     />
                   )}
-                  <StatRow label="DMG" value={towerStats(selected).damage.toFixed(1)} />
-                  <StatRow label="RANGE" value={towerStats(selected).range.toFixed(0)} />
-                  <StatRow label="RPM" value={(60000 / towerStats(selected).cooldown).toFixed(0)} />
-                  <StatRow label="ACCURACY" value={`${(towerStats(selected).accuracy * 100).toFixed(0)}%`} />
-                  <StatRow label="PEN" value={`${towerStats(selected).pen}`} />
                   <StatRow label="HP" value={`${Math.max(0, Math.round(selected.hp))}/${selected.maxHp}`} />
+                  <StatRow label="AMMO" value={`${selected.ammo} / ${mag}`} />
+                  {selected.reloadLeft > 0 && st.reloadType === "MAGAZINE" && (
+                    <div>
+                      <StatRow label="RELOAD" value={`${Math.ceil(selected.reloadLeft / 100) / 10}s`} />
+                      <div className="mt-1 h-1 border border-border bg-transparent">
+                        <div
+                          className="h-full bg-primary"
+                          style={{ width: `${Math.round(reloadProgress(selected.reloadLeft, st.reloadMs) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {selected.reloadLeft > 0 && st.reloadType === "PER_ROUND" && (
+                    <StatRow
+                      label="LOADING"
+                      value={`SHELL ${Math.min(mag, selected.ammo + 1)} / ${mag}`}
+                    />
+                  )}
+                  <StatRow
+                    label="TARGET"
+                    value={
+                      selected.targetMode === "MANUAL" && selected.manualTargetId == null
+                        ? "SELECT TARGET"
+                        : selected.engageTargetId != null
+                          ? `#${selected.engageTargetId}`
+                          : "NONE"
+                    }
+                  />
+                  <StatRow label="DMG" value={st.damage.toFixed(1)} />
+                  <StatRow label="RANGE" value={st.range.toFixed(0)} />
+                  <StatRow label="ACC" value={`${Math.round(st.accuracy * 100)}%`} />
+                  <StatRow label="FIRE" value={`${(60000 / st.cooldown).toFixed(0)} RPM`} />
+                  <StatRow
+                    label="CYCLE"
+                    value={
+                      st.reloadType === "PER_ROUND"
+                        ? `${(st.reloadMs / 1000).toFixed(1)}s / SHELL`
+                        : `${(st.reloadMs / 1000).toFixed(1)}s MAG`
+                    }
+                  />
                   {selected.pmc && (
                     <StatRow
                       label="ARMOR"
@@ -2377,10 +2571,6 @@ export default function TarkovTD() {
                     />
                   )}
                   <StatRow
-                    label="MODS"
-                    value={`${selected.attachments.length}/${towerStats(selected).slots}`}
-                  />
-                  <StatRow
                     label="COVER"
                     value={
                       bestCoverAt(coverList(mapRef.current, s), selected.tx, selected.ty) >= 0.7
@@ -2390,15 +2580,67 @@ export default function TarkovTD() {
                           : "EXPOSED"
                     }
                   />
-                  {selected.attachments.length > 0 && (
+                  <div className="pt-1">
+                    <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">TARGETING</div>
                     <div className="flex flex-wrap gap-1">
-                      {selected.attachments.map((a) => (
-                        <span key={a} className="border border-border px-1 text-[9px] text-muted-foreground">
-                          {ATTACHMENTS[a]?.name ?? a}
-                        </span>
+                      {TARGET_MODES.map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={`pixel-btn px-1 py-0 text-[9px] ${
+                            selected.targetMode === mode ? "text-primary" : "text-muted-foreground"
+                          }`}
+                          onClick={() => {
+                            selected.targetMode = mode;
+                            if (mode !== "MANUAL") selected.manualTargetId = null;
+                            rerender();
+                          }}
+                        >
+                          {mode}
+                        </button>
                       ))}
                     </div>
-                  )}
+                  </div>
+                  <div className="pt-1">
+                    <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">ATTACHMENTS</div>
+                    {(["optic", "barrel", "magazine"] as AttachSlot[]).map((slot) => {
+                      const fitted = selected.attachments.find((a) => slotOf(a) === slot);
+                      return (
+                        <div key={slot} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
+                          <span className="text-muted-foreground">{SLOT_LABEL[slot]}</span>
+                          <span className="flex items-center gap-1 text-foreground">
+                            {fitted ? (ATTACHMENTS[fitted]?.name ?? fitted) : "EMPTY"}
+                            {fitted && (
+                              <button
+                                type="button"
+                                className="pixel-btn px-1 py-0 text-[8px]"
+                                onClick={() => detachFromTower(selected.id, fitted)}
+                              >
+                                DETACH
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {selected.attachments
+                      .filter((a) => slotOf(a) === "mod")
+                      .map((a) => (
+                        <div key={a} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
+                          <span className="text-muted-foreground">MOD</span>
+                          <span className="flex items-center gap-1 text-foreground">
+                            {ATTACHMENTS[a]?.name ?? a}
+                            <button
+                              type="button"
+                              className="pixel-btn px-1 py-0 text-[8px]"
+                              onClick={() => detachFromTower(selected.id, a)}
+                            >
+                              DETACH
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                  </div>
                   {selected.pmc ? (
                     <p className="text-[10px] text-destructive">
                       If they die the run ends for good — level, scars and kit are wiped.
@@ -2408,6 +2650,9 @@ export default function TarkovTD() {
                       DISMISS (KEEP GEAR)
                     </button>
                   )}
+                      </>
+                    );
+                  })()}
                 </div>
               ) : selBarricade ? (
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
@@ -2428,7 +2673,7 @@ export default function TarkovTD() {
                 </div>
               ) : (
                 <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-                  Your operator deploys with you every raid. Hired guns start with a beat-up break-action —
+                  Your operator deploys with a sidearm. Hired guns start with a sawed-off —
                   loot better weapons, mods and armor, then drag them on.
                 </p>
               )}
