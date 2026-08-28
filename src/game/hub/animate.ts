@@ -37,6 +37,7 @@ export const CAMP_CLEAN_SRC = "/game/hub/camp-base-clean.png";
 /** Full-canvas transparent fire frame, stacked with inset-0 over the clean plate. */
 export const CAMP_FIRE_TEST_SRC = "/game/hub/animated/fire/fire-1.png";
 export const CAMP_FIRE_2_SRC = "/game/hub/animated/fire/fire-2.png";
+export const CAMP_FIRE_3_SRC = "/game/hub/animated/fire/fire-3.png";
 
 /** Measured opaque content of fire-1.png (1448×1086). Authoring offset starts at 0,0. LOCKED. */
 export const FIRE_1_OBJECT: EditableObject = {
@@ -48,7 +49,7 @@ export const FIRE_1_OBJECT: EditableObject = {
   zIndex: 1,
 };
 
-/** Measured opaque content of fire-2.png (1448×1086). Authoring offset starts at 0,0. */
+/** Measured opaque content of fire-2.png (1448×1086). Authoring offset starts at 0,0. LOCKED. */
 export const FIRE_2_OBJECT: EditableObject = {
   id: "fire-2",
   label: "FIRE-2",
@@ -58,15 +59,26 @@ export const FIRE_2_OBJECT: EditableObject = {
   zIndex: 1,
 };
 
+/** Measured opaque content of fire-3.png (1448×1086). Authoring offset starts at 0,0. */
+export const FIRE_3_OBJECT: EditableObject = {
+  id: "fire-3",
+  label: "FIRE-3",
+  bounds: { x: 620, y: 558, width: 176, height: 298 },
+  src: CAMP_FIRE_3_SRC,
+  fullCanvas: true,
+  zIndex: 1,
+};
+
 export const CAMP_FIRE_FRAMES = {
   "fire-1": FIRE_1_OBJECT,
   "fire-2": FIRE_2_OBJECT,
+  "fire-3": FIRE_3_OBJECT,
 } as const;
 
 export type CampFirePreviewFrame = keyof typeof CAMP_FIRE_FRAMES;
 
 /** Calibration: render exactly one authored fire frame. No animation. */
-export const CAMP_FIRE_PREVIEW_FRAME: CampFirePreviewFrame = "fire-2";
+export const CAMP_FIRE_PREVIEW_FRAME: CampFirePreviewFrame = "fire-3";
 
 export function firePreviewObjects(
   frame: CampFirePreviewFrame = CAMP_FIRE_PREVIEW_FRAME,
