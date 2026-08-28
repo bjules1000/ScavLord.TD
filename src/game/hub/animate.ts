@@ -63,7 +63,7 @@ export const FIRE_2_OBJECT: EditableObject = {
 export const FIRE_3_OBJECT: EditableObject = {
   id: "fire-3",
   label: "FIRE-3",
-  bounds: { x: 620, y: 558, width: 176, height: 298 },
+  bounds: { x: 659, y: 588, width: 88, height: 149 },
   src: CAMP_FIRE_3_SRC,
   fullCanvas: true,
   zIndex: 1,
