@@ -38,6 +38,7 @@ export const CAMP_CLEAN_SRC = "/game/hub/camp-base-clean.png";
 export const CAMP_FIRE_TEST_SRC = "/game/hub/animated/fire/fire-1.png";
 export const CAMP_FIRE_2_SRC = "/game/hub/animated/fire/fire-2.png";
 export const CAMP_FIRE_3_SRC = "/game/hub/animated/fire/fire-3.png";
+export const CAMP_FIRE_4_SRC = "/game/hub/animated/fire/fire-4.png";
 
 /** Measured opaque content of fire-1.png (1448×1086). Authoring offset starts at 0,0. LOCKED. */
 export const FIRE_1_OBJECT: EditableObject = {
@@ -69,16 +70,27 @@ export const FIRE_3_OBJECT: EditableObject = {
   zIndex: 1,
 };
 
+/** Measured opaque content of fire-4.png (1448×1086). Authoring offset starts at 0,0. */
+export const FIRE_4_OBJECT: EditableObject = {
+  id: "fire-4",
+  label: "FIRE-4",
+  bounds: { x: 634, y: 534, width: 98, height: 182 },
+  src: CAMP_FIRE_4_SRC,
+  fullCanvas: true,
+  zIndex: 1,
+};
+
 export const CAMP_FIRE_FRAMES = {
   "fire-1": FIRE_1_OBJECT,
   "fire-2": FIRE_2_OBJECT,
   "fire-3": FIRE_3_OBJECT,
+  "fire-4": FIRE_4_OBJECT,
 } as const;
 
 export type CampFirePreviewFrame = keyof typeof CAMP_FIRE_FRAMES;
 
 /** Calibration: render exactly one authored fire frame. No animation. */
-export const CAMP_FIRE_PREVIEW_FRAME: CampFirePreviewFrame = "fire-3";
+export const CAMP_FIRE_PREVIEW_FRAME: CampFirePreviewFrame = "fire-4";
 
 export function firePreviewObjects(
   frame: CampFirePreviewFrame = CAMP_FIRE_PREVIEW_FRAME,
