@@ -87,18 +87,42 @@ export const CAMP_FIRE_FRAMES = {
   "fire-4": FIRE_4_OBJECT,
 } as const;
 
-export type CampFirePreviewFrame = keyof typeof CAMP_FIRE_FRAMES;
+export const FIRE_ANIMATION_FRAMES: readonly EditableObject[] = [
+  FIRE_1_OBJECT,
+  FIRE_2_OBJECT,
+  FIRE_3_OBJECT,
+  FIRE_4_OBJECT,
+];
 
-/** Calibration: render exactly one authored fire frame. No animation. */
-export const CAMP_FIRE_PREVIEW_FRAME: CampFirePreviewFrame = "fire-4";
+/** 1 → 2 → 3 → 4 → 3 → 2 */
+export const FIRE_SEQUENCE: readonly number[] = [0, 1, 2, 3, 2, 1];
+export const FIRE_FRAME_MS = 150;
 
-export function firePreviewObjects(
-  frame: CampFirePreviewFrame = CAMP_FIRE_PREVIEW_FRAME,
-): readonly EditableObject[] {
-  return [CAMP_FIRE_FRAMES[frame]];
+/**
+ * Authored fire loop only. Do not flip CAMP_ATMOSPHERE_READY — that would
+ * enable rejected scavlord/lantern/fern layers.
+ */
+export const CAMP_FIRE_READY = true;
+
+export function shouldAnimateFire(reducedMotion: boolean, editMode: boolean): boolean {
+  return CAMP_FIRE_READY && !reducedMotion && !editMode;
 }
 
-export const CAMP_EDITABLES: readonly EditableObject[] = firePreviewObjects();
+export function fireSequenceIndex(step: number, reducedMotion = false): number {
+  if (reducedMotion || FIRE_SEQUENCE.length === 0) return 0;
+  return FIRE_SEQUENCE[step % FIRE_SEQUENCE.length] ?? 0;
+}
+
+export function fireVisibleFrame(step: number, reducedMotion = false): EditableObject {
+  return FIRE_ANIMATION_FRAMES[fireSequenceIndex(step, reducedMotion)] ?? FIRE_1_OBJECT;
+}
+
+export function fireVisibleObjects(step: number, reducedMotion = false): readonly EditableObject[] {
+  return [fireVisibleFrame(step, reducedMotion)];
+}
+
+/** All fire frames stay registered for the editor; rendering uses `fireVisibleObjects`. */
+export const CAMP_EDITABLES: readonly EditableObject[] = FIRE_ANIMATION_FRAMES;
 
 function box(
   xPercent: number,

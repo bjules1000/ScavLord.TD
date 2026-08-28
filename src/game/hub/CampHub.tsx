@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import PlacementLayer from "../dev/PlacementLayer";
-import { type EditableObject, type PlacementOffset } from "../dev/placement";
-import { campPlateSrc } from "./animate";
+import { type PlacementOffset } from "../dev/placement";
+import {
+  FIRE_FRAME_MS,
+  campPlateSrc,
+  fireVisibleObjects,
+  shouldAnimateFire,
+} from "./animate";
 import CampAtmosphere, { usePrefersReducedMotion } from "./CampAtmosphere";
 import {
   CAMP_IMAGE_H,
@@ -13,6 +18,18 @@ import {
 
 const LABEL_DELAY_MS = 180;
 
+function useFireStep(intervalMs: number, running: boolean): number {
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => setStep((n) => n + 1), intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs, running]);
+
+  return step;
+}
+
 function readDebugHub(): boolean {
   if (typeof window === "undefined") return false;
   return new URLSearchParams(window.location.search).get("debugHub") === "1";
@@ -22,12 +39,10 @@ export default function CampHub({
   onAction,
   editMode = false,
   controlsEnabled = false,
-  objects = [],
 }: {
   onAction: (action: HubAction) => void;
   editMode?: boolean;
   controlsEnabled?: boolean;
-  objects?: readonly EditableObject[];
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [debug, setDebug] = useState(false);
@@ -35,6 +50,9 @@ export default function CampHub({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [offsets, setOffsets] = useState<Record<string, PlacementOffset>>({});
   const reducedMotion = usePrefersReducedMotion();
+  const fireRunning = shouldAnimateFire(reducedMotion, editMode);
+  const fireStep = useFireStep(FIRE_FRAME_MS, fireRunning);
+  const fireObjects = fireVisibleObjects(fireStep, reducedMotion);
 
   useEffect(() => {
     setDebug(readDebugHub());
@@ -70,7 +88,7 @@ export default function CampHub({
       <CampAtmosphere reducedMotion={reducedMotion} />
 
       <PlacementLayer
-        objects={objects}
+        objects={fireObjects}
         offsets={offsets}
         selectedId={selectedId}
         editMode={editMode}

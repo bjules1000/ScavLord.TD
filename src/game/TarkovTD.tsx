@@ -65,7 +65,6 @@ import {
 } from "./combat";
 import { settleHaul } from "./extract";
 import CampHub from "./hub/CampHub";
-import { CAMP_EDITABLES } from "./hub/animate";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
 
@@ -1719,7 +1718,6 @@ export default function TarkovTD() {
                 <CampHub
                   editMode={editMode}
                   controlsEnabled={editMode && screen === "hideout"}
-                  objects={CAMP_EDITABLES}
                   onAction={(action: HubAction) => {
                     if (action === "supplies") setSuppliesTab("stash");
                     if (action === "skills") setScavTab("overview");

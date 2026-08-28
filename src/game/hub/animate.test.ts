@@ -9,14 +9,17 @@ import {
   CAMP_FIRE_2_SRC,
   CAMP_FIRE_3_SRC,
   CAMP_FIRE_4_SRC,
-  CAMP_FIRE_PREVIEW_FRAME,
+  CAMP_FIRE_READY,
   CAMP_FIRE_TEST,
   CAMP_FIRE_TEST_SRC,
   FIRE_1_OBJECT,
   FIRE_2_OBJECT,
   FIRE_3_OBJECT,
   FIRE_4_OBJECT,
+  FIRE_ANIMATION_FRAMES,
+  FIRE_FRAME_MS,
   FIRE_LAYER,
+  FIRE_SEQUENCE,
   LANTERN_LEFT_LAYER,
   LANTERN_RIGHT_LAYER,
   SCAVLORD_LAYER,
@@ -24,8 +27,11 @@ import {
   atmosphereLayersToRender,
   boxIsInImage,
   campPlateSrc,
-  firePreviewObjects,
+  fireSequenceIndex,
+  fireVisibleFrame,
+  fireVisibleObjects,
   sequenceFitsFrames,
+  shouldAnimateFire,
   shouldRenderAtmosphere,
 } from "./animate";
 
@@ -109,37 +115,62 @@ describe("camp atmosphere contract", () => {
     expect(shouldRenderAtmosphere(false)).toBe(false);
   });
 
-  it("keeps Fire 1, Fire 2, and Fire 3 locked while previewing Fire 4 alone", () => {
-    expect(FIRE_1_OBJECT.bounds).toEqual({ x: 659, y: 575, width: 90, height: 161 });
-    expect(FIRE_1_OBJECT.src).toBe("/game/hub/animated/fire/fire-1.png");
-    expect(FIRE_2_OBJECT.id).toBe("fire-2");
-    expect(FIRE_2_OBJECT.label).toBe("FIRE-2");
+  it("keeps Fire 1–4 independently registered at authored 0,0", () => {
+    expect(FIRE_ANIMATION_FRAMES).toEqual([FIRE_1_OBJECT, FIRE_2_OBJECT, FIRE_3_OBJECT, FIRE_4_OBJECT]);
+    expect(CAMP_EDITABLES).toEqual(FIRE_ANIMATION_FRAMES);
+    expect(FIRE_1_OBJECT.fullCanvas).toBe(true);
     expect(FIRE_2_OBJECT.fullCanvas).toBe(true);
-    expect(FIRE_2_OBJECT.src).toBe(CAMP_FIRE_2_SRC);
-    expect(FIRE_2_OBJECT.bounds).toEqual({ x: 662, y: 591, width: 80, height: 146 });
-    expect(FIRE_3_OBJECT.id).toBe("fire-3");
-    expect(FIRE_3_OBJECT.label).toBe("FIRE-3");
     expect(FIRE_3_OBJECT.fullCanvas).toBe(true);
-    expect(FIRE_3_OBJECT.src).toBe(CAMP_FIRE_3_SRC);
-    expect(FIRE_3_OBJECT.bounds).toEqual({ x: 659, y: 588, width: 88, height: 149 });
-    expect(FIRE_4_OBJECT.id).toBe("fire-4");
-    expect(FIRE_4_OBJECT.label).toBe("FIRE-4");
     expect(FIRE_4_OBJECT.fullCanvas).toBe(true);
+    expect(FIRE_1_OBJECT.src).toBe(CAMP_FIRE_TEST_SRC);
+    expect(FIRE_2_OBJECT.src).toBe(CAMP_FIRE_2_SRC);
+    expect(FIRE_3_OBJECT.src).toBe(CAMP_FIRE_3_SRC);
     expect(FIRE_4_OBJECT.src).toBe(CAMP_FIRE_4_SRC);
+    expect(FIRE_1_OBJECT.bounds).toEqual({ x: 659, y: 575, width: 90, height: 161 });
+    expect(FIRE_2_OBJECT.bounds).toEqual({ x: 662, y: 591, width: 80, height: 146 });
+    expect(FIRE_3_OBJECT.bounds).toEqual({ x: 659, y: 588, width: 88, height: 149 });
     expect(FIRE_4_OBJECT.bounds).toEqual({ x: 651, y: 554, width: 98, height: 182 });
+    expect(FIRE_2_OBJECT.bounds).not.toEqual(FIRE_1_OBJECT.bounds);
+    expect(FIRE_3_OBJECT.bounds).not.toEqual(FIRE_1_OBJECT.bounds);
     expect(FIRE_4_OBJECT.bounds).not.toEqual(FIRE_1_OBJECT.bounds);
-    expect(FIRE_4_OBJECT.zIndex).toBe(FIRE_1_OBJECT.zIndex);
     expect(editorOffset(true, undefined)).toEqual({ offsetX: 0, offsetY: 0 });
-    expect(CAMP_FIRE_PREVIEW_FRAME).toBe("fire-4");
-    expect(CAMP_EDITABLES).toEqual([FIRE_4_OBJECT]);
-    expect(CAMP_EDITABLES).toHaveLength(1);
-    expect(CAMP_EDITABLES.some((obj) => obj.id === "fire-1")).toBe(false);
-    expect(CAMP_EDITABLES.some((obj) => obj.id === "fire-2")).toBe(false);
-    expect(CAMP_EDITABLES.some((obj) => obj.id === "fire-3")).toBe(false);
-    expect(firePreviewObjects("fire-1")).toEqual([FIRE_1_OBJECT]);
-    expect(firePreviewObjects("fire-2")).toEqual([FIRE_2_OBJECT]);
-    expect(firePreviewObjects("fire-3")).toEqual([FIRE_3_OBJECT]);
-    expect(firePreviewObjects("fire-4")).toEqual([FIRE_4_OBJECT]);
+    expect(editorOffset(false, { offsetX: 17, offsetY: 20 })).toEqual({ offsetX: 0, offsetY: 0 });
+  });
+
+  it("plays the authored fire loop as a single full-canvas frame", () => {
+    expect(CAMP_FIRE_READY).toBe(true);
+    expect(CAMP_ATMOSPHERE_READY).toBe(false);
+    expect(shouldRenderAtmosphere(false)).toBe(false);
+    expect(atmosphereLayersToRender(false)).toEqual([]);
+    expect(FIRE_SEQUENCE).toEqual([0, 1, 2, 3, 2, 1]);
+    expect(FIRE_FRAME_MS).toBe(150);
+    expect(FIRE_SEQUENCE.map((i) => FIRE_ANIMATION_FRAMES[i]?.id)).toEqual([
+      "fire-1",
+      "fire-2",
+      "fire-3",
+      "fire-4",
+      "fire-3",
+      "fire-2",
+    ]);
+    expect(fireSequenceIndex(0, false)).toBe(0);
+    expect(fireSequenceIndex(3, false)).toBe(3);
+    expect(fireSequenceIndex(4, false)).toBe(2);
+    expect(fireSequenceIndex(5, false)).toBe(1);
+    expect(fireSequenceIndex(6, false)).toBe(0);
+    expect(fireVisibleFrame(0, false)).toBe(FIRE_1_OBJECT);
+    expect(fireVisibleFrame(3, false)).toBe(FIRE_4_OBJECT);
+    expect(fireVisibleObjects(4, false)).toEqual([FIRE_3_OBJECT]);
+    expect(fireVisibleObjects(4, false)).toHaveLength(1);
+  });
+
+  it("pauses fire animation in EDIT and uses static Fire 1 for reduced motion", () => {
+    expect(shouldAnimateFire(false, false)).toBe(true);
+    expect(shouldAnimateFire(false, true)).toBe(false);
+    expect(shouldAnimateFire(true, false)).toBe(false);
+    expect(shouldAnimateFire(true, true)).toBe(false);
+    expect(fireSequenceIndex(7, true)).toBe(0);
+    expect(fireVisibleFrame(7, true)).toBe(FIRE_1_OBJECT);
+    expect(fireVisibleObjects(7, true)).toEqual([FIRE_1_OBJECT]);
   });
 
   it("returns a stable frame when reduced motion is on", () => {

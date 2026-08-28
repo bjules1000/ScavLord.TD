@@ -83,9 +83,13 @@ export default function PlacementLayer({
         const box = placedBounds(obj.bounds, offset);
         const isSelected = editMode && obj.id === selectedId;
         const z = isSelected ? 20 : 1 + (obj.zIndex ?? 0);
+        const translate =
+          offset.offsetX === 0 && offset.offsetY === 0
+            ? undefined
+            : `translate(${(offset.offsetX / imageW) * 100}%, ${(offset.offsetY / imageH) * 100}%)`;
 
         return (
-          <div key={obj.id}>
+          <div key={obj.fullCanvas ? "full-canvas-overlay" : obj.id}>
             {obj.src && obj.fullCanvas && (
               <img
                 src={obj.src}
@@ -95,7 +99,8 @@ export default function PlacementLayer({
                 style={{
                   imageRendering: "pixelated",
                   objectFit: "contain",
-                  transform: `translate(${(offset.offsetX / imageW) * 100}%, ${(offset.offsetY / imageH) * 100}%)`,
+                  transform: translate,
+                  transition: "none",
                   zIndex: z,
                 }}
               />
