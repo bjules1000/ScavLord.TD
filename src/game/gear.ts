@@ -7,6 +7,7 @@ export const RARITY_COLOR: Record<Rarity, string> = {
 };
 
 export type WeaponClass = "shotgun" | "pistolCarbine" | "rifle" | "lmg" | "sniper" | "launcher";
+export type ReloadType = "MAGAZINE" | "PER_ROUND";
 
 export interface WeaponDef {
   id: string;
@@ -18,6 +19,10 @@ export interface WeaponDef {
   accuracy: number; // 0..1 chance to hit
   splash: number;
   slots: number;
+  magSize: number;
+  reloadType: ReloadType;
+  /** MAGAZINE: full dump. PER_ROUND: time to load one round. */
+  reloadMs: number;
   /** shotguns fire several pellets per shot */
   pellets?: number;
   /** cone half-angle in radians for multi-pellet weapons */
@@ -28,18 +33,38 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: Record<string, WeaponDef> = {
+  pm: {
+    id: "pm",
+    name: "SIDEARM",
+    cls: "pistolCarbine",
+    damage: 15,
+    range: 92,
+    cooldown: 400,
+    accuracy: 0.78,
+    splash: 0,
+    slots: 2,
+    magSize: 7,
+    reloadType: "MAGAZINE",
+    reloadMs: 1500,
+    color: "#6b5f42",
+    accent: "#e0c86a",
+    gunLen: 8,
+  },
   toz: {
     id: "toz",
-    name: "BREAK-ACTION",
+    name: "SAWED-OFF",
     cls: "shotgun",
-    damage: 9,
-    range: 62,
-    cooldown: 620,
+    damage: 14,
+    range: 56,
+    cooldown: 720,
     accuracy: 0.55,
     splash: 0,
     slots: 1,
+    magSize: 2,
+    reloadType: "PER_ROUND",
+    reloadMs: 950,
     pellets: 5,
-    spread: 0.3,
+    spread: 0.32,
     color: "#7d8c5c",
     accent: "#d9e07a",
     gunLen: 11,
@@ -54,6 +79,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.62,
     splash: 0,
     slots: 2,
+    magSize: 6,
+    reloadType: "PER_ROUND",
+    reloadMs: 800,
     pellets: 7,
     spread: 0.34,
     color: "#6b4f3a",
@@ -70,6 +98,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.66,
     splash: 0,
     slots: 2,
+    magSize: 20,
+    reloadType: "MAGAZINE",
+    reloadMs: 2100,
     color: "#6f7f52",
     accent: "#e0c86a",
     gunLen: 14,
@@ -84,6 +115,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.62,
     splash: 0,
     slots: 3,
+    magSize: 30,
+    reloadType: "MAGAZINE",
+    reloadMs: 2400,
     color: "#6b5f42",
     accent: "#f0b400",
     gunLen: 14,
@@ -98,6 +132,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.72,
     splash: 0,
     slots: 4,
+    magSize: 30,
+    reloadType: "MAGAZINE",
+    reloadMs: 2200,
     color: "#4d5a63",
     accent: "#9fe0ff",
     gunLen: 15,
@@ -112,6 +149,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.52,
     splash: 0,
     slots: 2,
+    magSize: 75,
+    reloadType: "MAGAZINE",
+    reloadMs: 4800,
     color: "#4d5a63",
     accent: "#ff7a2f",
     gunLen: 17,
@@ -126,6 +166,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.78,
     splash: 0,
     slots: 3,
+    magSize: 10,
+    reloadType: "MAGAZINE",
+    reloadMs: 2800,
     color: "#5c6b4a",
     accent: "#f0b400",
     gunLen: 20,
@@ -140,6 +183,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.8,
     splash: 0,
     slots: 3,
+    magSize: 5,
+    reloadType: "MAGAZINE",
+    reloadMs: 3000,
     color: "#4a4336",
     accent: "#cfe0ff",
     gunLen: 21,
@@ -154,6 +200,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.86,
     splash: 0,
     slots: 4,
+    magSize: 5,
+    reloadType: "MAGAZINE",
+    reloadMs: 3200,
     color: "#2f3338",
     accent: "#9fe0ff",
     gunLen: 23,
@@ -168,6 +217,9 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accuracy: 0.7,
     splash: 46,
     slots: 1,
+    magSize: 6,
+    reloadType: "MAGAZINE",
+    reloadMs: 3500,
     color: "#6b4f3a",
     accent: "#ff4a30",
     gunLen: 13,
@@ -249,7 +301,8 @@ export interface Item extends ItemDef {
 
 export const ITEMS: ItemDef[] = [
   // weapons
-  { id: "w_toz", kind: "weapon", ref: "toz", name: "BREAK-ACTION", rarity: "common", value: 70, desc: "Sawn-off scattergun: 5 pellets, tiny range.", price: 300 },
+  { id: "w_pm", kind: "weapon", ref: "pm", name: "SIDEARM", rarity: "common", value: 80, desc: "7-round pistol. Steady fire, magazine reload.", price: 250 },
+  { id: "w_toz", kind: "weapon", ref: "toz", name: "SAWED-OFF", rarity: "common", value: 70, desc: "Two shells. Brutal up close, loads one round at a time.", price: 300 },
   { id: "w_mp133", kind: "weapon", ref: "mp133", name: "PUMP 12", rarity: "rare", value: 480, desc: "7-pellet spread, brutal up close, no reach.", price: 1700 },
   { id: "w_adar", kind: "weapon", ref: "adar", name: "SPORT CARBINE", rarity: "common", value: 260, desc: "More range and punch, slower cycle.", price: 900 },
   { id: "w_ak74", kind: "weapon", ref: "ak74", name: "KALASH RIFLE", rarity: "rare", value: 420, desc: "Fast, loose, three mod slots.", price: 1500 },

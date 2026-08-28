@@ -1,4 +1,4 @@
-import { BACKPACKS, ITEM_BY_ID, makeItem, type Item } from "./gear";
+import { BACKPACKS, ITEM_BY_ID, WEAPONS, makeItem, type Item } from "./gear";
 
 export interface QuestProgress {
   scavKills: number;
@@ -174,7 +174,7 @@ export function freshPmc(): PmcState {
     level: 1,
     xp: 0,
     debuffs: [],
-    weapon: "toz",
+    weapon: "pm",
     attachments: [],
     armor: null,
     deaths: 0,
@@ -246,7 +246,7 @@ export function loadMeta(): Meta {
         debuffs: Array.isArray(p.pmc?.debuffs)
           ? p.pmc!.debuffs.filter((d) => !!DEBUFF_BY_ID[d])
           : [],
-        weapon: p.pmc?.weapon || base.weapon,
+        weapon: WEAPONS[p.pmc?.weapon ?? ""] ? p.pmc!.weapon : base.weapon,
         attachments: Array.isArray(p.pmc?.attachments) ? p.pmc!.attachments : [],
         armor: p.pmc?.armor ?? null,
         deaths: Number(p.pmc?.deaths) || 0,
@@ -271,7 +271,7 @@ export function saveMeta(m: Meta) {
 }
 
 export function unlockedIds(claimed: string[]): string[] {
-  const out = new Set<string>(["w_toz", "m_ifak", "bp_scav", "bp_pilgrim", "bp_trizip"]);
+  const out = new Set<string>(["w_pm", "w_toz", "m_ifak", "bp_scav", "bp_pilgrim", "bp_trizip"]);
   for (const quest of QUESTS)
     if (claimed.includes(quest.id)) quest.unlocks.forEach((u) => out.add(u));
   return [...out];
