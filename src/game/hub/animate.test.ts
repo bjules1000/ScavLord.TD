@@ -107,7 +107,7 @@ describe("camp atmosphere contract", () => {
     expect(shouldRenderAtmosphere(false)).toBe(false);
   });
 
-  it("keeps Fire 1 and Fire 2 locked while previewing Fire 3 alone", () => {
+  it("keeps Fire 1, Fire 2, and Fire 3 locked while previewing Fire 3 alone", () => {
     expect(FIRE_1_OBJECT.bounds).toEqual({ x: 659, y: 575, width: 90, height: 161 });
     expect(FIRE_1_OBJECT.src).toBe("/game/hub/animated/fire/fire-1.png");
     expect(FIRE_2_OBJECT.id).toBe("fire-2");

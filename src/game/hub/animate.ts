@@ -59,7 +59,7 @@ export const FIRE_2_OBJECT: EditableObject = {
   zIndex: 1,
 };
 
-/** Measured opaque content of fire-3.png (1448×1086). Authoring offset starts at 0,0. */
+/** Measured opaque content of fire-3.png (1448×1086). Authoring offset starts at 0,0. LOCKED. */
 export const FIRE_3_OBJECT: EditableObject = {
   id: "fire-3",
   label: "FIRE-3",
