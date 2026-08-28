@@ -143,7 +143,7 @@ describe("camp atmosphere contract", () => {
     expect(shouldRenderAtmosphere(false)).toBe(false);
     expect(atmosphereLayersToRender(false)).toEqual([]);
     expect(FIRE_SEQUENCE).toEqual([0, 3, 1, 0, 2, 3, 0, 1, 3, 2]);
-    expect(FIRE_FRAME_MS).toBe(150);
+    expect(FIRE_FRAME_MS).toBe(180);
     expect(FIRE_SEQUENCE.map((i) => FIRE_ANIMATION_FRAMES[i]?.id)).toEqual([
       "fire-1",
       "fire-4",
