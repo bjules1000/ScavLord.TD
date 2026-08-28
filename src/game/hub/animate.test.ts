@@ -142,24 +142,24 @@ describe("camp atmosphere contract", () => {
     expect(CAMP_ATMOSPHERE_READY).toBe(false);
     expect(shouldRenderAtmosphere(false)).toBe(false);
     expect(atmosphereLayersToRender(false)).toEqual([]);
-    expect(FIRE_SEQUENCE).toEqual([0, 1, 2, 3, 2, 1]);
+    expect(FIRE_SEQUENCE).toEqual([1, 2, 0, 3, 0, 2]);
     expect(FIRE_FRAME_MS).toBe(150);
     expect(FIRE_SEQUENCE.map((i) => FIRE_ANIMATION_FRAMES[i]?.id)).toEqual([
+      "fire-2",
+      "fire-3",
       "fire-1",
-      "fire-2",
-      "fire-3",
       "fire-4",
+      "fire-1",
       "fire-3",
-      "fire-2",
     ]);
-    expect(fireSequenceIndex(0, false)).toBe(0);
+    expect(fireSequenceIndex(0, false)).toBe(1);
     expect(fireSequenceIndex(3, false)).toBe(3);
-    expect(fireSequenceIndex(4, false)).toBe(2);
-    expect(fireSequenceIndex(5, false)).toBe(1);
-    expect(fireSequenceIndex(6, false)).toBe(0);
-    expect(fireVisibleFrame(0, false)).toBe(FIRE_1_OBJECT);
+    expect(fireSequenceIndex(4, false)).toBe(0);
+    expect(fireSequenceIndex(5, false)).toBe(2);
+    expect(fireSequenceIndex(6, false)).toBe(1);
+    expect(fireVisibleFrame(0, false)).toBe(FIRE_2_OBJECT);
     expect(fireVisibleFrame(3, false)).toBe(FIRE_4_OBJECT);
-    expect(fireVisibleObjects(4, false)).toEqual([FIRE_3_OBJECT]);
+    expect(fireVisibleObjects(4, false)).toEqual([FIRE_1_OBJECT]);
     expect(fireVisibleObjects(4, false)).toHaveLength(1);
   });
 
