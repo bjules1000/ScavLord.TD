@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import PlacementLayer from "../dev/PlacementLayer";
 import { type PlacementOffset } from "../dev/placement";
 import {
-  FIRE_FRAME_MS,
   campPlateSrc,
+  fireStepDurationMs,
   fireVisibleObjects,
   shouldAnimateFire,
 } from "./animate";
@@ -18,14 +18,14 @@ import {
 
 const LABEL_DELAY_MS = 180;
 
-function useFireStep(intervalMs: number, running: boolean): number {
+function useFireStep(running: boolean): number {
   const [step, setStep] = useState(0);
 
   useEffect(() => {
     if (!running) return;
-    const id = window.setInterval(() => setStep((n) => n + 1), intervalMs);
-    return () => window.clearInterval(id);
-  }, [intervalMs, running]);
+    const id = window.setTimeout(() => setStep((n) => n + 1), fireStepDurationMs(step));
+    return () => window.clearTimeout(id);
+  }, [running, step]);
 
   return step;
 }
@@ -51,7 +51,7 @@ export default function CampHub({
   const [offsets, setOffsets] = useState<Record<string, PlacementOffset>>({});
   const reducedMotion = usePrefersReducedMotion();
   const fireRunning = shouldAnimateFire(reducedMotion, editMode);
-  const fireStep = useFireStep(FIRE_FRAME_MS, fireRunning);
+  const fireStep = useFireStep(fireRunning);
   const fireObjects = fireVisibleObjects(fireStep, reducedMotion);
 
   useEffect(() => {
