@@ -96,7 +96,7 @@ export const FIRE_ANIMATION_FRAMES: readonly EditableObject[] = [
 
 /** 2 → 1 → 3 → 2 → 4 → 3 → 1 → 4 → 2 → 3 */
 export const FIRE_SEQUENCE: readonly number[] = [1, 0, 2, 1, 3, 2, 0, 3, 1, 2];
-export const FIRE_STEP_MS: readonly number[] = [130, 170, 120, 150, 180, 125, 165, 140, 175, 135];
+export const FIRE_FRAME_MS = 150;
 
 /**
  * Authored fire loop only. Do not flip CAMP_ATMOSPHERE_READY — that would
@@ -111,11 +111,6 @@ export function shouldAnimateFire(reducedMotion: boolean, editMode: boolean): bo
 export function fireSequenceIndex(step: number, reducedMotion = false): number {
   if (reducedMotion || FIRE_SEQUENCE.length === 0) return 0;
   return FIRE_SEQUENCE[step % FIRE_SEQUENCE.length] ?? 0;
-}
-
-export function fireStepDurationMs(step: number): number {
-  if (FIRE_STEP_MS.length === 0) return 150;
-  return FIRE_STEP_MS[step % FIRE_STEP_MS.length] ?? FIRE_STEP_MS[0] ?? 150;
 }
 
 export function fireVisibleFrame(step: number, reducedMotion = false): EditableObject {
