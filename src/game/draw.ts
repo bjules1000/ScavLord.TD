@@ -256,7 +256,7 @@ export function drawCover(ctx: CanvasRenderingContext2D, x: number, y: number, t
   });
 }
 
-function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, type: string) {
+export function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, type: string) {
   // sprite-based props (fall through to pixel art if the atlas hasn't loaded)
   if (type === "hut" || type === "crate") {
     px(ctx, "#00000050", x + 4, y + TILE - 7, TILE - 8, 5);
