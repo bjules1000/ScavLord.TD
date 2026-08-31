@@ -72,6 +72,8 @@ export interface Enemy {
   kind: EnemyKind;
   hp: number;
   maxHp: number;
+  /** Index into GameMap.lanes. 0 = MAIN. */
+  lane: number;
   seg: number;
   t: number;
   x: number;

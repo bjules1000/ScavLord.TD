@@ -1,5 +1,6 @@
 import { COLS, ROWS, SCALE, TILE } from "./data";
-import type { GameMap } from "./map";
+import { shouldDrawLanePortMarkers } from "./lanePortsView";
+import { extractMarkerCenter, type GameMap } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
 import type { Enemy, Tower } from "./types";
 import { ENEMIES } from "./data";
@@ -33,7 +34,7 @@ const rnd = (seed: number) => {
   };
 };
 
-export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
+export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: { lanePorts?: boolean }) {
   const pal = map.def.palette;
   const r = rnd(7);
   const cell = TILE / 8;
@@ -80,6 +81,36 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
   }
 
 
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!map.WATER[y]![x]) continue;
+      ctx.fillStyle = "#1a4a6a";
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      ctx.fillStyle = "#2a6a8a";
+      ctx.fillRect(x * TILE + 4, y * TILE + 4, TILE - 8, TILE - 8);
+    }
+  }
+
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!map.MOUNTAIN[y]![x]) continue;
+      ctx.fillStyle = "#3a3c42";
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      ctx.fillStyle = "#5a5e66";
+      ctx.fillRect(x * TILE + 6, y * TILE + 8, TILE - 12, TILE - 16);
+    }
+  }
+
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!map.HIGH_GROUND[y]![x] || map.MOUNTAIN[y]![x] || map.BLOCKED[y]![x]) continue;
+      ctx.fillStyle = "#6a5430";
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      ctx.fillStyle = "#8a7040";
+      ctx.fillRect(x * TILE + 3, y * TILE + 3, TILE - 6, 4);
+    }
+  }
+
   // road: mud shoulders + cracked asphalt
   ctx.lineCap = "square";
   ctx.lineJoin = "miter";
@@ -116,7 +147,7 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
   for (let ty = 0; ty < ROWS; ty++) {
     for (let tx = 0; tx < COLS; tx++) {
       const n = r3();
-      const on = map.BLOCKED[ty]?.[tx];
+      const on = map.BLOCKED[ty]?.[tx] || map.WATER[ty]?.[tx] || map.MOUNTAIN[ty]?.[tx] || map.HIGH_GROUND[ty]?.[tx];
       if (on || n > 0.16) continue;
       const name: "grass2" | "grass3" = n < 0.05 ? "grass2" : "grass3";
       const size = TILE * (0.8 + r3() * 0.45);
@@ -130,20 +161,42 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
   for (const c of map.COVER) drawCover(ctx, c.tx * TILE, c.ty * TILE, c.type);
   for (const p of map.PROPS) drawProp(ctx, p.tx * TILE, p.ty * TILE, p.type);
   for (const c of map.CHECKPOINT) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
+  for (const b of map.def.bridges ?? []) drawRaidBridge(ctx, b.tx, b.ty, b.orientation);
 
+  if (shouldDrawLanePortMarkers("raid", opts?.lanePorts)) drawLanePortMarkers(ctx, map);
+}
 
-  // extraction marker
-  const end = map.PIX[map.PIX.length - 1]!;
-  ctx.save();
-  ctx.translate(end[0], end[1]);
-  ctx.scale(SCALE, SCALE);
-  px(ctx, "#132b18", -16, -18, 32, 36);
-  px(ctx, "#1d5c2a", -14, -16, 28, 32);
-  px(ctx, "#4dd36a", -14, -16, 28, 4);
-  px(ctx, "#4dd36a", -14, 12, 28, 4);
-  px(ctx, "#0d1a10", -6, -6, 12, 12);
-  px(ctx, "#4dd36a", -4, -4, 8, 8);
-  ctx.restore();
+/** Dev/debug extract pads. Not used in normal raids. */
+export function drawLanePortMarkers(ctx: CanvasRenderingContext2D, map: GameMap) {
+  for (const lane of map.lanes) {
+    const end = extractMarkerCenter(lane.PIX);
+    ctx.save();
+    ctx.translate(end[0], end[1]);
+    ctx.scale(SCALE, SCALE);
+    px(ctx, "#132b18", -16, -18, 32, 36);
+    px(ctx, "#1d5c2a", -14, -16, 28, 32);
+    px(ctx, "#4dd36a", -14, -16, 28, 4);
+    px(ctx, "#4dd36a", -14, 12, 28, 4);
+    px(ctx, "#0d1a10", -6, -6, 12, 12);
+    px(ctx, "#4dd36a", -4, -4, 8, 8);
+    ctx.restore();
+  }
+}
+
+function drawRaidBridge(ctx: CanvasRenderingContext2D, tx: number, ty: number, orientation: "H" | "V") {
+  const x = tx * TILE;
+  const y = ty * TILE;
+  ctx.fillStyle = "#5a3a18";
+  ctx.fillRect(x + 2, y + 2, TILE - 4, TILE - 4);
+  ctx.fillStyle = "#c9a56a";
+  if (orientation === "H") {
+    for (let i = 0; i < 4; i++) ctx.fillRect(x + 3, y + 6 + i * 8, TILE - 6, 5);
+  } else {
+    for (let i = 0; i < 4; i++) ctx.fillRect(x + 6 + i * 8, y + 3, 5, TILE - 6);
+  }
+  ctx.fillStyle = "#8a6230";
+  ctx.fillRect(x + 2, y + 2, TILE - 4, 2);
+  ctx.fillRect(x + 2, y + TILE - 4, TILE - 4, 2);
 }
 
 /** Player-built barricades and barbed wire. Barricades render heavier as they upgrade. */
@@ -199,10 +252,13 @@ export function drawObstacle(
 
 
 function strokePath(ctx: CanvasRenderingContext2D, map: GameMap) {
-  ctx.beginPath();
-  ctx.moveTo(map.PIX[0]![0], map.PIX[0]![1]);
-  for (let i = 1; i < map.PIX.length; i++) ctx.lineTo(map.PIX[i]![0], map.PIX[i]![1]);
-  ctx.stroke();
+  for (const lane of map.lanes) {
+    if (!lane.PIX.length) continue;
+    ctx.beginPath();
+    ctx.moveTo(lane.PIX[0]![0], lane.PIX[0]![1]);
+    for (let i = 1; i < lane.PIX.length; i++) ctx.lineTo(lane.PIX[i]![0], lane.PIX[i]![1]);
+    ctx.stroke();
+  }
 }
 
 
@@ -256,7 +312,7 @@ export function drawCover(ctx: CanvasRenderingContext2D, x: number, y: number, t
   });
 }
 
-function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, type: string) {
+export function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, type: string) {
   // sprite-based props (fall through to pixel art if the atlas hasn't loaded)
   if (type === "hut" || type === "crate") {
     px(ctx, "#00000050", x + 4, y + TILE - 7, TILE - 8, 5);

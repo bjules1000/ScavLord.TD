@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { COLS, ENEMIES, ROWS, SCALE, TILE, buildWave, waveScale } from "./data";
+import { Link } from "@tanstack/react-router";
+import { BOARD_GUTTER, COLS, ENEMIES, ROWS, SCALE, TILE, buildWave, waveScale } from "./data";
 import {
   MAP_DEFS,
   MAP_BY_ID,
@@ -9,10 +10,12 @@ import {
   coverProtectionFrom,
   isBuildable,
   isRoad,
+  laneRoute,
   pathPoint,
   type CoverPiece,
   type GameMap,
 } from "./map";
+import { assignSpawnLane, lanePathProgress } from "./lanes";
 import {
   ARMORS,
   ATTACHMENTS,
@@ -68,7 +71,6 @@ import { settleHaul } from "./extract";
 import {
   TARGET_MODES,
   hitTestEnemy,
-  pathProgress,
   selectTarget,
 } from "./targeting";
 import {
@@ -104,8 +106,10 @@ import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
 
-const W = COLS * TILE;
-const H = ROWS * TILE;
+const PLAYABLE_W = COLS * TILE;
+const PLAYABLE_H = ROWS * TILE;
+const W = PLAYABLE_W + BOARD_GUTTER * 2;
+const H = PLAYABLE_H + BOARD_GUTTER * 2;
 const START_ROUBLES = 500;
 const START_LIVES = 20;
 const BASE_BACKPACK_SLOTS = 5;
@@ -139,6 +143,7 @@ type Phase = "hideout" | "prep" | "combat" | "loot" | "dead" | "extracted";
 interface SpawnEvent {
   at: number;
   kind: EnemyKind;
+  lane: number;
 }
 interface Drop {
   id: number;
@@ -398,7 +403,12 @@ export default function TarkovTD() {
     c.height = H;
     const ctx = c.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#0a0c08";
+    ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
     drawTerrain(ctx, mapRef.current);
+    ctx.restore();
     terrainRef.current = c;
     if (gs.current.phase === "hideout") gs.current = freshState([], "hideout", mapRef.current);
     rerender();
@@ -903,10 +913,11 @@ export default function TarkovTD() {
           kind: ev.kind,
           hp,
           maxHp: hp,
+          lane: ev.lane,
           seg: 0,
           t: 0,
-          x: mapRef.current.PIX[0]![0],
-          y: mapRef.current.PIX[0]![1],
+          x: laneRoute(mapRef.current, ev.lane).PIX[0]![0],
+          y: laneRoute(mapRef.current, ev.lane).PIX[0]![1],
           slow: 0,
           hitFlash: 0,
           step: Math.random() * 4,
@@ -924,10 +935,11 @@ export default function TarkovTD() {
         e.hitFlash = Math.max(0, e.hitFlash - dt);
         e.slow = Math.max(0, e.slow - dt);
         if (isSettledOut(e)) continue;
+        const route = laneRoute(mapRef.current, e.lane);
         const sp = def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? 0.45 : 1);
         let move = sp * dt;
-        while (move > 0 && e.seg < mapRef.current.SEG_LEN.length) {
-          const len = mapRef.current.SEG_LEN[e.seg]!;
+        while (move > 0 && e.seg < route.SEG_LEN.length) {
+          const len = route.SEG_LEN[e.seg]!;
           const remain = (1 - e.t) * len;
           if (move < remain) {
             e.t += move / len;
@@ -939,13 +951,14 @@ export default function TarkovTD() {
           }
         }
         e.step += sp * dt * 0.25;
-        if (e.seg >= mapRef.current.SEG_LEN.length) {
+        if (e.seg >= route.SEG_LEN.length) {
           if (leakIfAlive(e)) {
             s.lives -= def.damage;
             s.shake = 8;
+            const end = route.PIX[route.PIX.length - 1]!;
             s.floats.push({
-              x: mapRef.current.PIX[mapRef.current.PIX.length - 1]![0],
-              y: mapRef.current.PIX[mapRef.current.PIX.length - 1]![1] - 16,
+              x: end[0],
+              y: end[1] - 16,
               life: 1,
               text: `-${def.damage} HP`,
               color: "#ff5a3c",
@@ -953,7 +966,7 @@ export default function TarkovTD() {
           }
           continue;
         }
-        const [x, y] = pathPoint(mapRef.current, e.seg, e.t);
+        const [x, y] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
         e.x = x;
         e.y = y;
 
@@ -1009,7 +1022,7 @@ export default function TarkovTD() {
             });
           }
         } else {
-          const [nx, ny] = pathPoint(mapRef.current, e.seg, Math.min(1, e.t + 0.05));
+          const [nx, ny] = pathPoint(mapRef.current, e.seg, Math.min(1, e.t + 0.05), e.lane);
           e.aim = Math.atan2(ny - e.y, nx - e.x);
         }
       }
@@ -1056,7 +1069,10 @@ export default function TarkovTD() {
         const cy = t.ty * TILE + TILE / 2;
         const live = s.enemies
           .filter((e) => !isSettledOut(e))
-          .map((e) => ({ ...e, pathProgress: pathProgress(e.seg, e.t) }));
+          .map((e) => ({
+            ...e,
+            pathProgress: lanePathProgress(e.seg, e.t, laneRoute(mapRef.current, e.lane).SEG_LEN.length),
+          }));
         const best = selectTarget(t.targetMode, { x: cx, y: cy }, st.range, live, t.manualTargetId);
         const hasTarget = !!best;
         if (t.targetMode === "MANUAL" && t.manualTargetId != null && !hasTarget) {
@@ -1328,6 +1344,8 @@ export default function TarkovTD() {
       ctx.save();
       if (s.shake > 0) ctx.translate((Math.random() - 0.5) * s.shake, (Math.random() - 0.5) * s.shake);
       ctx.drawImage(terrain, 0, 0);
+      ctx.save();
+      ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
 
       for (const c of s.crates) drawCrate(ctx, c.tx, c.ty, c.progress, c.opened);
       for (const o of s.obstacles)
@@ -1451,6 +1469,7 @@ export default function TarkovTD() {
         ctx.fillText(f.text, f.x, f.y);
       }
       ctx.globalAlpha = 1;
+      ctx.restore();
 
       ctx.fillStyle = "rgba(0,0,0,0.14)";
       for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
@@ -1472,8 +1491,8 @@ export default function TarkovTD() {
   const toWorld = (ev: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }) => {
     const rect = ev.currentTarget.getBoundingClientRect();
     return {
-      x: ((ev.clientX - rect.left) / rect.width) * W,
-      y: ((ev.clientY - rect.top) / rect.height) * H,
+      x: ((ev.clientX - rect.left) / rect.width) * W - BOARD_GUTTER,
+      y: ((ev.clientY - rect.top) / rect.height) * H - BOARD_GUTTER,
     };
   };
 
@@ -1598,9 +1617,12 @@ export default function TarkovTD() {
     const wave = buildWave(s.wave, mapRef.current.def.waveMods);
     let at = 400;
     const q: SpawnEvent[] = [];
+    let spawnIndex = 0;
+    const laneCount = mapRef.current.lanes.length;
     for (const g of wave.groups) {
       for (let i = 0; i < g.count; i++) {
-        q.push({ at, kind: g.kind });
+        q.push({ at, kind: g.kind, lane: assignSpawnLane(spawnIndex, laneCount) });
+        spawnIndex += 1;
         at += g.gap;
       }
       at += 700;
@@ -2031,7 +2053,14 @@ export default function TarkovTD() {
                     {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
                     {loadout.length}/{loadoutSlots}
                   </div>
-                  <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-3 w-full">
+                  <Link
+                    to="/dev/map-editor"
+                    search={{ map: mapId }}
+                    className="pixel-btn mt-3 flex w-full items-center justify-center"
+                  >
+                    EDIT THIS MAP
+                  </Link>
+                  <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-2 w-full">
                     DEPLOY TO {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
                   </button>
                   <button onClick={() => setScreen("hideout")} className="pixel-btn mt-2 w-full">
