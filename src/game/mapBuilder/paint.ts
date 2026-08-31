@@ -1,7 +1,9 @@
+import { eraseBridgeAt, eraseBridgeById, paintBridgeTiles } from "./bridges";
 import { inBounds, isWalkableTerrain, nextObjectId, occupantAt, terrainAt } from "./document";
 import { edgeKey } from "./edges";
 import { pathAppendCells } from "./pathing";
 import { emptyLane, isLegalPort } from "./ports";
+import { eraseCollisionWall, eraseCollisionWallById, placeCollisionWall } from "./walls";
 import type { CheckpointPart, CoverType, PropType } from "../map";
 import type {
   BoundaryPort,
@@ -136,6 +138,8 @@ export function paintZoneCells(
 
 export function removeObject(doc: EditorMapDoc, id: string): EditorMapDoc {
   if (doc.status === "locked") return doc;
+  if (id.startsWith("wall:")) return eraseCollisionWallById(doc, id);
+  if (id.startsWith("bridge:")) return eraseBridgeById(doc, id);
   return {
     ...doc,
     props: doc.props.filter((p) => p.id !== id),
@@ -262,4 +266,4 @@ export function renameLane(doc: EditorMapDoc, from: string, to: string): EditorM
   };
 }
 
-export { edgeKey };
+export { edgeKey, eraseBridgeAt, eraseCollisionWall, paintBridgeTiles, placeCollisionWall };

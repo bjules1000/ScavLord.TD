@@ -98,6 +98,25 @@ export interface EditorZone {
   cells: Array<[number, number]>;
 }
 
+/** Canonical tile-edge collision/LOS blocker. See walls.ts for shared-edge identity. */
+export interface CollisionWall {
+  tx: number;
+  ty: number;
+  edge: TileEdge;
+}
+
+export const BRIDGE_ORIENTATIONS = ["H", "V"] as const;
+export type BridgeOrientation = (typeof BRIDGE_ORIENTATIONS)[number];
+
+/** Elevated walkable overlay. Base terrain under the tile is stored separately. */
+export interface BridgeTile {
+  tx: number;
+  ty: number;
+  orientation: BridgeOrientation;
+}
+
+export type SurfaceLevel = "GROUND" | "HIGH";
+
 export interface EditorMapDoc {
   schemaVersion: typeof MAP_BUILDER_SCHEMA_VERSION;
   id: string;
@@ -125,6 +144,10 @@ export interface EditorMapDoc {
   edges: EditorEdgeObject[];
   gates: EditorGate[];
   zones: EditorZone[];
+  /** Invisible cliff/LOS blockers on canonical tile edges. Empty until authored. */
+  collisionWalls: CollisionWall[];
+  /** Suspended-bridge overlay tiles. Empty until authored. Independent of base terrain. */
+  bridges: BridgeTile[];
 }
 
 export interface EditorStoreV1 {

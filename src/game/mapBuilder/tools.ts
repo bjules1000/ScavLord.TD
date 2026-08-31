@@ -15,6 +15,10 @@ export type EditorTool =
   | { id: "crate" }
   | { id: "checkpoint"; type: CheckpointPart["type"] }
   | { id: "edge"; type: "fence" | "wall" }
+  | { id: "collision-wall" }
+  | { id: "erase-wall" }
+  | { id: "bridge" }
+  | { id: "erase-bridge" }
   | { id: "erase-prop" }
   | { id: "erase-gameplay" };
 
@@ -75,6 +79,38 @@ export function isGameplayEraseMode(tool: EditorTool): boolean {
 
 export function isPathMode(tool: EditorTool): boolean {
   return tool.id === "path";
+}
+
+export function isCollisionWallMode(tool: EditorTool): boolean {
+  return tool.id === "collision-wall";
+}
+
+export function isEraseWallMode(tool: EditorTool): boolean {
+  return tool.id === "erase-wall";
+}
+
+export function isBridgeMode(tool: EditorTool): boolean {
+  return tool.id === "bridge";
+}
+
+export function isEraseBridgeMode(tool: EditorTool): boolean {
+  return tool.id === "erase-bridge";
+}
+
+export function selectCollisionWallTool(): EditorTool {
+  return { id: "collision-wall" };
+}
+
+export function selectEraseWallTool(): EditorTool {
+  return { id: "erase-wall" };
+}
+
+export function selectBridgeTool(): EditorTool {
+  return { id: "bridge" };
+}
+
+export function selectEraseBridgeTool(): EditorTool {
+  return { id: "erase-bridge" };
 }
 
 export function isAuthoringTool(tool: EditorTool): boolean {

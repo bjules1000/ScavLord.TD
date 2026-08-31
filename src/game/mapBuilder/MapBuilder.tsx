@@ -15,6 +15,10 @@ import { DEFAULT_LAYERS, clientToTile, drawEditorMap, hitObject, type LayerFlags
 import { EDITOR_GUTTER, canvasPixelSize, EDGE_LABEL, hitLanePort, portEdgeFromCursor } from "./ports";
 import {
   isAuthoringTool,
+  isBridgeMode,
+  isCollisionWallMode,
+  isEraseBridgeMode,
+  isEraseWallMode,
   isGameplayEraseMode,
   isInspectMode,
   isPathMode,
@@ -22,6 +26,10 @@ import {
   isPropPlaceMode,
   isTerrainEraserMode,
   isTerrainPaintMode,
+  selectBridgeTool,
+  selectCollisionWallTool,
+  selectEraseBridgeTool,
+  selectEraseWallTool,
   selectGameplayEraser,
   selectPathTool,
   selectPropEraser,
@@ -33,6 +41,8 @@ import type { EditorMapDoc, TerrainKind } from "./schema";
 import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
 import { lockDoc } from "./document";
+import { bridgeAt, hasBridge, inferBridgeOrientation, toggleBridgeOrientation } from "./bridges";
+import { canonicalCollisionWall, hitCollisionWall } from "./walls";
 
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
 const GHOST: Record<TerrainKind, string> = {
@@ -110,12 +120,25 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     canvas.width = size.w;
     canvas.height = size.h;
     const edge =
-      hover && (tool.id === "edge" || tool.id === "gate")
+      hover && (tool.id === "edge" || tool.id === "gate" || isCollisionWallMode(tool) || isEraseWallMode(tool))
         ? edgeFromCursor(hover.localX, hover.localY)
         : undefined;
     let ghost: string | null = null;
     let invalid = false;
-    let ghostItem: "prop" | "cover" | "crate" | "checkpoint" | "spawn" | "end" | "erase" | "path" | null = null;
+    let ghostItem:
+      | "prop"
+      | "cover"
+      | "crate"
+      | "checkpoint"
+      | "spawn"
+      | "end"
+      | "erase"
+      | "path"
+      | "wall"
+      | "bridge"
+      | "erase-wall"
+      | "erase-bridge"
+      | null = null;
     let pathPreview: Array<[number, number]> | undefined;
     if (hover && isTerrainPaintMode(tool) && tool.id === "terrain") ghost = GHOST[tool.terrain];
     if (hover && isPropPlaceMode(tool)) {
@@ -148,6 +171,26 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     } else if (hover && (tool.id === "zone" || tool.id === "gate")) {
       ghost = "#f0b400";
     }
+    let wallPreview: { tx: number; ty: number; edge: "N" | "E" | "S" | "W" } | null = null;
+    if (hover && (isCollisionWallMode(tool) || isEraseWallMode(tool)) && edge) {
+      ghost = "#3ef0e0";
+      ghostItem = isEraseWallMode(tool) ? "erase-wall" : "wall";
+      wallPreview = canonicalCollisionWall(hover.tx, hover.ty, edge, doc.width, doc.height);
+      invalid = isEraseWallMode(tool)
+        ? !wallPreview || !hitCollisionWall(doc, hover.tx, hover.ty, edge)
+        : !wallPreview;
+    }
+    let bridgePreview: { tx: number; ty: number; orientation: "H" | "V" } | null = null;
+    if (hover && (isBridgeMode(tool) || isEraseBridgeMode(tool))) {
+      ghost = "#c9a56a";
+      ghostItem = isEraseBridgeMode(tool) ? "erase-bridge" : "bridge";
+      invalid = isEraseBridgeMode(tool) ? !hasBridge(doc, hover.tx, hover.ty) : false;
+      bridgePreview = {
+        tx: hover.tx,
+        ty: hover.ty,
+        orientation: inferBridgeOrientation(doc.bridges, hover.tx, hover.ty, "H"),
+      };
+    }
     drawEditorMap(
       ctx,
       doc,
@@ -165,6 +208,8 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             ...(pathPreview ? { pathPreview } : {}),
             ...(edge ? { edge } : {}),
             ...(portPreview ? { portPreview } : {}),
+            ...(wallPreview ? { wallPreview } : {}),
+            ...(bridgePreview ? { bridgePreview } : {}),
           }
         : null,
       laneId,
@@ -195,7 +240,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     const cell = pointerCell(ev);
     if (!cell) return;
     if (isInspectMode(tool)) {
-      setSelected(hitObject(doc, cell.tx, cell.ty));
+      setSelected(hitObject(doc, cell.tx, cell.ty, cell.localX, cell.localY));
       return;
     }
     if (locked || !isAuthoringTool(tool)) return;
@@ -542,6 +587,28 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 ERASE PROP
               </Chip>
             </Section>
+            <Section title="COLLISION / BARRIERS">
+              <Chip active={isCollisionWallMode(tool)} onClick={() => setTool(selectCollisionWallTool())}>
+                INVISIBLE WALL
+              </Chip>
+              <Chip active={isEraseWallMode(tool)} onClick={() => setTool(selectEraseWallTool())}>
+                ERASE WALL
+              </Chip>
+              <div className="w-full text-muted-foreground">
+                Hover a tile edge (N/E/S/W) and click. Shared neighbor edges are one wall. Leave gaps at slopes.
+              </div>
+            </Section>
+            <Section title="OVERLAYS / STRUCTURES">
+              <Chip active={isBridgeMode(tool)} onClick={() => setTool(selectBridgeTool())}>
+                SUSPENDED BRIDGE
+              </Chip>
+              <Chip active={isEraseBridgeMode(tool)} onClick={() => setTool(selectEraseBridgeTool())}>
+                ERASE BRIDGE
+              </Chip>
+              <div className="w-full text-muted-foreground">
+                Overlay sits above base terrain. ROAD under a bridge stays. Drag to paint. ERASE TERRAIN does not remove the overlay.
+              </div>
+            </Section>
             <Section title="TOOLS">
               <Chip active={tool.id === "select"} onClick={() => setTool({ id: "select" })}>
                 SELECT
@@ -632,7 +699,13 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               ))}
             </Section>
             <Section title="INSPECTOR">
-              <Inspector doc={doc} selected={selected} hover={hover} />
+              <Inspector
+                doc={doc}
+                selected={selected}
+                hover={hover}
+                locked={locked}
+                onToggleBridge={(tx, ty) => apply(toggleBridgeOrientation(doc, tx, ty))}
+              />
             </Section>
             <Section title="VALIDATION">
               <div className={report.ok ? "text-accent" : "text-destructive"}>
@@ -684,14 +757,66 @@ function Inspector({
   doc,
   selected,
   hover,
+  locked,
+  onToggleBridge,
 }: {
   doc: EditorMapDoc;
   selected: { kind: string; id: string } | null;
   hover: { tx: number; ty: number } | null;
+  locked: boolean;
+  onToggleBridge: (tx: number, ty: number) => void;
 }) {
   const tile = selected?.kind === "tile" && selected.id.includes(",")
     ? { tx: Number(selected.id.split(",")[0]), ty: Number(selected.id.split(",")[1]) }
     : hover;
+  if (selected?.kind === "wall") {
+    const parts = selected.id.slice("wall:".length).split(",");
+    const tx = Number(parts[0]);
+    const ty = Number(parts[1]);
+    const edge = parts[2] ?? "";
+    return (
+      <div>
+        INVISIBLE WALL
+        <div>EDGE {edge}</div>
+        <div>
+          TILE X{tx} Y{ty}
+        </div>
+        <div>MOVEMENT BLOCKED</div>
+        <div>LOS BLOCKED</div>
+      </div>
+    );
+  }
+  const bridgeSel =
+    selected?.kind === "bridge"
+      ? { tx: Number(selected.id.split(":")[1]?.split(",")[0]), ty: Number(selected.id.split(",")[1]) }
+      : tile && hasBridge(doc, tile.tx, tile.ty)
+        ? tile
+        : null;
+  if (bridgeSel && Number.isInteger(bridgeSel.tx) && Number.isInteger(bridgeSel.ty)) {
+    const overlay = bridgeAt(doc, bridgeSel.tx, bridgeSel.ty);
+    const base = doc.terrain[bridgeSel.ty]?.[bridgeSel.tx] ?? "—";
+    if (overlay) {
+      return (
+        <div>
+          SUSPENDED BRIDGE
+          <div>SURFACE HIGH</div>
+          <div>BASE TERRAIN {base}</div>
+          <div>ORIENTATION {overlay.orientation === "H" ? "HORIZONTAL" : "VERTICAL"}</div>
+          <div>
+            TILE X{overlay.tx} Y{overlay.ty}
+          </div>
+          <button
+            type="button"
+            className="pixel-btn mt-1"
+            disabled={locked}
+            onClick={() => onToggleBridge(overlay.tx, overlay.ty)}
+          >
+            TOGGLE ORIENTATION
+          </button>
+        </div>
+      );
+    }
+  }
   const portHit =
     selected?.kind === "spawn" || selected?.kind === "endpoint"
       ? { kind: selected.kind as "spawn" | "endpoint", laneId: selected.id.split(":")[1] ?? "" }
@@ -740,11 +865,14 @@ function Inspector({
   if (tile) {
     const t = doc.terrain[tile.ty]?.[tile.tx] ?? "—";
     const lanes = doc.lanes.filter((l) => pathCells(l.waypoints).some(([x, y]) => x === tile.tx && y === tile.ty)).map((l) => l.id);
+    const elevated = t === "HIGH_GROUND" || hasBridge(doc, tile.tx, tile.ty);
     return (
       <div>
         TILE X {tile.tx} Y {tile.ty}
         <div>TERRAIN {t}</div>
+        <div>SURFACE {elevated ? "HIGH" : "GROUND"}</div>
         <div>HIGH GROUND {t === "HIGH_GROUND" ? "YES" : "NO"}</div>
+        <div>BRIDGE {hasBridge(doc, tile.tx, tile.ty) ? "YES" : "NO"}</div>
         <div>LANES {lanes.join(", ") || "—"}</div>
       </div>
     );

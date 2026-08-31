@@ -12,9 +12,10 @@
  *
  * Main MapDef stores `path` (MAIN), optional extra `lanes`, optional `water`,
  * plus props/cover/crates/checkpoints.
- * High ground, mountain, combat gates, zones, and edge objects remain
- * editor-native / future-compatible. `integrationNotes()` lists what production
- * cannot store yet so nothing is silently discarded at export time.
+ * High ground, mountain, combat gates, zones, edge objects, invisible walls,
+ * and suspended bridges remain editor-native / future-compatible.
+ * `integrationNotes()` lists what production cannot store yet so nothing is
+ * silently discarded at export time.
  */
 import { COLS, ROWS } from "../data";
 import { mapLaneDefs } from "../lanes";
@@ -130,6 +131,18 @@ export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
   }
   if (doc.edges.length) {
     notes.push({ code: "EDGES", message: "Authored edge objects exist; main cover is tile-centered." });
+  }
+  if (doc.collisionWalls.length) {
+    notes.push({
+      code: "WALLS",
+      message: "Invisible collision walls exist; production movement/LOS does not consume them yet.",
+    });
+  }
+  if (doc.bridges.length) {
+    notes.push({
+      code: "BRIDGES",
+      message: "Suspended bridge overlays exist; production still uses base terrain/path only.",
+    });
   }
   return notes;
 }

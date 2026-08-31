@@ -1,6 +1,5 @@
 import { TILE } from "../data";
-import type { CheckpointPart, CoverType, PropType } from "../map";
-import { inBounds } from "./document";
+import { eraseBridgeAt, paintBridgeTiles } from "./bridges";
 import { edgeFromCursor } from "./edges";
 import { cellsBetween, pathAppendCells, pathCells } from "./pathing";
 import {
@@ -22,6 +21,7 @@ import { hitLanePort, portEdgeFromCursor } from "./ports";
 import type { EditorMapDoc, TileEdge } from "./schema";
 import type { EditorTool } from "./tools";
 import { isDragPlaceProp } from "./tools";
+import { eraseCollisionWall, placeCollisionWall } from "./walls";
 
 export interface AuthorCell {
   tx: number;
@@ -86,6 +86,14 @@ export function applyAuthor(
       return placeGate(doc, tool.gateId, ctx.laneId, cell.tx, cell.ty, edgeOf(cell, tile));
     case "erase-gameplay":
       return eraseGameplayAt(doc, ctx.laneId, cell.tx, cell.ty);
+    case "collision-wall":
+      return placeCollisionWall(doc, cell.tx, cell.ty, edgeOf(cell, tile));
+    case "erase-wall":
+      return eraseCollisionWall(doc, cell.tx, cell.ty, edgeOf(cell, tile));
+    case "bridge":
+      return paintBridgeTiles(doc, [[cell.tx, cell.ty]]);
+    case "erase-bridge":
+      return eraseBridgeAt(doc, cell.tx, cell.ty);
     default:
       return doc;
   }
@@ -98,6 +106,12 @@ export function applyAuthorStroke(
   ctx: AuthorContext,
 ): EditorMapDoc {
   if (!cells.length || doc.status === "locked") return doc;
+  if (tool.id === "bridge") {
+    return paintBridgeTiles(
+      doc,
+      cells.map((c) => [c.tx, c.ty]),
+    );
+  }
   if (isSinglePlaceTool(tool)) return applyAuthor(doc, tool, cells[0]!, ctx);
   let next = doc;
   let zoneId = ctx.zoneId;

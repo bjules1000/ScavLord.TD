@@ -8,6 +8,13 @@ import {
   type ValidationIssue,
   type ValidationResult,
 } from "./schema";
+import {
+  bridgeComponents,
+  bridgeHasDiagonalOnlyConnection,
+  componentTouchesHighGround,
+  isolatedBridgeTiles,
+} from "./bridges";
+import { canonicalCollisionWall, collisionWallKey } from "./walls";
 
 function issue(level: ValidationIssue["level"], code: string, message: string): ValidationIssue {
   return { level, code, message };
@@ -49,6 +56,50 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
   for (const p of doc.crates) checkTile("Crate", p.tx, p.ty);
   for (const p of doc.checkpoints) checkTile(`Checkpoint ${p.type}`, p.tx, p.ty);
   for (const p of doc.edges) checkTile(`Edge ${p.type}`, p.tx, p.ty);
+
+  const wallKeys = new Set<string>();
+  for (const wall of doc.collisionWalls) {
+    const canonical = canonicalCollisionWall(wall.tx, wall.ty, wall.edge, doc.width, doc.height);
+    if (!canonical) {
+      errors.push(issue("error", "WALL", `Invisible wall is out of bounds at (${wall.tx}, ${wall.ty} ${wall.edge}).`));
+      continue;
+    }
+    const key = collisionWallKey(canonical);
+    if (wallKeys.has(key)) {
+      errors.push(issue("error", "WALL", `Duplicate invisible wall at (${canonical.tx}, ${canonical.ty} ${canonical.edge}).`));
+      continue;
+    }
+    wallKeys.add(key);
+    if (wall.tx !== canonical.tx || wall.ty !== canonical.ty || wall.edge !== canonical.edge) {
+      errors.push(
+        issue("error", "WALL", `Invisible wall at (${wall.tx}, ${wall.ty} ${wall.edge}) is not in canonical shared-edge form.`),
+      );
+    }
+  }
+
+  for (const bridge of doc.bridges) {
+    checkTile("Suspended bridge", bridge.tx, bridge.ty);
+  }
+  const bridgeCells = new Set<string>();
+  for (const bridge of doc.bridges) {
+    const key = `${bridge.tx},${bridge.ty}`;
+    if (bridgeCells.has(key)) {
+      errors.push(issue("error", "BRIDGE", `Duplicate suspended bridge overlay at (${bridge.tx}, ${bridge.ty}).`));
+    }
+    bridgeCells.add(key);
+  }
+  if (bridgeHasDiagonalOnlyConnection(doc)) {
+    errors.push(issue("error", "BRIDGE", "Suspended bridge tiles connect diagonally without an orthogonal chain."));
+  }
+  for (const tile of isolatedBridgeTiles(doc)) {
+    warnings.push(issue("warning", "BRIDGE", `Isolated suspended bridge tile at (${tile.tx}, ${tile.ty}).`));
+  }
+  for (const component of bridgeComponents(doc)) {
+    if (!component.length) continue;
+    if (!componentTouchesHighGround(doc, component)) {
+      warnings.push(issue("warning", "BRIDGE", "Bridge segment has no elevated access."));
+    }
+  }
 
   const laneIds = new Set<string>();
   for (const lane of doc.lanes) {

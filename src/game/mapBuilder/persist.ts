@@ -1,4 +1,5 @@
 import { MAP_BUILDER_STORAGE_KEY, MAP_BUILDER_SCHEMA_VERSION, type EditorMapDoc, type EditorStoreV1 } from "./schema";
+import { normalizeEditorDoc } from "./document";
 
 export { MAP_BUILDER_STORAGE_KEY, MAP_BUILDER_SCHEMA_VERSION };
 
@@ -18,7 +19,9 @@ export function readStore(storage: Pick<Storage, "getItem"> | null): EditorStore
     return {
       version: MAP_BUILDER_SCHEMA_VERSION,
       activeId: typeof parsed.activeId === "string" ? parsed.activeId : "",
-      docs: parsed.docs,
+      docs: Object.fromEntries(
+        Object.entries(parsed.docs).map(([id, doc]) => [id, normalizeEditorDoc(doc as EditorMapDoc)]),
+      ),
     };
   } catch {
     return emptyStore();

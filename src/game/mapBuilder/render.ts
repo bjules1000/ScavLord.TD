@@ -1,10 +1,12 @@
 import { TILE } from "../data";
 import { drawCheckpoint, drawCover, drawCrate, drawProp } from "../draw";
 import type { CheckpointPart, CoverType, PropType } from "../map";
+import { hasBridge } from "./bridges";
 import { inBounds, terrainAt } from "./document";
 import { laneLabelShort, pathCells } from "./pathing";
 import { EDITOR_GUTTER, canvasPixelSize, hitLanePort, overlayPathCells, portOutsideCell } from "./ports";
-import type { BoundaryPort, EditorMapDoc, TerrainKind, TileEdge } from "./schema";
+import type { BoundaryPort, BridgeOrientation, CollisionWall, EditorMapDoc, TerrainKind, TileEdge } from "./schema";
+import { collisionWallId, hitCollisionWall, wallEdgeNearCursor } from "./walls";
 
 export interface LayerFlags {
   terrain: boolean;
@@ -14,6 +16,8 @@ export interface LayerFlags {
   grid: boolean;
   extras: boolean;
   paths: boolean;
+  walls: boolean;
+  bridges: boolean;
 }
 
 export const DEFAULT_LAYERS: LayerFlags = {
@@ -24,10 +28,15 @@ export const DEFAULT_LAYERS: LayerFlags = {
   grid: true,
   extras: true,
   paths: true,
+  walls: true,
+  bridges: true,
 };
 
 export const PATH_ACTIVE_COLOR = "#f0b400";
 export const PATH_INACTIVE_COLOR = "#e8e4d4";
+
+export { visibleCollisionWalls } from "./walls";
+export { visibleBridges } from "./bridges";
 
 export function pathStrokeStyle(active: boolean): { color: string; width: number } {
   return active ? { color: PATH_ACTIVE_COLOR, width: 5 } : { color: PATH_INACTIVE_COLOR, width: 4 };
@@ -124,12 +133,27 @@ export function drawEditorMap(
     ghost: string | null;
     invalid?: boolean;
     edge?: TileEdge;
-    ghostItem?: "prop" | "cover" | "crate" | "checkpoint" | "spawn" | "end" | "erase" | "path" | null;
+    ghostItem?:
+      | "prop"
+      | "cover"
+      | "crate"
+      | "checkpoint"
+      | "spawn"
+      | "end"
+      | "erase"
+      | "path"
+      | "wall"
+      | "bridge"
+      | "erase-wall"
+      | "erase-bridge"
+      | null;
     ghostProp?: PropType | null;
     ghostCover?: CoverType | null;
     ghostCheckpoint?: CheckpointPart["type"] | null;
     pathPreview?: Array<[number, number]>;
     portPreview?: BoundaryPort | null;
+    wallPreview?: CollisionWall | null;
+    bridgePreview?: { tx: number; ty: number; orientation: BridgeOrientation } | null;
   } | null,
   activeLaneId: string,
 ) {
@@ -221,6 +245,10 @@ export function drawEditorMap(
     for (const e of doc.edges) drawEdgeMark(ctx, e.tx, e.ty, e.edge, e.type === "wall" ? "#8a8c80" : "#c9c2a6");
   }
 
+  if (layers.bridges) {
+    for (const b of doc.bridges) drawBridgeOverlay(ctx, b.tx, b.ty, b.orientation, 0.92);
+  }
+
   if (layers.paths) {
     const overlays = visiblePathOverlays(doc, layers, activeLaneId);
     const inactive = overlays.filter((o) => !o.active);
@@ -274,6 +302,10 @@ export function drawEditorMap(
     }
   }
 
+  if (layers.walls) {
+    for (const wall of doc.collisionWalls) drawCollisionWall(ctx, wall, "#3ef0e0", 1);
+  }
+
   if (hover) {
     if (hover.ghostItem === "path" && hover.pathPreview && hover.pathPreview.length) {
       drawPathPolyline(ctx, hover.pathPreview, hover.invalid ? "#c23b2c" : PATH_ACTIVE_COLOR, 3, 0.55);
@@ -288,6 +320,22 @@ export function drawEditorMap(
       ctx.strokeStyle = hover.invalid ? "#c23b2c" : "#f0b400";
       ctx.lineWidth = 2;
       ctx.strokeRect(hover.tx * TILE + 1, hover.ty * TILE + 1, TILE - 2, TILE - 2);
+    } else if (hover.ghostItem === "wall" || hover.ghostItem === "erase-wall") {
+      const wall = hover.wallPreview;
+      if (wall) {
+        drawCollisionWall(ctx, wall, hover.invalid ? "#c23b2c" : "#3ef0e0", hover.ghostItem === "erase-wall" ? 1 : 0.5);
+      }
+    } else if (hover.ghostItem === "bridge" || hover.ghostItem === "erase-bridge") {
+      const preview = hover.bridgePreview ?? { tx: hover.tx, ty: hover.ty, orientation: "H" as const };
+      if (hover.ghostItem === "erase-bridge") {
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = "#c23b2c";
+        ctx.fillRect(preview.tx * TILE, preview.ty * TILE, TILE, TILE);
+        ctx.restore();
+      } else {
+        drawBridgeOverlay(ctx, preview.tx, preview.ty, preview.orientation, 0.45);
+      }
     } else {
       ctx.save();
       ctx.globalAlpha = hover.invalid ? 0.45 : 0.4;
@@ -404,7 +452,73 @@ function drawEdgeMark(ctx: CanvasRenderingContext2D, tx: number, ty: number, edg
   if (edge === "E") ctx.fillRect(x + TILE - 6, y + 4, 5, TILE - 8);
 }
 
-export function hitObject(doc: EditorMapDoc, tx: number, ty: number): { kind: string; id: string } | null {
+function drawCollisionWall(ctx: CanvasRenderingContext2D, wall: CollisionWall, color: string, alpha: number) {
+  const x = wall.tx * TILE;
+  const y = wall.ty * TILE;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.lineCap = "square";
+  ctx.beginPath();
+  if (wall.edge === "N") {
+    ctx.moveTo(x + 1, y + 1.5);
+    ctx.lineTo(x + TILE - 1, y + 1.5);
+  } else if (wall.edge === "S") {
+    ctx.moveTo(x + 1, y + TILE - 1.5);
+    ctx.lineTo(x + TILE - 1, y + TILE - 1.5);
+  } else if (wall.edge === "W") {
+    ctx.moveTo(x + 1.5, y + 1);
+    ctx.lineTo(x + 1.5, y + TILE - 1);
+  } else {
+    ctx.moveTo(x + TILE - 1.5, y + 1);
+    ctx.lineTo(x + TILE - 1.5, y + TILE - 1);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBridgeOverlay(
+  ctx: CanvasRenderingContext2D,
+  tx: number,
+  ty: number,
+  orientation: BridgeOrientation,
+  alpha: number,
+) {
+  const x = tx * TILE;
+  const y = ty * TILE;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "#5a3a18";
+  ctx.fillRect(x + 2, y + 2, TILE - 4, TILE - 4);
+  ctx.fillStyle = "#c9a56a";
+  if (orientation === "H") {
+    for (let i = 0; i < 4; i++) ctx.fillRect(x + 3, y + 6 + i * 8, TILE - 6, 5);
+  } else {
+    for (let i = 0; i < 4; i++) ctx.fillRect(x + 6 + i * 8, y + 3, 5, TILE - 6);
+  }
+  ctx.fillStyle = "#8a6230";
+  ctx.fillRect(x + 2, y + 2, TILE - 4, 2);
+  ctx.fillRect(x + 2, y + TILE - 4, TILE - 4, 2);
+  ctx.restore();
+}
+
+export function hitObject(
+  doc: EditorMapDoc,
+  tx: number,
+  ty: number,
+  localX?: number,
+  localY?: number,
+  tile = TILE,
+): { kind: string; id: string } | null {
+  if (localX !== undefined && localY !== undefined) {
+    const near = wallEdgeNearCursor(localX, localY, tile);
+    if (near) {
+      const wall = hitCollisionWall(doc, tx, ty, near);
+      if (wall) return { kind: "wall", id: collisionWallId(wall) };
+    }
+  }
+  if (hasBridge(doc, tx, ty)) return { kind: "bridge", id: `bridge:${tx},${ty}` };
   const port = hitLanePort(doc, tx, ty);
   if (port) return { kind: port.kind, id: `${port.kind}:${port.laneId}` };
   for (const lane of doc.lanes) {

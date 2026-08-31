@@ -1,9 +1,11 @@
 import { MAP_BUILDER_SCHEMA_VERSION, isTerrainKind, type EditorMapDoc, type TerrainKind, type TileEdge } from "./schema";
 import { validateNewMapInput } from "./document";
-import { GATE_IDS, SPECIAL_ZONE_TYPES, TILE_EDGES } from "./schema";
+import { GATE_IDS, SPECIAL_ZONE_TYPES, TILE_EDGES, BRIDGE_ORIENTATIONS } from "./schema";
 import type { PropType } from "../map";
 import { PROP_TYPES } from "./schema";
 import { emptyLane, exportPort, importPort, peelLaneFromWaypoints } from "./ports";
+import { sortBridges } from "./bridges";
+import { normalizeCollisionWalls, sortCollisionWalls } from "./walls";
 
 export interface ExportedMap {
   schemaVersion: 1;
@@ -37,6 +39,8 @@ export interface ExportedMap {
   edges: Array<{ type: EditorMapDoc["edges"][number]["type"]; tx: number; ty: number; edge: EditorMapDoc["edges"][number]["edge"] }>;
   gates: Array<{ id: EditorMapDoc["gates"][number]["id"]; laneId: string; tx: number; ty: number; edge: EditorMapDoc["gates"][number]["edge"] }>;
   zones: Array<{ type: EditorMapDoc["zones"][number]["type"]; name: string; cells: Array<[number, number]> }>;
+  collisionWalls: Array<{ tx: number; ty: number; edge: TileEdge }>;
+  bridges: Array<{ tx: number; ty: number; orientation: "H" | "V" }>;
 }
 
 function sortCells(cells: Array<[number, number]>): Array<[number, number]> {
@@ -93,6 +97,8 @@ export function toExport(doc: EditorMapDoc): ExportedMap {
     zones: [...doc.zones]
       .sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name))
       .map((z) => ({ type: z.type, name: z.name, cells: sortCells(z.cells) })),
+    collisionWalls: sortCollisionWalls(doc.collisionWalls).map((w) => ({ tx: w.tx, ty: w.ty, edge: w.edge })),
+    bridges: sortBridges(doc.bridges).map((b) => ({ tx: b.tx, ty: b.ty, orientation: b.orientation })),
   };
 }
 
@@ -211,6 +217,33 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
       name: z.name,
       cells: sortCells(z.cells),
     })),
+    collisionWalls: normalizeCollisionWalls(
+      (payload.collisionWalls ?? [])
+        .filter((w) => w && (TILE_EDGES as readonly string[]).includes(w.edge))
+        .map((w) => ({ tx: Number(w.tx), ty: Number(w.ty), edge: w.edge })),
+      width,
+      height,
+    ),
+    bridges: sortBridges(
+      (() => {
+        const seen = new Set<string>();
+        const out: EditorMapDoc["bridges"] = [];
+        for (const b of payload.bridges ?? []) {
+          if (!b || !Number.isInteger(b.tx) || !Number.isInteger(b.ty)) continue;
+          const key = `${b.tx},${b.ty}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({
+            tx: Number(b.tx),
+            ty: Number(b.ty),
+            orientation: ((BRIDGE_ORIENTATIONS as readonly string[]).includes(b.orientation) ? b.orientation : "H") as
+              | "H"
+              | "V",
+          });
+        }
+        return out;
+      })(),
+    ),
   };
 }
 

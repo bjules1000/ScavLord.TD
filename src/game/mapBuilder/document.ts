@@ -102,6 +102,8 @@ export function createBlankMap(input: {
     edges: [],
     gates: [],
     zones: [],
+    collisionWalls: [],
+    bridges: [],
   };
 }
 
@@ -146,4 +148,13 @@ export function lockDoc(doc: EditorMapDoc): EditorMapDoc {
 
 export function unlockRevision(doc: EditorMapDoc): EditorMapDoc {
   return { ...doc, status: "draft", revision: doc.revision + 1 };
+}
+
+/** Fill overlay fields missing from older persisted drafts. */
+export function normalizeEditorDoc(doc: EditorMapDoc): EditorMapDoc {
+  return {
+    ...doc,
+    collisionWalls: Array.isArray(doc.collisionWalls) ? doc.collisionWalls : [],
+    bridges: Array.isArray(doc.bridges) ? doc.bridges : [],
+  };
 }
