@@ -136,6 +136,8 @@ describe("combat status", () => {
     expect(combatStatus(0, false, true)).toBe("HOLD");
     expect(combatStatus(0, true, false)).toBe("ENGAGING");
     expect(combatStatus(0, false, false)).toBe("IDLE");
+    expect(combatStatus(0, true, false, true)).toBe("MOVING");
+    expect(combatStatus(400, true, false, true)).toBe("MOVING");
   });
 });
 
