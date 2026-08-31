@@ -40,6 +40,19 @@ export interface VisiblePathOverlay {
   active: boolean;
 }
 
+export function visibleLanePortMarkers(
+  doc: EditorMapDoc,
+  layers: LayerFlags,
+): Array<{ kind: "spawn" | "endpoint"; laneId: string; cell: [number, number] }> {
+  if (!layers.markers) return [];
+  const out: Array<{ kind: "spawn" | "endpoint"; laneId: string; cell: [number, number] }> = [];
+  for (const lane of doc.lanes) {
+    if (lane.spawn) out.push({ kind: "spawn", laneId: lane.id, cell: portOutsideCell(lane.spawn) });
+    if (lane.endpoint) out.push({ kind: "endpoint", laneId: lane.id, cell: portOutsideCell(lane.endpoint) });
+  }
+  return out;
+}
+
 /** PATHS layer visibility only. Turning the layer off never mutates lane data. */
 export function visiblePathOverlays(
   doc: EditorMapDoc,
@@ -226,15 +239,14 @@ export function drawEditorMap(
   }
 
   if (layers.markers) {
-    for (const lane of doc.lanes) {
-      if (lane.spawn) {
-        const [sx, sy] = portOutsideCell(lane.spawn);
-        drawMarker(ctx, sx, sy, "#4dd36a", "S");
-      }
-      if (lane.endpoint) {
-        const [ex, ey] = portOutsideCell(lane.endpoint);
-        drawMarker(ctx, ex, ey, "#f0b400", "E");
-      }
+    for (const mark of visibleLanePortMarkers(doc, layers)) {
+      drawMarker(
+        ctx,
+        mark.cell[0],
+        mark.cell[1],
+        mark.kind === "spawn" ? "#4dd36a" : "#f0b400",
+        mark.kind === "spawn" ? "S" : "E",
+      );
     }
     for (const g of doc.gates) {
       drawEdgeMark(ctx, g.tx, g.ty, g.edge, "#ff7a2f");

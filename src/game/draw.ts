@@ -1,4 +1,5 @@
 import { COLS, ROWS, SCALE, TILE } from "./data";
+import { shouldDrawLanePortMarkers } from "./lanePortsView";
 import { extractMarkerCenter, type GameMap } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
 import type { Enemy, Tower } from "./types";
@@ -33,7 +34,7 @@ const rnd = (seed: number) => {
   };
 };
 
-export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
+export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: { lanePorts?: boolean }) {
   const pal = map.def.palette;
   const r = rnd(7);
   const cell = TILE / 8;
@@ -141,8 +142,11 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
   for (const p of map.PROPS) drawProp(ctx, p.tx * TILE, p.ty * TILE, p.type);
   for (const c of map.CHECKPOINT) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
 
+  if (shouldDrawLanePortMarkers("raid", opts?.lanePorts)) drawLanePortMarkers(ctx, map);
+}
 
-  // extraction marker — outside the playable board
+/** Dev/debug extract pads. Not used in normal raids. */
+export function drawLanePortMarkers(ctx: CanvasRenderingContext2D, map: GameMap) {
   for (const lane of map.lanes) {
     const end = extractMarkerCenter(lane.PIX);
     ctx.save();

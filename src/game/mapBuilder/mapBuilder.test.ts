@@ -17,7 +17,7 @@ import {
   pathStepValid,
 } from "./author";
 import { canRedo, canUndo, commit, commitStroke, redo, sessionFrom, undo } from "./history";
-import { clientToTile, DEFAULT_LAYERS, pathStrokeStyle, visiblePathOverlays } from "./render";
+import { clientToTile, DEFAULT_LAYERS, pathStrokeStyle, visibleLanePortMarkers, visiblePathOverlays } from "./render";
 import {
   isInspectMode,
   isPathMode,
@@ -1183,6 +1183,19 @@ describe("map builder boundary ports", () => {
     const south = { tx: 4, ty: 12, edge: "S" as const };
     expect(markerOutsidePlayableGrid(north, 20, 13)).toBe(true);
     expect(markerOutsidePlayableGrid(south, 20, 13)).toBe(true);
+  });
+
+  it("markers layer shows SPAWN and ENDPOINT; hiding the layer does not drop port data", () => {
+    const doc = validDraft();
+    expect(DEFAULT_LAYERS.markers).toBe(true);
+    const vis = visibleLanePortMarkers(doc, DEFAULT_LAYERS);
+    expect(vis).toEqual([
+      { kind: "spawn", laneId: "MAIN", cell: [-1, 2] },
+      { kind: "endpoint", laneId: "MAIN", cell: [20, 2] },
+    ]);
+    expect(visibleLanePortMarkers(doc, { ...DEFAULT_LAYERS, markers: false })).toEqual([]);
+    expect(doc.lanes[0]!.spawn).toEqual({ tx: 0, ty: 2, edge: "W" });
+    expect(doc.lanes[0]!.endpoint).toEqual({ tx: 19, ty: 2, edge: "E" });
   });
 
   it("playable dimensions remain unchanged and gutter is not editable terrain", () => {
