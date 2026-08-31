@@ -5,7 +5,17 @@ import { createBlankMap, lockDoc, unlockRevision, validateNewMapInput } from "./
 import { edgeFromCursor } from "./edges";
 import { exportFilename, importedToDoc, parseImport, stringifyExport, toExport } from "./export";
 import { HISTORY_LIMIT } from "./schema";
-import { canRedo, canUndo, commit, redo, sessionFrom, undo } from "./history";
+import { canRedo, canUndo, commit, commitStroke, redo, sessionFrom, undo } from "./history";
+import { clientToTile } from "./render";
+import {
+  isInspectMode,
+  isTerrainEraserMode,
+  isTerrainPaintMode,
+  selectEraserTool,
+  selectInspectTool,
+  selectTerrainTool,
+  TERRAIN_PAINT_KINDS,
+} from "./tools";
 import {
   addLane,
   applyEndpoint,
@@ -333,5 +343,143 @@ describe("map builder production isolation", () => {
     const id = doc.props[0]!.id;
     doc = removeObject(doc, id);
     expect(doc.props.length).toBe(0);
+  });
+});
+
+describe("map builder terrain paint interaction", () => {
+  it("selecting each terrain kind activates terrain paint mode", () => {
+    for (const kind of TERRAIN_PAINT_KINDS) {
+      const tool = selectTerrainTool(kind);
+      expect(isTerrainPaintMode(tool)).toBe(true);
+      expect(isInspectMode(tool)).toBe(false);
+      expect(tool.terrain).toBe(kind);
+    }
+  });
+
+  it("SELECT leaves paint mode", () => {
+    expect(isInspectMode(selectInspectTool())).toBe(true);
+    expect(isTerrainPaintMode(selectInspectTool())).toBe(false);
+  });
+
+  it("paints exactly the requested tile and leaves neighbors unchanged", () => {
+    const doc = createBlankMap({ displayName: "P", id: "paint-exact", width: 12, height: 10 });
+    const next = paintTiles(doc, [[5, 6]], "WATER");
+    expect(next.terrain[6]![5]).toBe("WATER");
+    expect(next.terrain[6]![4]).toBe("GROUND");
+    expect(next.terrain[6]![6]).toBe("GROUND");
+    expect(next.terrain[5]![5]).toBe("GROUND");
+    expect(next.terrain[7]![5]).toBe("GROUND");
+  });
+
+  it("terrain eraser resets ROAD WATER MOUNTAIN and HIGH_GROUND to GROUND", () => {
+    let doc = createBlankMap({ displayName: "P", id: "erase-kinds", width: 12, height: 10 });
+    doc = paintTiles(doc, [[1, 1]], "ROAD");
+    doc = paintTiles(doc, [[2, 1]], "WATER");
+    doc = paintTiles(doc, [[3, 1]], "MOUNTAIN");
+    doc = paintTiles(doc, [[4, 1]], "HIGH_GROUND");
+    expect(isTerrainEraserMode(selectEraserTool())).toBe(true);
+    const erased = eraseTiles(doc, [
+      [1, 1],
+      [2, 1],
+      [3, 1],
+      [4, 1],
+    ]);
+    expect(erased.terrain[1]![1]).toBe("GROUND");
+    expect(erased.terrain[1]![2]).toBe("GROUND");
+    expect(erased.terrain[1]![3]).toBe("GROUND");
+    expect(erased.terrain[1]![4]).toBe("GROUND");
+  });
+
+  it("terrain eraser does not delete a prop or lane on the same tile", () => {
+    let doc = validDraft();
+    doc = placeProp(doc, 4, 4, "tree");
+    const waypoints = doc.lanes[0]!.waypoints;
+    const erased = eraseTiles(doc, [[4, 4], [0, 2]]);
+    expect(erased.props.some((p) => p.tx === 4 && p.ty === 4 && p.type === "tree")).toBe(true);
+    expect(erased.lanes[0]!.waypoints).toEqual(waypoints);
+    expect(erased.terrain[2]![0]).toBe("GROUND");
+  });
+
+  it("painting a production-map draft does not mutate MAP_DEFS", () => {
+    const before = JSON.stringify(MAP_DEFS);
+    const grain = fromProductionMap(MAP_BY_ID["kolkhoz"]!);
+    expect(grain.status).toBe("draft");
+    const painted = paintTiles(grain, [[0, 0]], "WATER");
+    expect(painted.terrain[0]![0]).toBe("WATER");
+    expect(JSON.stringify(MAP_DEFS)).toBe(before);
+  });
+
+  it("locked draft rejects editing and unlocked draft accepts it", () => {
+    const locked = lockDoc(validDraft());
+    expect(paintTiles(locked, [[0, 0]], "WATER")).toBe(locked);
+    const open = unlockRevision(locked);
+    expect(paintTiles(open, [[0, 0]], "WATER").terrain[0]![0]).toBe("WATER");
+  });
+
+  it("undo and redo restore terrain after GROUND → WATER → ERASER", () => {
+    let s = sessionFrom(createBlankMap({ displayName: "H", id: "hist-paint", width: 12, height: 10 }));
+    s = commit(s, paintTiles(s.doc, [[2, 2]], "ROAD"));
+    s = commit(s, eraseTiles(s.doc, [[2, 2]]));
+    expect(s.doc.terrain[2]![2]).toBe("GROUND");
+    s = undo(s);
+    expect(s.doc.terrain[2]![2]).toBe("ROAD");
+    s = undo(s);
+    expect(s.doc.terrain[2]![2]).toBe("GROUND");
+    s = redo(s);
+    expect(s.doc.terrain[2]![2]).toBe("ROAD");
+  });
+
+  it("duplicate paint onto the same terrain does not create history", () => {
+    let s = sessionFrom(createBlankMap({ displayName: "H", id: "hist-dup", width: 12, height: 10 }));
+    const painted = paintTiles(s.doc, [[1, 1]], "WATER");
+    s = commit(s, painted);
+    expect(s.past.length).toBe(1);
+    s = commit(s, paintTiles(s.doc, [[1, 1]], "WATER"));
+    expect(s.past.length).toBe(1);
+  });
+
+  it("commits a click stroke after live preview without dropping the mutation", () => {
+    const start = createBlankMap({ displayName: "P", id: "stroke-commit", width: 12, height: 10 });
+    const session = sessionFrom(start);
+    const preview = paintTiles(session.doc, [[3, 3]], "WATER");
+    const liveDoc = preview;
+    expect(preview === liveDoc).toBe(true);
+    const droppedIfComparedToPreview = preview === liveDoc;
+    expect(droppedIfComparedToPreview).toBe(true);
+    const committed = commitStroke(session, preview);
+    expect(committed.doc.terrain[3]![3]).toBe("WATER");
+    expect(committed.past.length).toBe(1);
+  });
+
+  it("converts client coordinates at every supported zoom", () => {
+    const width = 20;
+    const height = 13;
+    for (const zoom of [0.5, 0.75, 1, 1.25, 1.5]) {
+      const displayW = width * TILE * zoom;
+      const displayH = height * TILE * zoom;
+      const rect = { left: 40, top: 80, width: displayW, height: displayH };
+      const first = clientToTile(rect.left + TILE * zoom * 0.25, rect.top + TILE * zoom * 0.25, rect, width, height);
+      expect(first?.tx).toBe(0);
+      expect(first?.ty).toBe(0);
+      const last = clientToTile(
+        rect.left + (width - 0.25) * TILE * zoom,
+        rect.top + (height - 0.25) * TILE * zoom,
+        rect,
+        width,
+        height,
+      );
+      expect(last?.tx).toBe(width - 1);
+      expect(last?.ty).toBe(height - 1);
+      const scrolledRect = { left: 40 - 200, top: 80, width: displayW, height: displayH };
+      const scrolled = clientToTile(
+        scrolledRect.left + 14.5 * TILE * zoom,
+        scrolledRect.top + 8.5 * TILE * zoom,
+        scrolledRect,
+        width,
+        height,
+      );
+      expect(scrolled?.tx).toBe(14);
+      expect(scrolled?.ty).toBe(8);
+    }
   });
 });

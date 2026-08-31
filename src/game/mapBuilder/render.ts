@@ -37,6 +37,27 @@ export function tileAt(px: number, py: number, doc: EditorMapDoc): { tx: number;
   return { tx, ty };
 }
 
+/**
+ * Map a client pointer onto a tile using the canvas display box.
+ * Works at any zoom because it uses displayed size vs logical TILE grid.
+ */
+export function clientToTile(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; width: number; height: number },
+  width: number,
+  height: number,
+  tile = TILE,
+): { tx: number; ty: number; localX: number; localY: number } | null {
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const px = ((clientX - rect.left) / rect.width) * (width * tile);
+  const py = ((clientY - rect.top) / rect.height) * (height * tile);
+  const tx = Math.floor(px / tile);
+  const ty = Math.floor(py / tile);
+  if (tx < 0 || ty < 0 || tx >= width || ty >= height) return null;
+  return { tx, ty, localX: px - tx * tile, localY: py - ty * tile };
+}
+
 export function drawEditorMap(
   ctx: CanvasRenderingContext2D,
   doc: EditorMapDoc,

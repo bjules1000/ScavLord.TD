@@ -6,14 +6,13 @@ import { draftIdForSource, fromProductionMap, productionMaps } from "./adapters"
 import { createBlankMap, slugId, unlockRevision, validateNewMapInput } from "./document";
 import { edgeFromCursor } from "./edges";
 import { exportFilename, importedToDoc, parseImport, stringifyExport } from "./export";
-import { canRedo, canUndo, commit, redo, replaceDoc, sessionFrom, undo, type EditorSession } from "./history";
+import { canRedo, canUndo, commit, commitStroke, redo, replaceDoc, sessionFrom, undo, type EditorSession } from "./history";
 import {
   addLane,
   applyEndpoint,
   applyPathClick,
   applySpawn,
   canPlaceOccupant,
-  eraseOccupants,
   eraseTiles,
   paintTiles,
   paintZoneCells,
@@ -29,7 +28,8 @@ import {
 } from "./paint";
 import { nextLaneId } from "./pathing";
 import { emptyStore, readStore, upsertDoc, writeStore } from "./persist";
-import { DEFAULT_LAYERS, drawEditorMap, hitObject, tileAt, type LayerFlags } from "./render";
+import { DEFAULT_LAYERS, clientToTile, drawEditorMap, hitObject, type LayerFlags } from "./render";
+import { isInspectMode, isTerrainEraserMode, isTerrainPaintMode, selectTerrainTool } from "./tools";
 import type { EditorMapDoc, GateId, TerrainKind } from "./schema";
 import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
@@ -147,30 +147,21 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     );
   }, [doc, layers, hover, tool, laneId]);
 
-  const apply = useCallback(
-    (next: EditorMapDoc) => {
-      if (next === doc) return;
-      setSession((s) => commit(s, next));
-      setValidation(null);
-    },
-    [doc],
-  );
+  const apply = useCallback((next: EditorMapDoc) => {
+    setSession((s) => commit(s, next));
+    setValidation(null);
+  }, []);
 
-  const pointerCell = (ev: React.PointerEvent<HTMLCanvasElement>) => {
+  const pointerCell = (ev: PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    const px = ((ev.clientX - rect.left) / rect.width) * (doc.width * TILE);
-    const py = ((ev.clientY - rect.top) / rect.height) * (doc.height * TILE);
-    const tile = tileAt(px, py, doc);
-    if (!tile) return null;
-    return { ...tile, localX: px - tile.tx * TILE, localY: py - tile.ty * TILE };
+    return clientToTile(ev.clientX, ev.clientY, canvas.getBoundingClientRect(), doc.width, doc.height);
   };
 
   const strokePreview = (tiles: Array<[number, number]>, erase: boolean) => {
     const base = strokeBase.current ?? session.doc;
-    if (erase || tool.id === "eraser") return eraseOccupants(eraseTiles(base, tiles), tiles);
-    if (tool.id === "terrain") return paintTiles(base, tiles, tool.terrain);
+    if (erase || isTerrainEraserMode(tool)) return eraseTiles(base, tiles);
+    if (isTerrainPaintMode(tool) && tool.id === "terrain") return paintTiles(base, tiles, tool.terrain);
     if (tool.id === "zone") return paintZoneCells(base, tiles, zoneId);
     return base;
   };
@@ -193,12 +184,12 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     ev.currentTarget.setPointerCapture(ev.pointerId);
     const cell = pointerCell(ev);
     if (!cell) return;
-    if (tool.id === "select") {
+    if (isInspectMode(tool)) {
       setSelected(hitObject(doc, cell.tx, cell.ty));
       return;
     }
     if (locked) return;
-    const drag = ev.button === 2 || tool.id === "eraser" || tool.id === "terrain" || tool.id === "zone";
+    const drag = ev.button === 2 || isTerrainEraserMode(tool) || isTerrainPaintMode(tool) || tool.id === "zone";
     if (drag) {
       painting.current = true;
       strokeBase.current = session.doc;
@@ -228,12 +219,17 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   };
 
   const onPointerUp = () => {
-    if (painting.current && liveRef.current) apply(liveRef.current);
+    const preview = liveRef.current;
+    const wasPainting = painting.current;
     painting.current = false;
     stroke.current = [];
     strokeBase.current = null;
     liveRef.current = null;
     setLiveDoc(null);
+    if (wasPainting) {
+      setSession((s) => commitStroke(s, preview));
+      setValidation(null);
+    }
   };
 
   useEffect(() => {
@@ -482,7 +478,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
           <aside className="pixel-card space-y-3 overflow-auto font-mono text-[11px]">
             <Section title="TERRAIN">
               {(["GROUND", "ROAD", "WATER", "MOUNTAIN", "HIGH_GROUND"] as const).map((t) => (
-                <Chip key={t} active={tool.id === "terrain" && tool.terrain === t} onClick={() => setTool({ id: "terrain", terrain: t })}>
+                <Chip key={t} active={tool.id === "terrain" && tool.terrain === t} onClick={() => setTool(selectTerrainTool(t))}>
                   {t.replace("_", " ")}
                 </Chip>
               ))}
@@ -559,7 +555,10 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
-              onPointerLeave={() => setHover(null)}
+              onPointerCancel={onPointerUp}
+              onPointerLeave={() => {
+                if (!painting.current) setHover(null);
+              }}
               onContextMenu={(e) => e.preventDefault()}
             />
           </div>

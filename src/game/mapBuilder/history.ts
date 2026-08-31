@@ -18,6 +18,15 @@ export function commit(session: EditorSession, next: EditorMapDoc): EditorSessio
   return { doc: next, past, future: [] };
 }
 
+/**
+ * Commit a live stroke preview. Must compare against the last committed
+ * session doc — never against the preview itself, or the stroke is dropped.
+ */
+export function commitStroke(session: EditorSession, preview: EditorMapDoc | null): EditorSession {
+  if (!preview) return session;
+  return commit(session, preview);
+}
+
 export function undo(session: EditorSession): EditorSession {
   const prev = session.past[session.past.length - 1];
   if (!prev) return session;
