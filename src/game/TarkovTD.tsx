@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { COLS, ENEMIES, ROWS, SCALE, TILE, buildWave, waveScale } from "./data";
 import {
   MAP_DEFS,
@@ -2031,7 +2032,14 @@ export default function TarkovTD() {
                     {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
                     {loadout.length}/{loadoutSlots}
                   </div>
-                  <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-3 w-full">
+                  <Link
+                    to="/dev/map-editor"
+                    search={{ map: mapId }}
+                    className="pixel-btn mt-3 flex w-full items-center justify-center"
+                  >
+                    EDIT THIS MAP
+                  </Link>
+                  <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-2 w-full">
                     DEPLOY TO {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
                   </button>
                   <button onClick={() => setScreen("hideout")} className="pixel-btn mt-2 w-full">

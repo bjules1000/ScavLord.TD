@@ -3,7 +3,14 @@ import MapBuilder from "@/game/mapBuilder/MapBuilder";
 
 const title = "DEV MAP BUILDER — ScavLord TD";
 
+function mapEditorSearch(search: Record<string, unknown>): { map?: string } {
+  const map = search["map"];
+  if (typeof map === "string" && map.length > 0) return { map };
+  return {};
+}
+
 export const Route = createFileRoute("/dev/map-editor")({
+  validateSearch: mapEditorSearch,
   head: () => ({
     meta: [
       { title },
@@ -15,5 +22,6 @@ export const Route = createFileRoute("/dev/map-editor")({
 });
 
 function MapBuilderPage() {
-  return <MapBuilder />;
+  const search = Route.useSearch();
+  return search.map ? <MapBuilder initialMapId={search.map} /> : <MapBuilder />;
 }

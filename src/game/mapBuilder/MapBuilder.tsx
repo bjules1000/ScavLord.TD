@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { TILE } from "../data";
-import { MAP_DEFS } from "../map";
+import { MAP_BY_ID, MAP_DEFS } from "../map";
 import { draftIdForSource, fromProductionMap, productionMaps } from "./adapters";
 import { createBlankMap, slugId, unlockRevision, validateNewMapInput } from "./document";
 import { edgeFromCursor } from "./edges";
@@ -66,9 +66,18 @@ function persist(session: EditorSession) {
   writeStore(window.localStorage, store);
 }
 
-function seedSession(): EditorSession {
-  if (typeof window === "undefined") return sessionFrom(fromProductionMap(MAP_DEFS[0]!));
+function seedSession(initialMapId?: string): EditorSession {
+  const requested = initialMapId ? MAP_BY_ID[initialMapId] : undefined;
+  if (typeof window === "undefined") {
+    return sessionFrom(fromProductionMap(requested ?? MAP_DEFS[0]!));
+  }
   const store = readStore(window.localStorage);
+  if (requested) {
+    const id = draftIdForSource(requested.id);
+    const next = store.docs[id] ?? fromProductionMap(requested);
+    writeStore(window.localStorage, upsertDoc(store, next));
+    return sessionFrom(next);
+  }
   const existing = store.activeId ? store.docs[store.activeId] : undefined;
   if (existing) return sessionFrom(existing);
   const first = fromProductionMap(MAP_DEFS[0]!);
@@ -76,8 +85,8 @@ function seedSession(): EditorSession {
   return sessionFrom(first);
 }
 
-export default function MapBuilder() {
-  const [session, setSession] = useState<EditorSession>(() => seedSession());
+export default function MapBuilder({ initialMapId }: { initialMapId?: string }) {
+  const [session, setSession] = useState<EditorSession>(() => seedSession(initialMapId));
   const [tool, setTool] = useState<Tool>({ id: "terrain", terrain: "ROAD" });
   const [laneId, setLaneId] = useState("MAIN");
   const [zoneId, setZoneId] = useState<string | null>(null);
