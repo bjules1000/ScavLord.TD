@@ -131,12 +131,14 @@ import {
 import {
   HIRED_WEAPON_ID,
   STARTER_WEAPON_ID,
+  attachmentDef,
   canShoot,
   combatStatus,
   consumeRound,
   maybeStartReload,
   reloadProgress,
   tickReload,
+  weaponDef,
   weaponRuntimeFields,
 } from "./weapons";
 import {
@@ -165,6 +167,13 @@ import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
 import { DEV_TOOLS_ENABLED } from "./dev/tools";
+import { confirmLeaveRaidForMapBuilder, type DevToolId } from "./dev/menu";
+import DevToolsMenu from "./dev/DevToolsMenu";
+import {
+  clampLiveKit,
+  getBalanceOverrides,
+} from "./dev/balance";
+import BalanceLab from "./dev/BalanceLab";
 import { clearRaidBackpack, devAddToBackpack } from "./dev/inventory";
 import DevItemPicker from "./dev/DevItemPicker";
 
@@ -177,8 +186,6 @@ const START_LIVES = 20;
 const BASE_BACKPACK_SLOTS = 5;
 const BASE_LOADOUT_SLOTS = 3;
 const BASE_STASH_SLOTS = 40;
-/** Temporary raid QA buttons. Set false (or delete the row) after weight testing. */
-const SHOW_DEV_INVENTORY = true;
 
 const STASH_KIND_ORDER: Record<string, number> = {
   weapon: 0,
@@ -355,8 +362,8 @@ function coverList(map: GameMap, s: GameState): CoverPiece[] {
 }
 
 export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap) {
-  const w = WEAPONS[t.weapon] ?? WEAPONS["toz"]!;
-  const folded = applyAttachmentMods(w, t.attachments);
+  const w = weaponDef(t.weapon);
+  const folded = applyAttachmentMods(w, t.attachments, attachmentDef);
   let damage = folded.damage;
   let range = folded.range * SCALE;
   let cooldown = folded.cooldown;
@@ -432,6 +439,8 @@ export default function TarkovTD() {
   >("all");
   const [questFilter, setQuestFilter] = useState<"all" | "open" | "done">("all");
   const [devPickerOpen, setDevPickerOpen] = useState(false);
+  const [balanceLabOpen, setBalanceLabOpen] = useState(false);
+  const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
   const [, force] = useState(0);
@@ -825,7 +834,7 @@ export default function TarkovTD() {
   const addDevBackpackItem = useCallback(
     (defId: string) => {
       const s = gs.current;
-      const result = devAddToBackpack(defId, s.backpack, backpackSlots(), newUid(), SHOW_DEV_INVENTORY);
+      const result = devAddToBackpack(defId, s.backpack, backpackSlots(), newUid(), DEV_TOOLS_ENABLED);
       if (!result.ok) {
         pushLog(result.reason === "BACKPACK FULL" ? "BACKPACK FULL" : result.reason);
         return;
@@ -839,12 +848,57 @@ export default function TarkovTD() {
 
   const clearDevBackpack = useCallback(() => {
     const s = gs.current;
-    const result = clearRaidBackpack(s.backpack, SHOW_DEV_INVENTORY);
+    const result = clearRaidBackpack(s.backpack, DEV_TOOLS_ENABLED);
     if (!result.ok) return;
     s.backpack = result.backpack;
     pushLog("DEV backpack cleared");
     rerender();
   }, [pushLog, rerender]);
+
+  const setLabOpen = useCallback((open: boolean) => {
+    labOpenRef.current = open;
+    setBalanceLabOpen(open);
+  }, []);
+
+  const onDevTool = useCallback(
+    (id: DevToolId) => {
+      if (id === "ui-editor") {
+        setEditMode((on) => !on);
+        return;
+      }
+      if (id === "map-builder") {
+        if (gs.current.phase !== "hideout" && !confirmLeaveRaidForMapBuilder()) return;
+        window.location.assign(`/dev/map-editor?map=${encodeURIComponent(mapId)}`);
+        return;
+      }
+      setLabOpen(true);
+    },
+    [mapId, setLabOpen],
+  );
+
+  const onBalanceApplied = useCallback(
+    (overrides: ReturnType<typeof getBalanceOverrides>) => {
+      const s = gs.current;
+      for (const t of s.towers) {
+        const next = clampLiveKit(
+          {
+            weapon: t.weapon,
+            attachments: t.attachments,
+            ammo: t.ammo,
+            armor: t.armor ?? null,
+            armorHp: t.armorHp ?? 0,
+          },
+          overrides,
+          DEV_TOOLS_ENABLED,
+          equippedMagSize,
+        );
+        t.ammo = next.ammo;
+        if (typeof next.armorHp === "number") t.armorHp = next.armorHp;
+      }
+      rerender();
+    },
+    [rerender],
+  );
 
   const equipOnTower = useCallback(
     (uid: number, towerId: number) => {
@@ -1012,6 +1066,7 @@ export default function TarkovTD() {
     };
 
     const tick = (dt: number) => {
+      if (labOpenRef.current) return;
       const s = gs.current;
       if (s.phase === "hideout") return;
       if (s.phase === "dead" || s.phase === "loot" || s.phase === "extracted") {
@@ -1962,7 +2017,7 @@ export default function TarkovTD() {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-background text-foreground">
+    <div className="relative min-h-[100dvh] bg-background text-foreground">
       <div
         className={`mx-auto max-w-[1400px] px-2 ${
           s.phase === "hideout" ? "py-2 sm:px-4 sm:py-3" : "py-3 sm:px-4 sm:py-6"
@@ -1998,16 +2053,8 @@ export default function TarkovTD() {
                 <span className="text-foreground">{meta.skillPoints} SP</span>
               </div>
               <div className="ml-auto flex items-center gap-2">
-                <button
-                  type="button"
-                  aria-pressed={editMode}
-                  aria-label="Toggle placement editor"
-                  onClick={() => setEditMode((on) => !on)}
-                  className="pixel-chip font-mono text-[11px] sm:text-xs"
-                >
-                  <span className={editMode ? "text-primary" : "text-muted-foreground"}>EDIT</span>
-                </button>
                 <Stat label="BANK" value={meta.bank.toLocaleString()} tone="gold" />
+                <DevToolsMenu enabled={DEV_TOOLS_ENABLED} onSelect={onDevTool} />
               </div>
             </div>
           </header>
@@ -2027,6 +2074,7 @@ export default function TarkovTD() {
               <Stat label="HEALTH" value={`${s.lives}/${START_LIVES}`} tone={s.lives < 7 ? "bad" : "good"} />
               <Stat label="WAVE" value={`${s.wave}`} />
               <Stat label="KILLS" value={`${s.killed}`} />
+              <DevToolsMenu enabled={DEV_TOOLS_ENABLED} onSelect={onDevTool} />
             </div>
           </header>
         )}
@@ -2923,7 +2971,7 @@ export default function TarkovTD() {
                   <span className="font-mono text-[10px] text-destructive">FULL</span>
                 )}
               </div>
-              {SHOW_DEV_INVENTORY && (
+              {DEV_TOOLS_ENABLED && (
                 <div className="mt-2 grid grid-cols-2 gap-1">
                   <button
                     type="button"
@@ -2937,7 +2985,7 @@ export default function TarkovTD() {
                   </button>
                 </div>
               )}
-              {SHOW_DEV_INVENTORY && devPickerOpen && (
+              {DEV_TOOLS_ENABLED && devPickerOpen && (
                 <DevItemPicker onPick={addDevBackpackItem} onClose={() => setDevPickerOpen(false)} />
               )}
               <div className="mt-2 grid grid-cols-2 gap-1">
@@ -2993,6 +3041,9 @@ export default function TarkovTD() {
           )}
         </div>
       </div>
+      {DEV_TOOLS_ENABLED && balanceLabOpen && (
+        <BalanceLab enabled={DEV_TOOLS_ENABLED} onClose={() => setLabOpen(false)} onApplied={onBalanceApplied} />
+      )}
     </div>
   );
 }

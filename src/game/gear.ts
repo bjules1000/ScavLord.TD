@@ -273,7 +273,11 @@ export const ATTACHMENTS: Record<string, AttachmentDef> = {
 };
 
 /** Canonical attachment folding. Combat and the operator sidebar both read this. */
-export function applyAttachmentMods(weapon: WeaponDef, attachments: readonly string[]) {
+export function applyAttachmentMods(
+  weapon: WeaponDef,
+  attachments: readonly string[],
+  lookup: (id: string) => AttachmentDef | undefined = (id) => ATTACHMENTS[id],
+) {
   let damage = weapon.damage;
   let range = weapon.range;
   let cooldown = weapon.cooldown;
@@ -281,7 +285,7 @@ export function applyAttachmentMods(weapon: WeaponDef, attachments: readonly str
   let pen = 0;
   let magSize = weapon.magSize;
   for (const id of attachments) {
-    const a = ATTACHMENTS[id];
+    const a = lookup(id);
     if (!a) continue;
     damage *= a.damageMult;
     range *= a.rangeMult;

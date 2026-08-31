@@ -7,7 +7,7 @@ import {
   makeItem,
   type Item,
 } from "./gear";
-import { clampAmmo, weaponDef } from "./weapons";
+import { clampAmmo, attachmentDef, weaponDef } from "./weapons";
 
 export type AttachSlot = "optic" | "barrel" | "magazine" | "mod";
 
@@ -55,7 +55,7 @@ export function packWeaponItem(weaponId: string, attachments: readonly string[],
 }
 
 export function equippedMagSize(weaponId: string, attachments: readonly string[]): number {
-  return applyAttachmentMods(weaponDef(weaponId), attachments).magSize;
+  return applyAttachmentMods(weaponDef(weaponId), attachments, attachmentDef).magSize;
 }
 
 export function canEquipAttachment(attachId: string): boolean {
