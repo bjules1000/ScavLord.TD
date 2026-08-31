@@ -36,10 +36,11 @@ import {
   operatorCanFire,
   operatorMoveSpeedPx,
   operatorWorldPos,
+  getOperatorMoveSpeed,
   resolveMoveDestination,
   stepOperatorMove,
 } from "./movement";
-import { absorbWithArmor } from "./armor";
+import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
   BARRICADE_HP,
@@ -2748,6 +2749,11 @@ export default function TarkovTD() {
                   ) : (
                     <StatRow label="ARMOR" value="NONE" />
                   )}
+                  <StatRow
+                    label="MOVE"
+                    value={`${getOperatorMoveSpeed(selected).toFixed(2)} T/S`}
+                  />
+                  <StatRow label="LOAD" value={getEquippedWeight(selected).toFixed(1)} />
                   <StatRow
                     label="COVER"
                     value={

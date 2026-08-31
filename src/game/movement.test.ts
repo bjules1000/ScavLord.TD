@@ -9,6 +9,7 @@ import {
   clearOperatorMove,
   destinationTaken,
   findOperatorPath,
+  getOperatorMoveSpeed,
   isAuthoredSlope,
   isOperatorMoving,
   isRaidMovementBlockedAcrossEdge,
@@ -487,10 +488,11 @@ describe("movement runtime", () => {
 
   it("position advances according to dt at 2.0 tiles/sec", () => {
     const map = testMap();
-    const t = op({ tx: 4, ty: 4 });
+    const t = op({ tx: 4, ty: 4, weapon: "" });
     issueOperatorMove(map, [t], t, 8, 4);
     stepOperatorMove(t, 0.5, map);
     expect(OPERATOR_MOVE_SPEED_TILES).toBe(2);
+    expect(getOperatorMoveSpeed(t)).toBe(2);
     expect(operatorMoveSpeedPx(t)).toBe(2 * TILE);
     expect(operatorWorldPos(t).x).toBeCloseTo(tileCenter(5, 4).x);
     expect(t.tx).toBe(5);
@@ -555,7 +557,7 @@ describe("movement runtime", () => {
 
   it("redirecting movement does not teleport", () => {
     const map = testMap();
-    const t = op({ tx: 4, ty: 4 });
+    const t = op({ tx: 4, ty: 4, weapon: "" });
     issueOperatorMove(map, [t], t, 8, 4);
     const xBefore = operatorWorldPos(t).x;
     issueOperatorMove(map, [t], t, 4, 8);
@@ -668,5 +670,160 @@ describe("combat integration", () => {
     expect(canPlaceWire(0, 8, (x, y) => isRoad(map, x, y), [])).toBe(false);
     const path = findOperatorPath(map, node(0, 8, "GROUND"), node(1, 8, "GROUND"));
     expect(path).not.toBeNull();
+  });
+});
+
+describe("weighted runtime movement", () => {
+  function lightOp(partial: Partial<Tower> & Pick<Tower, "tx" | "ty">): Tower {
+    return op({ weapon: "pm", armor: null, attachments: [], ...partial });
+  }
+
+  function heavyOp(partial: Partial<Tower> & Pick<Tower, "tx" | "ty">): Tower {
+    return op({ weapon: "mp133", armor: "sixb23", attachments: ["optic"], ...partial });
+  }
+
+  it("light and heavy operators follow the same path", () => {
+    const map = testMap();
+    const light = lightOp({ id: 1, tx: 4, ty: 4 });
+    const heavy = heavyOp({ id: 2, tx: 4, ty: 4 });
+    const from = node(4, 4, "GROUND");
+    const to = node(8, 4, "GROUND");
+    expect(findOperatorPath(map, from, to)).toEqual(findOperatorPath(map, from, to));
+    issueOperatorMove(map, [light], light, 8, 4);
+    issueOperatorMove(map, [heavy], heavy, 8, 4);
+    expect(light.move?.path).toEqual(heavy.move?.path);
+    expect(light.move?.dest).toEqual(heavy.move?.dest);
+  });
+
+  it("light operator reaches the same destination sooner", () => {
+    const map = testMap();
+    const light = lightOp({ id: 1, tx: 4, ty: 4 });
+    const heavy = heavyOp({ id: 2, tx: 4, ty: 4 });
+    issueOperatorMove(map, [light], light, 8, 4);
+    issueOperatorMove(map, [heavy], heavy, 8, 4);
+    const dt = 0.05;
+    let steps = 0;
+    while (isOperatorMoving(light) && steps < 2000) {
+      stepOperatorMove(light, dt, map);
+      if (isOperatorMoving(heavy)) stepOperatorMove(heavy, dt, map);
+      steps++;
+    }
+    expect(light.tx).toBe(8);
+    expect(isOperatorMoving(light)).toBe(false);
+    expect(isOperatorMoving(heavy)).toBe(true);
+    expect(operatorWorldPos(heavy).x).toBeLessThan(tileCenter(8, 4).x);
+  });
+
+  it("heavy operator does not teleport", () => {
+    const map = testMap();
+    const t = heavyOp({ tx: 4, ty: 4 });
+    issueOperatorMove(map, [t], t, 8, 4);
+    const speed = operatorMoveSpeedPx(t);
+    const dt = 1 / 60;
+    let prev = operatorWorldPos(t);
+    let steps = 0;
+    while (isOperatorMoving(t) && steps < 5000) {
+      stepOperatorMove(t, dt, map);
+      const now = operatorWorldPos(t);
+      expect(Math.hypot(now.x - prev.x, now.y - prev.y)).toBeLessThanOrEqual(speed * dt + 1e-4);
+      prev = now;
+      steps++;
+    }
+    expect(t.tx).toBe(8);
+  });
+
+  it("dt movement remains frame-rate independent", () => {
+    const map = testMap();
+    const a = heavyOp({ id: 1, tx: 4, ty: 4 });
+    const b = heavyOp({ id: 2, tx: 4, ty: 4 });
+    issueOperatorMove(map, [a], a, 8, 4);
+    issueOperatorMove(map, [b], b, 8, 4);
+    for (let i = 0; i < 10; i++) stepOperatorMove(a, 0.05, map);
+    for (let i = 0; i < 50; i++) stepOperatorMove(b, 0.01, map);
+    expect(operatorWorldPos(a).x).toBeCloseTo(operatorWorldPos(b).x, 5);
+    expect(a.tx).toBe(b.tx);
+  });
+
+  it("surface transitions remain identical regardless of weight", () => {
+    const map = slopeMap();
+    const light = lightOp({ id: 1, tx: 2, ty: 4, surface: "GROUND" });
+    const heavy = heavyOp({ id: 2, tx: 2, ty: 4, surface: "GROUND" });
+    issueOperatorMove(map, [light], light, 2, 2);
+    issueOperatorMove(map, [heavy], heavy, 2, 2);
+    expect(light.move?.path).toEqual(heavy.move?.path);
+    expect(light.move?.dest).toEqual(node(2, 2, "HIGH"));
+    expect(heavy.move?.dest).toEqual(node(2, 2, "HIGH"));
+  });
+
+  it("slope traversal remains valid", () => {
+    const map = slopeMap();
+    const t = heavyOp({ tx: 2, ty: 4, surface: "GROUND" });
+    issueOperatorMove(map, [t], t, 2, 2);
+    stepOperatorMove(t, 20, map);
+    expect(t.tx).toBe(2);
+    expect(t.ty).toBe(2);
+    expect(t.surface).toBe("HIGH");
+    expect(isOperatorMoving(t)).toBe(false);
+  });
+
+  it("bridge traversal remains valid", () => {
+    const map = slopeMap();
+    const t = heavyOp({ tx: 3, ty: 2, surface: "HIGH" });
+    issueOperatorMove(map, [t], t, 3, 4);
+    expect(t.move?.path.every((p) => p.surface === "HIGH")).toBe(true);
+    stepOperatorMove(t, 20, map);
+    expect(t.tx).toBe(3);
+    expect(t.ty).toBe(4);
+    expect(t.surface).toBe("HIGH");
+  });
+
+  it("LOW-under-bridge traversal remains valid", () => {
+    const map = slopeMap();
+    const t = heavyOp({ tx: 3, ty: 5, surface: "GROUND" });
+    issueOperatorMove(map, [t], t, 3, 3);
+    expect(t.move?.path.every((p) => p.surface === "GROUND")).toBe(true);
+    stepOperatorMove(t, 20, map);
+    expect(t.tx).toBe(3);
+    expect(t.ty).toBe(3);
+    expect(t.surface).toBe("GROUND");
+  });
+
+  it("invisible walls still block both light and heavy operators", () => {
+    const map = testMap({ collisionWalls: [{ tx: 4, ty: 4, edge: "E" }] });
+    const light = lightOp({ id: 1, tx: 4, ty: 4 });
+    const heavy = heavyOp({ id: 2, tx: 4, ty: 4 });
+    issueOperatorMove(map, [light], light, 5, 4);
+    issueOperatorMove(map, [heavy], heavy, 5, 4);
+    expect(light.move?.path).toEqual(heavy.move?.path);
+    const hops = light.move?.path ?? [];
+    expect(hops.some((p, i) => i === 0 && p.tx === 5 && p.ty === 4)).toBe(false);
+    stepOperatorMove(light, 20, map);
+    stepOperatorMove(heavy, 20, map);
+    expect(light.tx).toBe(5);
+    expect(heavy.tx).toBe(5);
+  });
+
+  it("redirecting while moving preserves weighted speed behavior", () => {
+    const map = testMap();
+    const light = lightOp({ id: 1, tx: 4, ty: 4 });
+    const heavy = heavyOp({ id: 2, tx: 4, ty: 4 });
+    issueOperatorMove(map, [light], light, 8, 4);
+    issueOperatorMove(map, [heavy], heavy, 8, 4);
+    stepOperatorMove(light, 0.2, map);
+    stepOperatorMove(heavy, 0.2, map);
+    expect(operatorWorldPos(light).x).toBeGreaterThan(operatorWorldPos(heavy).x);
+    issueOperatorMove(map, [light], light, 4, 8);
+    issueOperatorMove(map, [heavy], heavy, 4, 8);
+    stepOperatorMove(light, 0.4, map);
+    stepOperatorMove(heavy, 0.4, map);
+    const lightDist = Math.hypot(
+      operatorWorldPos(light).x - tileCenter(4, 8).x,
+      operatorWorldPos(light).y - tileCenter(4, 8).y,
+    );
+    const heavyDist = Math.hypot(
+      operatorWorldPos(heavy).x - tileCenter(4, 8).x,
+      operatorWorldPos(heavy).y - tileCenter(4, 8).y,
+    );
+    expect(lightDist).toBeLessThan(heavyDist);
   });
 });

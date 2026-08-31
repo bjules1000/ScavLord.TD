@@ -1,4 +1,4 @@
-import { ARMORS, type ArmorDef } from "./gear";
+import { ARMORS, ATTACHMENTS, WEAPONS, type ArmorDef } from "./gear";
 
 export function armorDef(id: string | null | undefined): ArmorDef | undefined {
   return id ? ARMORS[id] : undefined;
@@ -27,10 +27,23 @@ export function absorbWithArmor(
   };
 }
 
+/** Equipped kit fields used by the single canonical load calculation. */
+export type EquippedKit = {
+  weapon?: string | null;
+  armor?: string | null;
+  attachments?: readonly string[] | null;
+};
+
 /**
- * Future movement should read this instead of inventing a second loadout model.
- * Armor has no authored weight yet; unset pieces contribute 0.
+ * Canonical equipped-weight: weapon + armor + currently installed attachments.
+ * Raid backpack contents, loose attachments, loot, ammo, and currency are ignored.
  */
-export function getEquippedWeight(kit: { armor?: string | null }): number {
-  return armorDef(kit.armor)?.weight ?? 0;
+export function getEquippedWeight(kit: EquippedKit): number {
+  const weaponW = kit.weapon ? (WEAPONS[kit.weapon]?.weight ?? 0) : 0;
+  const armorW = armorDef(kit.armor)?.weight ?? 0;
+  let attachW = 0;
+  for (const id of kit.attachments ?? []) {
+    attachW += ATTACHMENTS[id]?.weight ?? 0;
+  }
+  return weaponW + armorW + attachW;
 }
