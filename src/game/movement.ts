@@ -9,7 +9,7 @@
  * only means the 2D edge is open — it is not an elevator. Suspended bridges
  * are never slopes.
  */
-import { getEquippedWeight } from "./armor";
+import { getEquippedWeight, type EquippedKit } from "./armor";
 import { COLS, ROWS, TILE } from "./data";
 import { isMountain, isRoad, isWater, type GameMap } from "./map";
 import { isMovementBlockedAcrossEdge } from "./mapBuilder/walls";
@@ -23,8 +23,14 @@ import {
 } from "./surfaces";
 import type { MoveNode, SurfaceLevel, Tower } from "./types";
 
-/** Tiles per second. Converted to pixels via TILE. */
+/** Tiles per second at zero equipped weight. Converted to pixels via TILE. */
 export const OPERATOR_MOVE_SPEED_TILES = 2;
+/** Speed reduction per equipped-weight unit. Tune here after Vercel QA. */
+export const WEIGHT_SPEED_PENALTY = 0.04;
+/** Floor so heavy kits stay usable. */
+export const WEIGHT_SPEED_MIN_MULT = 0.6;
+/** Cap so weight never grants a speed bonus. */
+export const WEIGHT_SPEED_MAX_MULT = 1;
 
 /** Cardinal steps in N, E, S, W order for deterministic BFS. */
 export const CARDINAL_STEPS: ReadonlyArray<{ dx: number; dy: number }> = [
@@ -59,9 +65,17 @@ export function operatorCanFire(t: Pick<Tower, "move">): boolean {
   return !isOperatorMoving(t);
 }
 
-export function operatorMoveSpeedPx(kit: { armor?: string | null } = {}): number {
-  getEquippedWeight(kit);
-  return OPERATOR_MOVE_SPEED_TILES * TILE;
+export function operatorSpeedMultiplier(weight: number): number {
+  return Math.min(WEIGHT_SPEED_MAX_MULT, Math.max(WEIGHT_SPEED_MIN_MULT, 1 - weight * WEIGHT_SPEED_PENALTY));
+}
+
+/** Live tiles/sec from the operator's current equipped kit. Not cached. */
+export function getOperatorMoveSpeed(kit: EquippedKit = {}): number {
+  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(getEquippedWeight(kit));
+}
+
+export function operatorMoveSpeedPx(kit: EquippedKit = {}): number {
+  return getOperatorMoveSpeed(kit) * TILE;
 }
 
 export function raidWalls(map: GameMap) {

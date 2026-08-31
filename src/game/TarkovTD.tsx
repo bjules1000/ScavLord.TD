@@ -36,10 +36,11 @@ import {
   operatorCanFire,
   operatorMoveSpeedPx,
   operatorWorldPos,
+  getOperatorMoveSpeed,
   resolveMoveDestination,
   stepOperatorMove,
 } from "./movement";
-import { absorbWithArmor } from "./armor";
+import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
   BARRICADE_HP,
@@ -163,6 +164,9 @@ import {
 import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
+import { DEV_TOOLS_ENABLED } from "./dev/tools";
+import { clearRaidBackpack, devAddToBackpack } from "./dev/inventory";
+import DevItemPicker from "./dev/DevItemPicker";
 
 const PLAYABLE_W = COLS * TILE;
 const PLAYABLE_H = ROWS * TILE;
@@ -173,6 +177,8 @@ const START_LIVES = 20;
 const BASE_BACKPACK_SLOTS = 5;
 const BASE_LOADOUT_SLOTS = 3;
 const BASE_STASH_SLOTS = 40;
+/** Temporary raid QA buttons. Set false (or delete the row) after weight testing. */
+const SHOW_DEV_INVENTORY = true;
 
 const STASH_KIND_ORDER: Record<string, number> = {
   weapon: 0,
@@ -425,6 +431,7 @@ export default function TarkovTD() {
     "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
   >("all");
   const [questFilter, setQuestFilter] = useState<"all" | "open" | "done">("all");
+  const [devPickerOpen, setDevPickerOpen] = useState(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
   const [, force] = useState(0);
@@ -814,6 +821,30 @@ export default function TarkovTD() {
     },
     [backpackSlots, pushLog],
   );
+
+  const addDevBackpackItem = useCallback(
+    (defId: string) => {
+      const s = gs.current;
+      const result = devAddToBackpack(defId, s.backpack, backpackSlots(), newUid(), SHOW_DEV_INVENTORY);
+      if (!result.ok) {
+        pushLog(result.reason === "BACKPACK FULL" ? "BACKPACK FULL" : result.reason);
+        return;
+      }
+      s.backpack = result.backpack;
+      pushLog(`DEV + ${result.item.name}`);
+      rerender();
+    },
+    [backpackSlots, pushLog, rerender],
+  );
+
+  const clearDevBackpack = useCallback(() => {
+    const s = gs.current;
+    const result = clearRaidBackpack(s.backpack, SHOW_DEV_INVENTORY);
+    if (!result.ok) return;
+    s.backpack = result.backpack;
+    pushLog("DEV backpack cleared");
+    rerender();
+  }, [pushLog, rerender]);
 
   const equipOnTower = useCallback(
     (uid: number, towerId: number) => {
@@ -2194,13 +2225,15 @@ export default function TarkovTD() {
                     {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
                     {loadout.length}/{loadoutSlots}
                   </div>
-                  <Link
-                    to="/dev/map-editor"
-                    search={{ map: mapId }}
-                    className="pixel-btn mt-3 flex w-full items-center justify-center"
-                  >
-                    EDIT THIS MAP
-                  </Link>
+                  {DEV_TOOLS_ENABLED && (
+                    <Link
+                      to="/dev/map-editor"
+                      search={{ map: mapId }}
+                      className="pixel-btn mt-3 flex w-full items-center justify-center"
+                    >
+                      EDIT THIS MAP
+                    </Link>
+                  )}
                   <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-2 w-full">
                     DEPLOY TO {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
                   </button>
@@ -2749,6 +2782,11 @@ export default function TarkovTD() {
                     <StatRow label="ARMOR" value="NONE" />
                   )}
                   <StatRow
+                    label="MOVE"
+                    value={`${getOperatorMoveSpeed(selected).toFixed(2)} T/S`}
+                  />
+                  <StatRow label="LOAD" value={getEquippedWeight(selected).toFixed(1)} />
+                  <StatRow
                     label="COVER"
                     value={
                       bestCoverAt(coverList(mapRef.current, s), selected.tx, selected.ty) >= 0.7
@@ -2885,6 +2923,23 @@ export default function TarkovTD() {
                   <span className="font-mono text-[10px] text-destructive">FULL</span>
                 )}
               </div>
+              {SHOW_DEV_INVENTORY && (
+                <div className="mt-2 grid grid-cols-2 gap-1">
+                  <button
+                    type="button"
+                    className="pixel-btn pixel-btn-primary w-full"
+                    onClick={() => setDevPickerOpen((open) => !open)}
+                  >
+                    DEV ADD
+                  </button>
+                  <button type="button" className="pixel-btn w-full" onClick={clearDevBackpack}>
+                    DEV CLEAR
+                  </button>
+                </div>
+              )}
+              {SHOW_DEV_INVENTORY && devPickerOpen && (
+                <DevItemPicker onPick={addDevBackpackItem} onClose={() => setDevPickerOpen(false)} />
+              )}
               <div className="mt-2 grid grid-cols-2 gap-1">
                 {Array.from({ length: backpackSlots() }).map((_, i) => {
                   const item = s.backpack[i];

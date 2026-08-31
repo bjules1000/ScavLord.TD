@@ -39,9 +39,11 @@ describe("canonical wearable armor", () => {
     expect(raw.absorbed).toBe(0);
   });
 
-  it("exposes weight as a future movement hook without inventing values", () => {
-    expect(ARMORS["paca"]!.weight).toBeUndefined();
-    expect(getEquippedWeight({ armor: "paca" })).toBe(0);
+  it("exposes authored armor weight on the equipped-load hook", () => {
+    expect(ARMORS["paca"]!.weight).toBe(2);
+    expect(ARMORS["sixb23"]!.weight).toBe(4);
+    expect(ARMORS["slick"]!.weight).toBe(6);
+    expect(getEquippedWeight({ armor: "paca" })).toBe(2);
     expect(getEquippedWeight({ armor: null })).toBe(0);
   });
 });

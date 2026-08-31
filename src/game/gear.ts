@@ -31,6 +31,8 @@ export interface WeaponDef {
   maxPelletHits?: number;
   /** Damage multiplier for the second enemy along a pellet trace. */
   secondaryHitMult?: number;
+  /** Gameplay weight units. Operator move speed reads this via getEquippedWeight(). */
+  weight: number;
   color: string;
   accent: string;
   gunLen: number;
@@ -50,6 +52,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 7,
     reloadType: "MAGAZINE",
     reloadMs: 1500,
+    weight: 1,
     color: "#6b5f42",
     accent: "#e0c86a",
     gunLen: 8,
@@ -71,6 +74,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     spread: 0.32,
     maxPelletHits: 2,
     secondaryHitMult: 0.5,
+    weight: 2,
     color: "#7d8c5c",
     accent: "#d9e07a",
     gunLen: 11,
@@ -92,6 +96,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     spread: 0.34,
     maxPelletHits: 2,
     secondaryHitMult: 0.5,
+    weight: 3,
     color: "#6b4f3a",
     accent: "#ffb35c",
     gunLen: 13,
@@ -109,6 +114,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 20,
     reloadType: "MAGAZINE",
     reloadMs: 2100,
+    weight: 3,
     color: "#6f7f52",
     accent: "#e0c86a",
     gunLen: 14,
@@ -126,6 +132,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 30,
     reloadType: "MAGAZINE",
     reloadMs: 2400,
+    weight: 3.5,
     color: "#6b5f42",
     accent: "#f0b400",
     gunLen: 14,
@@ -143,6 +150,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 30,
     reloadType: "MAGAZINE",
     reloadMs: 2200,
+    weight: 3.5,
     color: "#4d5a63",
     accent: "#9fe0ff",
     gunLen: 15,
@@ -160,6 +168,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 75,
     reloadType: "MAGAZINE",
     reloadMs: 4800,
+    weight: 6,
     color: "#4d5a63",
     accent: "#ff7a2f",
     gunLen: 17,
@@ -177,6 +186,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 10,
     reloadType: "MAGAZINE",
     reloadMs: 2800,
+    weight: 4.5,
     color: "#5c6b4a",
     accent: "#f0b400",
     gunLen: 20,
@@ -194,6 +204,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 5,
     reloadType: "MAGAZINE",
     reloadMs: 3000,
+    weight: 5,
     color: "#4a4336",
     accent: "#cfe0ff",
     gunLen: 21,
@@ -211,6 +222,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 5,
     reloadType: "MAGAZINE",
     reloadMs: 3200,
+    weight: 5.5,
     color: "#2f3338",
     accent: "#9fe0ff",
     gunLen: 23,
@@ -228,6 +240,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 6,
     reloadType: "MAGAZINE",
     reloadMs: 3500,
+    weight: 5,
     color: "#6b4f3a",
     accent: "#ff4a30",
     gunLen: 13,
@@ -244,17 +257,19 @@ export interface AttachmentDef {
   pen: number;
   /** Extra loaded rounds. Combat still reloads from infinite reserve. */
   magSizeAdd?: number;
+  /** Gameplay weight units. Installed attachments add to equipped load. */
+  weight: number;
 }
 
 export const ATTACHMENTS: Record<string, AttachmentDef> = {
-  optic: { id: "optic", name: "4x SCOPE", damageMult: 1, rangeMult: 1.18, rofMult: 1, accuracy: 0.12, pen: 0 },
-  thermal: { id: "thermal", name: "THERMAL SIGHT", damageMult: 1, rangeMult: 1.3, rofMult: 1, accuracy: 0.2, pen: 0 },
-  grip: { id: "grip", name: "FOREGRIP", damageMult: 1, rangeMult: 1, rofMult: 1, accuracy: 0.14, pen: 0 },
-  brake: { id: "brake", name: "MUZZLE BRAKE", damageMult: 1, rangeMult: 1.04, rofMult: 1.05, accuracy: 0.1, pen: 0 },
-  mag: { id: "mag", name: "DRUM MAG", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0, magSizeAdd: 4 },
-  supp: { id: "supp", name: "SUPPRESSOR", damageMult: 1.12, rangeMult: 1.06, rofMult: 1, accuracy: 0.07, pen: 0 },
-  m995: { id: "m995", name: "AP ROUNDS", damageMult: 1.1, rangeMult: 1, rofMult: 1, accuracy: 0, pen: 6 },
-  laser: { id: "laser", name: "TAC LASER", damageMult: 1, rangeMult: 1, rofMult: 1.08, accuracy: 0.13, pen: 0 },
+  optic: { id: "optic", name: "4x SCOPE", damageMult: 1, rangeMult: 1.18, rofMult: 1, accuracy: 0.12, pen: 0, weight: 0.25 },
+  thermal: { id: "thermal", name: "THERMAL SIGHT", damageMult: 1, rangeMult: 1.3, rofMult: 1, accuracy: 0.2, pen: 0, weight: 0.5 },
+  grip: { id: "grip", name: "FOREGRIP", damageMult: 1, rangeMult: 1, rofMult: 1, accuracy: 0.14, pen: 0, weight: 0.25 },
+  brake: { id: "brake", name: "MUZZLE BRAKE", damageMult: 1, rangeMult: 1.04, rofMult: 1.05, accuracy: 0.1, pen: 0, weight: 0.25 },
+  mag: { id: "mag", name: "DRUM MAG", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0, magSizeAdd: 4, weight: 0.75 },
+  supp: { id: "supp", name: "SUPPRESSOR", damageMult: 1.12, rangeMult: 1.06, rofMult: 1, accuracy: 0.07, pen: 0, weight: 0.5 },
+  m995: { id: "m995", name: "AP ROUNDS", damageMult: 1.1, rangeMult: 1, rofMult: 1, accuracy: 0, pen: 6, weight: 0.25 },
+  laser: { id: "laser", name: "TAC LASER", damageMult: 1, rangeMult: 1, rofMult: 1.08, accuracy: 0.13, pen: 0, weight: 0.25 },
 };
 
 /** Canonical attachment folding. Combat and the operator sidebar both read this. */
@@ -297,17 +312,14 @@ export interface ArmorDef {
   durability: number;
   plate: string;
   trim: string;
-  /**
-   * Future operator movement reads this via getEquippedWeight().
-   * Unset on current vests — do not invent balance values.
-   */
-  weight?: number;
+  /** Gameplay weight units. Operator move speed reads this via getEquippedWeight(). */
+  weight: number;
 }
 
 export const ARMORS: Record<string, ArmorDef> = {
-  paca: { id: "paca", name: "SOFT VEST", reduction: 0.18, durability: 110, plate: "#4a4636", trim: "#6f6a4f" },
-  sixb23: { id: "sixb23", name: "RIOT PLATES", reduction: 0.3, durability: 190, plate: "#3f4a38", trim: "#6fd6ff" },
-  slick: { id: "slick", name: "PLATE CARRIER", reduction: 0.45, durability: 300, plate: "#26282b", trim: "#f0b400" },
+  paca: { id: "paca", name: "SOFT VEST", reduction: 0.18, durability: 110, plate: "#4a4636", trim: "#6f6a4f", weight: 2 },
+  sixb23: { id: "sixb23", name: "RIOT PLATES", reduction: 0.3, durability: 190, plate: "#3f4a38", trim: "#6fd6ff", weight: 4 },
+  slick: { id: "slick", name: "PLATE CARRIER", reduction: 0.45, durability: 300, plate: "#26282b", trim: "#f0b400", weight: 6 },
 };
 
 export interface BackpackDef {
