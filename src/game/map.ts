@@ -1,5 +1,6 @@
 import { COLS, ROWS, TILE } from "./data";
 import { mapLaneDefs } from "./lanes";
+import { WOODS_MAP } from "./maps/woods";
 
 export type PropType =
   | "crate"
@@ -56,6 +57,15 @@ export interface MapDef {
   lanes?: Array<{ id: string; path: Array<[number, number]> }>;
   /** Water tiles. Not road, not buildable. */
   water?: Array<[number, number]>;
+  /** Inaccessible mountain / cliff mass. Not road, not buildable. */
+  mountain?: Array<[number, number]>;
+  /** Elevated walkable tiles (LOW/HIGH surface). Independent of the ROAD path. */
+  highGround?: Array<[number, number]>;
+  /** Canonical invisible collision/LOS edges. Not drawn in raids. */
+  collisionWalls?: Array<{ tx: number; ty: number; edge: "N" | "E" | "S" | "W" }>;
+  /** Suspended-bridge overlay cells. Base terrain/path underneath is unchanged. */
+  bridges?: Array<{ tx: number; ty: number; orientation: "H" | "V" }>;
+  zones?: Array<{ type: "RESOURCE_SITE"; name: string; cells: Array<[number, number]> }>;
   props: Prop[];
   checkpoint: CheckpointPart[];
   cover: Array<[number, number, CoverType]>;
@@ -78,23 +88,13 @@ export interface GameMap {
   SEG_LEN: number[];
   BLOCKED: boolean[][];
   WATER: boolean[][];
+  MOUNTAIN: boolean[][];
+  HIGH_GROUND: boolean[][];
   PROPS: Prop[];
   CHECKPOINT: CheckpointPart[];
   COVER: CoverPiece[];
   CRATES: Array<{ tx: number; ty: number }>;
 }
-
-const WOODS_PAL: Palette = {
-  grassA: "#2e3a24",
-  grassB: "#27321f",
-  grassC: "#222c1b",
-  speckLight: "#3a4a2a",
-  speckDark: "#1b2415",
-  roadOuter: "#3a3328",
-  roadMid: "#4a4034",
-  roadInner: "#5b503f",
-  roadLine: "#6d6250",
-};
 
 const KOLKHOZ_PAL: Palette = {
   grassA: "#343b2a",
@@ -121,62 +121,7 @@ const FACTORY_PAL: Palette = {
 };
 
 export const MAP_DEFS: MapDef[] = [
-  {
-    id: "woods",
-    name: "PINE CUT",
-    threat: 1,
-    threatLabel: "LOW THREAT",
-    desc: "Long winding trail through the pines. Slow scav pressure, lots of room to set up.",
-    hpMult: 0.85,
-    lootMult: 0.85,
-    waveMods: { countMult: 0.6, heavyDelay: 3 },
-    geo: { x: 22, y: 30 },
-    sector: "SECTOR N-2",
-    palette: WOODS_PAL,
-    path: [
-      [-1, 1],
-      [4, 1],
-      [4, 5],
-      [8, 5],
-      [8, 1],
-      [13, 1],
-      [13, 8],
-      [6, 8],
-      [6, 11],
-      [17, 11],
-      [17, 5],
-      [20, 5],
-    ],
-    props: [
-      { tx: 1, ty: 3, type: "tree" },
-      { tx: 2, ty: 7, type: "tree" },
-      { tx: 6, ty: 3, type: "tree" },
-      { tx: 10, ty: 3, type: "tree" },
-      { tx: 11, ty: 6, type: "hut" },
-      { tx: 15, ty: 2, type: "tree" },
-      { tx: 18, ty: 2, type: "tree" },
-      { tx: 19, ty: 8, type: "tree" },
-      { tx: 3, ty: 12, type: "tree" },
-      { tx: 9, ty: 9, type: "rock" },
-      { tx: 15, ty: 8, type: "truck" },
-      { tx: 0, ty: 10, type: "rock" },
-      { tx: 12, ty: 12, type: "barrel" },
-    ],
-    checkpoint: [{ tx: 2, ty: 0, type: "post" }],
-    cover: [
-      [3, 3, "half"],
-      [7, 3, "full"],
-      [12, 6, "half"],
-      [5, 9, "full"],
-      [16, 9, "half"],
-      [14, 4, "full"],
-    ],
-    crates: [
-      [1, 5],
-      [10, 10],
-      [18, 6],
-    ],
-  },
+  WOODS_MAP,
   {
     id: "kolkhoz",
     name: "GRAIN GATE",
@@ -461,7 +406,15 @@ export function buildMap(def: MapDef): GameMap {
   for (const [x, y] of def.water ?? []) {
     if (x >= 0 && y >= 0 && x < COLS && y < ROWS) WATER[y]![x] = true;
   }
-  const occupied = (tx: number, ty: number) => !!BLOCKED[ty]?.[tx] || !!WATER[ty]?.[tx];
+  const MOUNTAIN: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  for (const [x, y] of def.mountain ?? []) {
+    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) MOUNTAIN[y]![x] = true;
+  }
+  const HIGH_GROUND: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  for (const [x, y] of def.highGround ?? []) {
+    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) HIGH_GROUND[y]![x] = true;
+  }
+  const occupied = (tx: number, ty: number) => !!BLOCKED[ty]?.[tx] || !!WATER[ty]?.[tx] || !!MOUNTAIN[ty]?.[tx];
   const PROPS = def.props.filter((p) => !occupied(p.tx, p.ty));
   const COVER: CoverPiece[] = def.cover
     .filter(([tx, ty]) => !occupied(tx, ty) && !PROPS.some((p) => p.tx === tx && p.ty === ty))
@@ -481,6 +434,8 @@ export function buildMap(def: MapDef): GameMap {
     SEG_LEN: primary.SEG_LEN,
     BLOCKED,
     WATER,
+    MOUNTAIN,
+    HIGH_GROUND,
     PROPS,
     CHECKPOINT: def.checkpoint,
     COVER,
@@ -509,10 +464,21 @@ export function isWater(map: GameMap, tx: number, ty: number) {
   return !!map.WATER[ty]![tx];
 }
 
+export function isMountain(map: GameMap, tx: number, ty: number) {
+  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+  return !!map.MOUNTAIN[ty]![tx];
+}
+
+export function isHighGround(map: GameMap, tx: number, ty: number) {
+  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+  return !!map.HIGH_GROUND[ty]![tx];
+}
+
 export function isBuildable(map: GameMap, tx: number, ty: number) {
   if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
   if (map.BLOCKED[ty]![tx]) return false;
   if (map.WATER[ty]![tx]) return false;
+  if (map.MOUNTAIN[ty]![tx]) return false;
   if (map.PROPS.some((p) => p.tx === tx && p.ty === ty)) return false;
   if (map.CRATES.some((p) => p.tx === tx && p.ty === ty)) return false;
   if (map.COVER.some((c) => c.tx === tx && c.ty === ty)) return false;

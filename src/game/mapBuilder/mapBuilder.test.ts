@@ -91,15 +91,23 @@ describe("map builder drafts", () => {
     expect(draft.displayName).toBe(woods.name);
     expect(draft.status).toBe("draft");
     expect(draft.lanes[0]!.id).toBe("MAIN");
-    expect(draft.lanes[0]!.spawn).toEqual({ tx: 0, ty: 1, edge: "W" });
-    expect(draft.lanes[0]!.endpoint).toEqual({ tx: 19, ty: 5, edge: "E" });
+    expect(draft.lanes[0]!.spawn).toEqual({ tx: 1, ty: 12, edge: "S" });
+    expect(draft.lanes[0]!.endpoint).toEqual({ tx: 17, ty: 0, edge: "N" });
     expect(draft.lanes[0]!.waypoints.every(([x, y]) => x >= 0 && y >= 0 && x < 20 && y < 13)).toBe(true);
-    expect(draft.lanes[0]!.waypoints[0]).toEqual([0, 1]);
-    expect(draft.lanes[0]!.waypoints.at(-1)).toEqual([19, 5]);
+    expect(draft.lanes[0]!.waypoints[0]).toEqual([1, 12]);
+    expect(draft.lanes[0]!.waypoints.at(-1)).toEqual([17, 0]);
     expect(draft.lanes[0]!.waypoints).not.toEqual(woods.path);
     expect(draft.props.length).toBe(woods.props.length);
-    expect(draft.terrain[1]![4]).toBe("ROAD");
+    expect(draft.terrain[12]![1]).toBe("ROAD");
     expect(draft.terrain[0]![0]).toBe("GROUND");
+    expect(draft.terrain[0]![6]).toBe("MOUNTAIN");
+    expect(draft.terrain[1]![4]).toBe("HIGH_GROUND");
+    expect(draft.bridges).toEqual([
+      { tx: 13, ty: 5, orientation: "V" },
+      { tx: 13, ty: 6, orientation: "V" },
+      { tx: 13, ty: 7, orientation: "V" },
+    ]);
+    expect(draft.collisionWalls.length).toBe(91);
   });
 
   it("loads GRAIN GATE with both authored lanes and water", () => {
@@ -790,8 +798,8 @@ describe("map builder path authoring", () => {
     expect(vis).toHaveLength(1);
     expect(vis[0]!.id).toBe("MAIN");
     expect(vis[0]!.cells.length).toBeGreaterThan(10);
-    expect(vis[0]!.cells[0]).toEqual([-1, 1]);
-    expect(vis[0]!.cells.at(-1)).toEqual([20, 5]);
+    expect(vis[0]!.cells[0]).toEqual([1, 13]);
+    expect(vis[0]!.cells.at(-1)).toEqual([17, -1]);
     expect(woods.lanes[0]!.waypoints.every(([x, y]) => x >= 0 && y >= 0 && x < 20 && y < 13)).toBe(true);
     expect(woods.lanes[0]!.waypoints).not.toEqual(MAP_BY_ID["woods"]!.path);
   });
@@ -1273,8 +1281,8 @@ describe("map builder boundary ports", () => {
 
   it("existing-map adapter produces a deterministic boundary direction", () => {
     const woods = peelLaneFromWaypoints("MAIN", MAP_BY_ID["woods"]!.path, 20, 13);
-    expect(woods.spawn).toEqual({ tx: 0, ty: 1, edge: "W" });
-    expect(woods.endpoint).toEqual({ tx: 19, ty: 5, edge: "E" });
+    expect(woods.spawn).toEqual({ tx: 1, ty: 12, edge: "S" });
+    expect(woods.endpoint).toEqual({ tx: 17, ty: 0, edge: "N" });
     const grain = fromProductionMap(MAP_BY_ID["kolkhoz"]!);
     expect(grain.lanes.find((l) => l.id === "MAIN")!.spawn).toEqual({ tx: 0, ty: 3, edge: "W" });
     expect(grain.lanes.find((l) => l.id === "MAIN")!.endpoint).toEqual({ tx: 16, ty: 0, edge: "N" });

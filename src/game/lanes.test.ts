@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { TILE } from "./data";
 import { assignSpawnLane, lanePathProgress, mapLaneDefs } from "./lanes";
-import { MAP_BY_ID, buildMap, extractMarkerCenter, isBuildable, isRoad, isWater, laneRoute, pathPoint, worldInPlayableBoard } from "./map";
+import { MAP_BY_ID, buildMap, extractMarkerCenter, isBuildable, isHighGround, isMountain, isRoad, isWater, laneRoute, pathPoint, worldInPlayableBoard } from "./map";
 
 describe("lane spawn split", () => {
   it("round-robins across two lanes with MAIN first", () => {
@@ -99,5 +99,13 @@ describe("single-lane maps stay on one route", () => {
     expect(woods.lanes).toHaveLength(1);
     expect(woods.lanes[0]!.id).toBe("MAIN");
     expect(assignSpawnLane(5, woods.lanes.length)).toBe(0);
+    expect(MAP_BY_ID["woods"]!.path[0]).toEqual([1, 13]);
+    expect(MAP_BY_ID["woods"]!.path.at(-1)).toEqual([17, -1]);
+    expect(woods.def.bridges).toHaveLength(3);
+    expect(woods.def.collisionWalls).toHaveLength(91);
+    expect(isMountain(woods, 8, 0)).toBe(true);
+    expect(isHighGround(woods, 4, 1)).toBe(true);
+    expect(isBuildable(woods, 8, 0)).toBe(false);
+    expect(isRoad(woods, 1, 12)).toBe(true);
   });
 });

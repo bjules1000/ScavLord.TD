@@ -175,7 +175,11 @@ describe("suspended bridge overlay", () => {
     expect(back.terrain[4]![4]).toBe("ROAD");
     expect(back.bridges).toEqual(exp.bridges);
     expect(toExport(back).bridges).toEqual(exp.bridges);
-    expect(fromProductionMap(MAP_BY_ID["woods"]!).bridges).toEqual([]);
+    expect(fromProductionMap(MAP_BY_ID["woods"]!).bridges).toEqual([
+      { tx: 13, ty: 5, orientation: "V" },
+      { tx: 13, ty: 6, orientation: "V" },
+      { tx: 13, ty: 7, orientation: "V" },
+    ]);
     expect(hitObject(doc, 4, 4)?.kind).toBe("bridge");
     expect(applyAuthor(doc, selectTerrainTool("GROUND"), cell(4, 4), ctx()).bridges).toEqual(doc.bridges);
   });

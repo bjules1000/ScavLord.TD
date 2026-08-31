@@ -159,7 +159,7 @@ describe("invisible collision walls", () => {
     expect(back.collisionWalls).toEqual(exp.collisionWalls);
     expect(toExport(back).collisionWalls).toEqual(exp.collisionWalls);
     const woods = fromProductionMap(MAP_BY_ID["woods"]!);
-    expect(woods.collisionWalls).toEqual([]);
+    expect(woods.collisionWalls).toHaveLength(91);
     expect(validateMap(doc).ok).toBe(false);
   });
 

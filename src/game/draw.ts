@@ -91,6 +91,26 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
     }
   }
 
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!map.MOUNTAIN[y]![x]) continue;
+      ctx.fillStyle = "#3a3c42";
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      ctx.fillStyle = "#5a5e66";
+      ctx.fillRect(x * TILE + 6, y * TILE + 8, TILE - 12, TILE - 16);
+    }
+  }
+
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!map.HIGH_GROUND[y]![x] || map.MOUNTAIN[y]![x] || map.BLOCKED[y]![x]) continue;
+      ctx.fillStyle = "#6a5430";
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      ctx.fillStyle = "#8a7040";
+      ctx.fillRect(x * TILE + 3, y * TILE + 3, TILE - 6, 4);
+    }
+  }
+
   // road: mud shoulders + cracked asphalt
   ctx.lineCap = "square";
   ctx.lineJoin = "miter";
@@ -127,7 +147,7 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
   for (let ty = 0; ty < ROWS; ty++) {
     for (let tx = 0; tx < COLS; tx++) {
       const n = r3();
-      const on = map.BLOCKED[ty]?.[tx] || map.WATER[ty]?.[tx];
+      const on = map.BLOCKED[ty]?.[tx] || map.WATER[ty]?.[tx] || map.MOUNTAIN[ty]?.[tx] || map.HIGH_GROUND[ty]?.[tx];
       if (on || n > 0.16) continue;
       const name: "grass2" | "grass3" = n < 0.05 ? "grass2" : "grass3";
       const size = TILE * (0.8 + r3() * 0.45);
@@ -141,6 +161,7 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
   for (const c of map.COVER) drawCover(ctx, c.tx * TILE, c.ty * TILE, c.type);
   for (const p of map.PROPS) drawProp(ctx, p.tx * TILE, p.ty * TILE, p.type);
   for (const c of map.CHECKPOINT) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
+  for (const b of map.def.bridges ?? []) drawRaidBridge(ctx, b.tx, b.ty, b.orientation);
 
   if (shouldDrawLanePortMarkers("raid", opts?.lanePorts)) drawLanePortMarkers(ctx, map);
 }
@@ -160,6 +181,22 @@ export function drawLanePortMarkers(ctx: CanvasRenderingContext2D, map: GameMap)
     px(ctx, "#4dd36a", -4, -4, 8, 8);
     ctx.restore();
   }
+}
+
+function drawRaidBridge(ctx: CanvasRenderingContext2D, tx: number, ty: number, orientation: "H" | "V") {
+  const x = tx * TILE;
+  const y = ty * TILE;
+  ctx.fillStyle = "#5a3a18";
+  ctx.fillRect(x + 2, y + 2, TILE - 4, TILE - 4);
+  ctx.fillStyle = "#c9a56a";
+  if (orientation === "H") {
+    for (let i = 0; i < 4; i++) ctx.fillRect(x + 3, y + 6 + i * 8, TILE - 6, 5);
+  } else {
+    for (let i = 0; i < 4; i++) ctx.fillRect(x + 6 + i * 8, y + 3, 5, TILE - 6);
+  }
+  ctx.fillStyle = "#8a6230";
+  ctx.fillRect(x + 2, y + 2, TILE - 4, 2);
+  ctx.fillRect(x + 2, y + TILE - 4, TILE - 4, 2);
 }
 
 /** Player-built barricades and barbed wire. Barricades render heavier as they upgrade. */
