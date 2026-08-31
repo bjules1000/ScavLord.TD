@@ -7,9 +7,9 @@ import { createBlankMap, slugId, unlockRevision, validateNewMapInput } from "./d
 import { edgeFromCursor } from "./edges";
 import { exportFilename, importedToDoc, parseImport, stringifyExport } from "./export";
 import { canRedo, canUndo, commit, commitStroke, redo, replaceDoc, sessionFrom, undo, type EditorSession } from "./history";
-import { applyAuthorStroke, gameplayEraseTarget, pathStepValid, propAt, type AuthorCell } from "./author";
-import { addLane, canPlaceOccupant, removeLane, removeObject } from "./paint";
-import { nextLaneId } from "./pathing";
+import { applyAuthorStroke, gameplayEraseTarget, pathPreviewCells, pathStepValid, propAt, type AuthorCell } from "./author";
+import { addLane, canPlaceOccupant, clearLanePath, removeLane, removeObject } from "./paint";
+import { nextLaneId, pathCells } from "./pathing";
 import { emptyStore, readStore, upsertDoc, writeStore } from "./persist";
 import { DEFAULT_LAYERS, clientToTile, drawEditorMap, hitObject, type LayerFlags } from "./render";
 import {
@@ -113,7 +113,8 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
         : undefined;
     let ghost: string | null = null;
     let invalid = false;
-    let ghostItem: "prop" | "cover" | "crate" | "checkpoint" | "spawn" | "end" | "erase" | null = null;
+    let ghostItem: "prop" | "cover" | "crate" | "checkpoint" | "spawn" | "end" | "erase" | "path" | null = null;
+    let pathPreview: Array<[number, number]> | undefined;
     if (hover && isTerrainPaintMode(tool) && tool.id === "terrain") ghost = GHOST[tool.terrain];
     if (hover && isPropPlaceMode(tool)) {
       ghost = "#c9c2a6";
@@ -131,7 +132,9 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     }
     if (hover && isPathMode(tool)) {
       ghost = "#f0b400";
+      ghostItem = "path";
       invalid = !pathStepValid(doc, laneId, [hover.tx, hover.ty]);
+      pathPreview = pathPreviewCells(doc, laneId, [hover.tx, hover.ty]);
     }
     if (hover && (tool.id === "spawn" || tool.id === "end" || tool.id === "zone" || tool.id === "gate")) {
       ghost = "#f0b400";
@@ -151,6 +154,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             ghostProp: tool.id === "prop" ? tool.type : null,
             ghostCover: tool.id === "cover" ? tool.type : null,
             ghostCheckpoint: tool.id === "checkpoint" ? tool.type : null,
+            ...(pathPreview ? { pathPreview } : {}),
             ...(edge ? { edge } : {}),
           }
         : null,
@@ -584,8 +588,22 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                   REMOVE LANE
                 </button>
               )}
+              <button
+                className="pixel-btn"
+                disabled={locked || !(doc.lanes.find((l) => l.id === laneId)?.waypoints.length)}
+                onClick={() => {
+                  const lane = doc.lanes.find((l) => l.id === laneId);
+                  const n = lane ? pathCells(lane.waypoints).length : 0;
+                  if (n > 4 && typeof window !== "undefined" && !window.confirm(`Clear the ${n}-tile path on lane ${laneId}? Spawn stays. Road and props are unchanged.`)) {
+                    return;
+                  }
+                  apply(clearLanePath(doc, laneId));
+                }}
+              >
+                CLEAR PATH
+              </button>
               <div className="text-muted-foreground">
-                PATH extends the last waypoint of the selected lane (orthogonal only). ERASE GAMEPLAY removes one spawn, endpoint, gate, zone cell, or active-lane path under the cursor. Factory GATE markers are metadata only.
+                PATH draws only the selected lane, tile-center to tile-center, orthogonal only. First click starts the route; later clicks append adjacent tiles or fill a straight row/column. ERASE GAMEPLAY truncates the active-lane path from the clicked cell. CLEAR PATH keeps spawn and drops the rest of that lane's route.
               </div>
             </Section>
             <Section title="LAYERS">
@@ -675,7 +693,7 @@ function Inspector({
   if (gate) return <div>GATE {gate.id} · LANE {gate.laneId} · X {gate.tx} Y {gate.ty} · {gate.edge}</div>;
   if (tile) {
     const t = doc.terrain[tile.ty]?.[tile.tx] ?? "—";
-    const lanes = doc.lanes.filter((l) => l.waypoints.some(([x, y]) => x === tile.tx && y === tile.ty)).map((l) => l.id);
+    const lanes = doc.lanes.filter((l) => pathCells(l.waypoints).some(([x, y]) => x === tile.tx && y === tile.ty)).map((l) => l.id);
     return (
       <div>
         TILE X {tile.tx} Y {tile.ty}

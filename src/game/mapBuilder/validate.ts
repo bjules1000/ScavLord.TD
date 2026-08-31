@@ -89,6 +89,24 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
             `Lane ${lane.id} has a diagonal-only step (${a[0]}, ${a[1]}) → (${b[0]}, ${b[1]}).`,
           ),
         );
+        if (i === 0) {
+          errors.push(
+            issue(
+              "error",
+              "SPAWN",
+              `Lane ${lane.id} spawn is not connected to the path (${a[0]}, ${a[1]}) → (${b[0]}, ${b[1]}).`,
+            ),
+          );
+        }
+        if (i === lane.waypoints.length - 2) {
+          errors.push(
+            issue(
+              "error",
+              "ENDPOINT",
+              `Lane ${lane.id} endpoint is not connected to the path (${a[0]}, ${a[1]}) → (${b[0]}, ${b[1]}).`,
+            ),
+          );
+        }
       }
     }
     const cells = pathCells(lane.waypoints);
@@ -102,9 +120,10 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
         errors.push(
           issue("error", "WATER", `Lane ${lane.id} crosses water at (${x}, ${y}) without a ROAD/bridge tile.`),
         );
-      }
-      if (terrain === "MOUNTAIN") {
+      } else if (terrain === "MOUNTAIN") {
         errors.push(issue("error", "MOUNTAIN", `Lane ${lane.id} crosses blocked terrain at (${x}, ${y}).`));
+      } else if (terrain !== "ROAD") {
+        errors.push(issue("error", "ROAD", `Lane ${lane.id} leaves the road at (${x}, ${y}).`));
       }
     }
     if (cells.length > 0 && cells.length < 6) {

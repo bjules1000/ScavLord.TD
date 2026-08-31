@@ -2,7 +2,7 @@ import { TILE } from "../data";
 import type { CheckpointPart, CoverType, PropType } from "../map";
 import { inBounds } from "./document";
 import { edgeFromCursor } from "./edges";
-import { cellsBetween, isOrthogonalPair, pathCells, sameCell } from "./pathing";
+import { cellsBetween, pathAppendCells, pathCells } from "./pathing";
 import {
   applyEndpoint,
   applyPathClick,
@@ -134,22 +134,29 @@ export function erasePropAt(doc: EditorMapDoc, tx: number, ty: number, edge?: Ti
   };
 }
 
+/** Truncate the active lane from the hit cell onward. Clicking the tip backtracks one cell. */
 export function erasePathAt(doc: EditorMapDoc, laneId: string, tx: number, ty: number): EditorMapDoc {
   if (doc.status === "locked") return doc;
   const lane = doc.lanes.find((l) => l.id === laneId);
-  if (!lane) return doc;
+  if (!lane || !lane.waypoints.length) return doc;
+  const last = lane.waypoints[lane.waypoints.length - 1]!;
+  if (last[0] === tx && last[1] === ty) {
+    return setLaneWaypoints(doc, laneId, lane.waypoints.slice(0, -1));
+  }
+  if (lane.waypoints.length >= 2) {
+    const lastSeg = cellsBetween(lane.waypoints[lane.waypoints.length - 2]!, last);
+    if (lastSeg.some((c) => c[0] === tx && c[1] === ty)) {
+      return setLaneWaypoints(doc, laneId, lane.waypoints.slice(0, -1));
+    }
+  }
   const hitWp = lane.waypoints.findIndex((w) => w[0] === tx && w[1] === ty);
   if (hitWp >= 0) {
-    return setLaneWaypoints(
-      doc,
-      laneId,
-      lane.waypoints.filter((_, i) => i !== hitWp),
-    );
+    return setLaneWaypoints(doc, laneId, lane.waypoints.slice(0, hitWp));
   }
   for (let i = 0; i < lane.waypoints.length - 1; i++) {
     const seg = cellsBetween(lane.waypoints[i]!, lane.waypoints[i + 1]!);
     if (seg.some((c) => c[0] === tx && c[1] === ty)) {
-      return setLaneWaypoints(doc, laneId, [...lane.waypoints.slice(0, i + 1), ...lane.waypoints.slice(i + 2)]);
+      return setLaneWaypoints(doc, laneId, lane.waypoints.slice(0, i + 1));
     }
   }
   return doc;
@@ -203,10 +210,20 @@ export function eraseGameplayAt(doc: EditorMapDoc, laneId: string, tx: number, t
 export function pathStepValid(doc: EditorMapDoc, laneId: string, cell: [number, number]): boolean {
   const lane = doc.lanes.find((l) => l.id === laneId);
   if (!lane) return false;
+  return pathAppendCells(doc, lane.waypoints, cell) !== null;
+}
+
+export function pathPreviewCells(
+  doc: EditorMapDoc,
+  laneId: string,
+  cell: [number, number],
+): Array<[number, number]> {
+  const lane = doc.lanes.find((l) => l.id === laneId);
+  if (!lane) return [];
+  const added = pathAppendCells(doc, lane.waypoints, cell);
+  if (!added) return [cell];
   const last = lane.waypoints[lane.waypoints.length - 1];
-  if (!last) return true;
-  if (sameCell(last, cell)) return false;
-  return isOrthogonalPair(last, cell);
+  return last ? [last, ...added] : added;
 }
 
 export function gameplayEraseTarget(

@@ -2,7 +2,7 @@ import { TILE } from "../data";
 import { drawCheckpoint, drawCover, drawCrate, drawProp } from "../draw";
 import type { CheckpointPart, CoverType, PropType } from "../map";
 import { inBounds, terrainAt } from "./document";
-import { pathCells } from "./pathing";
+import { laneLabelShort, pathCells } from "./pathing";
 import type { EditorMapDoc, TerrainKind, TileEdge } from "./schema";
 
 export interface LayerFlags {
@@ -12,6 +12,7 @@ export interface LayerFlags {
   props: boolean;
   grid: boolean;
   extras: boolean;
+  paths: boolean;
 }
 
 export const DEFAULT_LAYERS: LayerFlags = {
@@ -21,7 +22,37 @@ export const DEFAULT_LAYERS: LayerFlags = {
   props: true,
   grid: true,
   extras: true,
+  paths: true,
 };
+
+export const PATH_ACTIVE_COLOR = "#f0b400";
+export const PATH_INACTIVE_COLOR = "#e8e4d4";
+
+export function pathStrokeStyle(active: boolean): { color: string; width: number } {
+  return active ? { color: PATH_ACTIVE_COLOR, width: 5 } : { color: PATH_INACTIVE_COLOR, width: 4 };
+}
+
+export interface VisiblePathOverlay {
+  id: string;
+  cells: Array<[number, number]>;
+  style: { color: string; width: number };
+  active: boolean;
+}
+
+/** PATHS layer visibility only. Turning the layer off never mutates lane data. */
+export function visiblePathOverlays(
+  doc: EditorMapDoc,
+  layers: LayerFlags,
+  activeLaneId: string,
+): VisiblePathOverlay[] {
+  if (!layers.paths) return [];
+  return doc.lanes.map((lane) => ({
+    id: lane.id,
+    cells: pathCells(lane.waypoints),
+    style: pathStrokeStyle(lane.id === activeLaneId),
+    active: lane.id === activeLaneId,
+  }));
+}
 
 const TERRAIN_FILL: Record<TerrainKind, string> = {
   GROUND: "",
@@ -69,10 +100,11 @@ export function drawEditorMap(
     ghost: string | null;
     invalid?: boolean;
     edge?: TileEdge;
-    ghostItem?: "prop" | "cover" | "crate" | "checkpoint" | "spawn" | "end" | "erase" | null;
+    ghostItem?: "prop" | "cover" | "crate" | "checkpoint" | "spawn" | "end" | "erase" | "path" | null;
     ghostProp?: PropType | null;
     ghostCover?: CoverType | null;
     ghostCheckpoint?: CheckpointPart["type"] | null;
+    pathPreview?: Array<[number, number]>;
   } | null,
   activeLaneId: string,
 ) {
@@ -130,24 +162,6 @@ export function drawEditorMap(
         }
       }
     }
-    const colors = ["#f0b400", "#4dd36a", "#ff7a2f", "#7ec8e3", "#e07ad9", "#c9c2a6"];
-    doc.lanes.forEach((lane, i) => {
-      const cells = pathCells(lane.waypoints);
-      if (cells.length < 2) return;
-      ctx.save();
-      ctx.strokeStyle = colors[i % colors.length]!;
-      ctx.globalAlpha = lane.id === activeLaneId ? 0.85 : 0.35;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      cells.forEach(([x, y], idx) => {
-        const px = x * TILE + TILE / 2;
-        const py = y * TILE + TILE / 2;
-        if (idx === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      });
-      ctx.stroke();
-      ctx.restore();
-    });
   }
 
   if (layers.extras) {
@@ -173,6 +187,26 @@ export function drawEditorMap(
     for (const c of doc.checkpoints) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
     for (const c of doc.crates) drawCrate(ctx, c.tx, c.ty, 0, false);
     for (const e of doc.edges) drawEdgeMark(ctx, e.tx, e.ty, e.edge, e.type === "wall" ? "#8a8c80" : "#c9c2a6");
+  }
+
+  if (layers.paths) {
+    const overlays = visiblePathOverlays(doc, layers, activeLaneId);
+    const inactive = overlays.filter((o) => !o.active);
+    const active = overlays.filter((o) => o.active);
+    for (const overlay of [...inactive, ...active]) {
+      drawPathPolyline(ctx, overlay.cells, overlay.style.color, overlay.style.width);
+    }
+  }
+
+  if (layers.paths || layers.markers) {
+    for (const lane of doc.lanes) {
+      const cells = pathCells(lane.waypoints);
+      const firstOnMap = cells.find(([x, y]) => x >= 0 && y >= 0 && x < doc.width && y < doc.height);
+      const spawn = lane.waypoints[0];
+      const labelAt = firstOnMap ?? spawn;
+      if (!labelAt) continue;
+      drawLaneLabel(ctx, labelAt[0], labelAt[1], laneLabelShort(lane.id), lane.id === activeLaneId);
+    }
   }
 
   if (layers.markers) {
@@ -209,6 +243,9 @@ export function drawEditorMap(
   }
 
   if (hover) {
+    if (hover.ghostItem === "path" && hover.pathPreview && hover.pathPreview.length) {
+      drawPathPolyline(ctx, hover.pathPreview, hover.invalid ? "#c23b2c" : PATH_ACTIVE_COLOR, 3, 0.55);
+    }
     ctx.save();
     ctx.globalAlpha = hover.invalid ? 0.45 : 0.4;
     ctx.fillStyle = hover.invalid ? "#c23b2c" : hover.ghost ?? "#f0b400";
@@ -235,6 +272,65 @@ export function drawEditorMap(
     ctx.lineWidth = 2;
     ctx.strokeRect(hover.tx * TILE + 1, hover.ty * TILE + 1, TILE - 2, TILE - 2);
   }
+}
+
+function drawPathPolyline(
+  ctx: CanvasRenderingContext2D,
+  cells: Array<[number, number]>,
+  color: string,
+  width: number,
+  alpha = 1,
+) {
+  if (!cells.length) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.lineJoin = "miter";
+  ctx.lineCap = "square";
+  ctx.strokeStyle = color;
+  if (cells.length === 1) {
+    const [x, y] = cells[0]!;
+    const px = x * TILE + TILE / 2;
+    const py = y * TILE + TILE / 2;
+    ctx.fillStyle = color;
+    ctx.fillRect(px - 6, py - 6, 12, 12);
+    ctx.restore();
+    return;
+  }
+  ctx.lineWidth = width + 2;
+  ctx.strokeStyle = "rgba(12, 14, 10, 0.55)";
+  ctx.beginPath();
+  cells.forEach(([x, y], idx) => {
+    const px = x * TILE + TILE / 2;
+    const py = y * TILE + TILE / 2;
+    if (idx === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  cells.forEach(([x, y], idx) => {
+    const px = x * TILE + TILE / 2;
+    const py = y * TILE + TILE / 2;
+    if (idx === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawLaneLabel(ctx: CanvasRenderingContext2D, tx: number, ty: number, label: string, active: boolean) {
+  const x = tx * TILE + 6;
+  const y = ty * TILE + 8;
+  ctx.save();
+  ctx.font = "8px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "rgba(12, 14, 10, 0.75)";
+  ctx.fillRect(x - 2, y - 5, label.length * 6 + 4, 10);
+  ctx.fillStyle = active ? PATH_ACTIVE_COLOR : PATH_INACTIVE_COLOR;
+  ctx.fillText(label, x, y);
+  ctx.restore();
 }
 
 function drawMarker(ctx: CanvasRenderingContext2D, tx: number, ty: number, color: string, tag: string) {

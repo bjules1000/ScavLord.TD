@@ -1,6 +1,6 @@
 import { inBounds, isWalkableTerrain, nextObjectId, occupantAt, terrainAt } from "./document";
 import { edgeKey } from "./edges";
-import { isOrthogonalPair } from "./pathing";
+import { pathAppendCells } from "./pathing";
 import type { CheckpointPart, CoverType, PropType } from "../map";
 import type {
   EditorCheckpoint,
@@ -213,10 +213,18 @@ export function applyPathClick(doc: EditorMapDoc, laneId: string, cell: [number,
   if (doc.status === "locked") return doc;
   const lane = doc.lanes.find((l) => l.id === laneId);
   if (!lane) return doc;
-  const last = lane.waypoints[lane.waypoints.length - 1];
-  if (last && last[0] === cell[0] && last[1] === cell[1]) return doc;
-  if (last && !isOrthogonalPair(last, cell)) return doc;
-  return setLaneWaypoints(doc, laneId, [...lane.waypoints, cell]);
+  const added = pathAppendCells(doc, lane.waypoints, cell);
+  if (!added) return doc;
+  return setLaneWaypoints(doc, laneId, [...lane.waypoints, ...added]);
+}
+
+/** Keeps the spawn (first waypoint) and drops the rest of the route. */
+export function clearLanePath(doc: EditorMapDoc, laneId: string): EditorMapDoc {
+  if (doc.status === "locked") return doc;
+  const lane = doc.lanes.find((l) => l.id === laneId);
+  if (!lane || lane.waypoints.length === 0) return doc;
+  if (lane.waypoints.length === 1) return setLaneWaypoints(doc, laneId, []);
+  return setLaneWaypoints(doc, laneId, [lane.waypoints[0]!]);
 }
 
 export function applySpawn(doc: EditorMapDoc, laneId: string, cell: [number, number]): EditorMapDoc {

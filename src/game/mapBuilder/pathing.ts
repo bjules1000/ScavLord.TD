@@ -68,6 +68,37 @@ export function nextLaneId(existing: readonly EditorLane[]): string {
   return `LANE_${n}`;
 }
 
+export function isLegalPathTerrain(doc: EditorMapDoc, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) {
+    return waypointInPlayableBounds(x, y, doc.width, doc.height);
+  }
+  return doc.terrain[y]![x] === "ROAD";
+}
+
+/** Cells that would be appended by a PATH click, or null if the step is illegal. */
+export function pathAppendCells(
+  doc: EditorMapDoc,
+  waypoints: Array<[number, number]>,
+  cell: [number, number],
+): Array<[number, number]> | null {
+  if (!isLegalPathTerrain(doc, cell[0], cell[1])) return null;
+  const last = waypoints[waypoints.length - 1];
+  if (!last) return [cell];
+  if (sameCell(last, cell)) return null;
+  if (!isOrthogonalPair(last, cell)) return null;
+  const fill = cellsBetween(last, cell).slice(1);
+  if (!fill.length) return null;
+  if (fill.some(([x, y]) => !isLegalPathTerrain(doc, x, y))) return null;
+  const occupied = new Set(pathCells(waypoints).map(([x, y]) => `${x},${y}`));
+  if (fill.some(([x, y]) => occupied.has(`${x},${y}`))) return null;
+  return fill;
+}
+
+export function laneLabelShort(id: string): string {
+  const compact: Record<string, string> = { NORTH: "N", EAST: "E", SOUTH: "S", WEST: "W" };
+  return compact[id] ?? id;
+}
+
 export function waypointInPlayableBounds(
   x: number,
   y: number,

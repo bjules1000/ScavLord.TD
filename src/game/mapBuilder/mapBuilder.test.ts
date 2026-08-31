@@ -14,9 +14,10 @@ import {
   eraseSpawn,
   eraseEndpoint,
   eraseZoneAt,
+  pathStepValid,
 } from "./author";
 import { canRedo, canUndo, commit, commitStroke, redo, sessionFrom, undo } from "./history";
-import { clientToTile } from "./render";
+import { clientToTile, DEFAULT_LAYERS, pathStrokeStyle, visiblePathOverlays } from "./render";
 import {
   isInspectMode,
   isPathMode,
@@ -38,12 +39,14 @@ import {
   applyEndpoint,
   applyPathClick,
   applySpawn,
+  clearLanePath,
   eraseTiles,
   paintTiles,
   paintZoneCells,
   placeProp,
   removeObject,
 } from "./paint";
+import { pathCells } from "./pathing";
 import { MAP_BUILDER_STORAGE_KEY as SCHEMA_KEY } from "./schema";
 import {
   emptyStore,
@@ -562,6 +565,7 @@ describe("map builder props and gameplay", () => {
 
   it("PATH edits only the active lane", () => {
     let doc = createBlankMap({ displayName: "L", id: "path-lane", width: 12, height: 10 });
+    doc = paintTiles(doc, [[0, 1], [1, 1], [0, 5]], "ROAD");
     doc = addLane(doc, "A");
     doc = applyAuthor(doc, selectPathTool(), cell(0, 1), ctx("MAIN"));
     doc = applyAuthor(doc, selectPathTool(), cell(1, 1), ctx("MAIN"));
@@ -575,6 +579,7 @@ describe("map builder props and gameplay", () => {
 
   it("extends orthogonally, rejects diagonal and zero-length steps", () => {
     let doc = createBlankMap({ displayName: "L", id: "path-orth", width: 12, height: 10 });
+    doc = paintTiles(doc, [[0, 0], [1, 0], [2, 0]], "ROAD");
     doc = applyPathClick(doc, "MAIN", [0, 0]);
     doc = applyPathClick(doc, "MAIN", [2, 0]);
     const diagonal = applyPathClick(doc, "MAIN", [3, 1]);
@@ -583,6 +588,7 @@ describe("map builder props and gameplay", () => {
     expect(same).toBe(doc);
     expect(doc.lanes[0]!.waypoints).toEqual([
       [0, 0],
+      [1, 0],
       [2, 0],
     ]);
   });
@@ -590,12 +596,15 @@ describe("map builder props and gameplay", () => {
   it("path erase removes active-lane data only and leaves ROAD", () => {
     let doc = validDraft();
     const other = addLane(doc, "A");
-    let both = applyPathClick(other, "A", [0, 8]);
+    let both = paintTiles(other, [[0, 8], [1, 8], [2, 8], [3, 8]], "ROAD");
+    both = applyPathClick(both, "A", [0, 8]);
     both = applyPathClick(both, "A", [3, 8]);
     const road = both.terrain[2]![0];
     const erased = erasePathAt(both, "MAIN", 0, 2);
     expect(erased.lanes.find((l) => l.id === "A")!.waypoints).toEqual([
       [0, 8],
+      [1, 8],
+      [2, 8],
       [3, 8],
     ]);
     expect(erased.terrain[2]![0]).toBe(road);
@@ -603,7 +612,8 @@ describe("map builder props and gameplay", () => {
   });
 
   it("path stroke undo/redo and preview-vs-session commit work", () => {
-    const start = createBlankMap({ displayName: "L", id: "path-hist", width: 12, height: 10 });
+    let start = createBlankMap({ displayName: "L", id: "path-hist", width: 12, height: 10 });
+    start = paintTiles(start, [[0, 2], [1, 2], [2, 2]], "ROAD");
     let s = sessionFrom(start);
     const preview = applyAuthorStroke(s.doc, selectPathTool(), [cell(0, 2), cell(1, 2), cell(2, 2)], ctx());
     s = commitStroke(s, preview);
@@ -703,5 +713,368 @@ describe("map builder props and gameplay", () => {
     expect(exp.props.some((p) => p.type === "tree")).toBe(true);
     expect(exp.gates.some((g) => g.id === "WEST")).toBe(true);
     expect(stringifyExport(painted).length).toBeGreaterThan(10);
+  });
+});
+
+describe("map builder path authoring", () => {
+  function roadRow(doc: ReturnType<typeof createBlankMap>, y: number, x0: number, x1: number) {
+    const tiles: Array<[number, number]> = [];
+    for (let x = x0; x <= x1; x++) tiles.push([x, y]);
+    return paintTiles(doc, tiles, "ROAD");
+  }
+
+  function roadCol(doc: ReturnType<typeof createBlankMap>, x: number, y0: number, y1: number) {
+    const tiles: Array<[number, number]> = [];
+    for (let y = y0; y <= y1; y++) tiles.push([x, y]);
+    return paintTiles(doc, tiles, "ROAD");
+  }
+
+  it("PATHS is an independent layer toggle", () => {
+    expect(DEFAULT_LAYERS.paths).toBe(true);
+    expect(DEFAULT_LAYERS.roads).toBe(true);
+    const off = { ...DEFAULT_LAYERS, paths: false };
+    expect(off.paths).toBe(false);
+    expect(off.roads).toBe(true);
+    const roadsOff = { ...DEFAULT_LAYERS, roads: false };
+    expect(roadsOff.paths).toBe(true);
+    expect(roadsOff.roads).toBe(false);
+  });
+
+  it("existing imported path renders through the PATHS layer", () => {
+    const woods = fromProductionMap(MAP_BY_ID["woods"]!);
+    const vis = visiblePathOverlays(woods, DEFAULT_LAYERS, "MAIN");
+    expect(vis).toHaveLength(1);
+    expect(vis[0]!.id).toBe("MAIN");
+    expect(vis[0]!.cells.length).toBeGreaterThan(10);
+    expect(vis[0]!.cells).toEqual(pathCells(woods.lanes[0]!.waypoints));
+    expect(woods.lanes[0]!.waypoints).toEqual(MAP_BY_ID["woods"]!.path);
+  });
+
+  it("active lane path uses active/yellow style", () => {
+    expect(pathStrokeStyle(true).color).toBe("#f0b400");
+    const woods = fromProductionMap(MAP_BY_ID["woods"]!);
+    expect(visiblePathOverlays(woods, DEFAULT_LAYERS, "MAIN")[0]!.style.color).toBe("#f0b400");
+  });
+
+  it("inactive lane path uses white/off-white style", () => {
+    expect(pathStrokeStyle(false).color).toBe("#e8e4d4");
+    let doc = validDraft();
+    doc = addLane(doc, "A");
+    doc = roadRow(doc, 6, 0, 4);
+    doc = applyPathClick(doc, "A", [0, 6]);
+    doc = applyPathClick(doc, "A", [4, 6]);
+    const vis = visiblePathOverlays(doc, DEFAULT_LAYERS, "MAIN");
+    expect(vis.find((v) => v.id === "A")!.style.color).toBe("#e8e4d4");
+    expect(vis.find((v) => v.id === "MAIN")!.style.color).toBe("#f0b400");
+  });
+
+  it("switching active lane switches highlight", () => {
+    let doc = validDraft();
+    doc = addLane(doc, "A");
+    doc = roadRow(doc, 6, 0, 4);
+    doc = applyPathClick(doc, "A", [0, 6]);
+    doc = applyPathClick(doc, "A", [4, 6]);
+    const mainActive = visiblePathOverlays(doc, DEFAULT_LAYERS, "MAIN");
+    const aActive = visiblePathOverlays(doc, DEFAULT_LAYERS, "A");
+    expect(mainActive.find((v) => v.id === "MAIN")!.active).toBe(true);
+    expect(mainActive.find((v) => v.id === "A")!.active).toBe(false);
+    expect(aActive.find((v) => v.id === "A")!.active).toBe(true);
+    expect(aActive.find((v) => v.id === "MAIN")!.active).toBe(false);
+    expect(aActive.find((v) => v.id === "A")!.style.color).toBe("#f0b400");
+    expect(aActive.find((v) => v.id === "MAIN")!.style.color).toBe("#e8e4d4");
+  });
+
+  it("first PATH click creates the first path cell", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-first", width: 12, height: 10 });
+    doc = paintTiles(doc, [[3, 3]], "ROAD");
+    expect(pathStepValid(doc, "MAIN", [3, 3])).toBe(true);
+    doc = applyPathClick(doc, "MAIN", [3, 3]);
+    expect(doc.lanes[0]!.waypoints).toEqual([[3, 3]]);
+    const vis = visiblePathOverlays(doc, DEFAULT_LAYERS, "MAIN");
+    expect(vis[0]!.cells).toEqual([[3, 3]]);
+  });
+
+  it("adjacent horizontal extension works", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-h", width: 12, height: 10 });
+    doc = paintTiles(doc, [[4, 4], [5, 4]], "ROAD");
+    doc = applyPathClick(doc, "MAIN", [4, 4]);
+    doc = applyPathClick(doc, "MAIN", [5, 4]);
+    expect(doc.lanes[0]!.waypoints).toEqual([
+      [4, 4],
+      [5, 4],
+    ]);
+  });
+
+  it("adjacent vertical extension works", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-v", width: 12, height: 10 });
+    doc = paintTiles(doc, [[4, 4], [4, 5]], "ROAD");
+    doc = applyPathClick(doc, "MAIN", [4, 4]);
+    doc = applyPathClick(doc, "MAIN", [4, 5]);
+    expect(doc.lanes[0]!.waypoints).toEqual([
+      [4, 4],
+      [4, 5],
+    ]);
+  });
+
+  it("diagonal extension is rejected", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-diag", width: 12, height: 10 });
+    doc = paintTiles(doc, [[4, 4], [5, 5]], "ROAD");
+    doc = applyPathClick(doc, "MAIN", [4, 4]);
+    expect(pathStepValid(doc, "MAIN", [5, 5])).toBe(false);
+    expect(applyPathClick(doc, "MAIN", [5, 5])).toBe(doc);
+  });
+
+  it("repeated same cell is rejected", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-same", width: 12, height: 10 });
+    doc = paintTiles(doc, [[2, 2]], "ROAD");
+    doc = applyPathClick(doc, "MAIN", [2, 2]);
+    expect(pathStepValid(doc, "MAIN", [2, 2])).toBe(false);
+    expect(applyPathClick(doc, "MAIN", [2, 2])).toBe(doc);
+  });
+
+  it("straight same-row distant click fills intermediate cells", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-row", width: 12, height: 10 });
+    doc = roadRow(doc, 6, 4, 9);
+    doc = applyPathClick(doc, "MAIN", [4, 6]);
+    doc = applyPathClick(doc, "MAIN", [9, 6]);
+    expect(doc.lanes[0]!.waypoints).toEqual([
+      [4, 6],
+      [5, 6],
+      [6, 6],
+      [7, 6],
+      [8, 6],
+      [9, 6],
+    ]);
+  });
+
+  it("straight same-column distant click fills intermediate cells", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-col", width: 12, height: 10 });
+    doc = roadCol(doc, 3, 1, 5);
+    doc = applyPathClick(doc, "MAIN", [3, 1]);
+    doc = applyPathClick(doc, "MAIN", [3, 5]);
+    expect(doc.lanes[0]!.waypoints).toEqual([
+      [3, 1],
+      [3, 2],
+      [3, 3],
+      [3, 4],
+      [3, 5],
+    ]);
+  });
+
+  it("diagonal distant click is rejected", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-far-diag", width: 12, height: 10 });
+    doc = paintTiles(doc, [[4, 6], [9, 2]], "ROAD");
+    doc = applyPathClick(doc, "MAIN", [4, 6]);
+    expect(pathStepValid(doc, "MAIN", [9, 2])).toBe(false);
+    expect(applyPathClick(doc, "MAIN", [9, 2])).toBe(doc);
+    expect(doc.lanes[0]!.waypoints).toEqual([[4, 6]]);
+  });
+
+  it("drag path appends cells in deterministic order", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-drag", width: 12, height: 10 });
+    doc = paintTiles(doc, [[1, 1], [2, 1], [3, 1], [3, 2]], "ROAD");
+    const next = applyAuthorStroke(
+      doc,
+      selectPathTool(),
+      [cell(1, 1), cell(2, 1), cell(3, 1), cell(3, 2)],
+      ctx(),
+    );
+    expect(next.lanes[0]!.waypoints).toEqual([
+      [1, 1],
+      [2, 1],
+      [3, 1],
+      [3, 2],
+    ]);
+  });
+
+  it("stroke does not add duplicate cells", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-dup", width: 12, height: 10 });
+    doc = paintTiles(doc, [[1, 1], [2, 1]], "ROAD");
+    const next = applyAuthorStroke(
+      doc,
+      selectPathTool(),
+      [cell(1, 1), cell(1, 1), cell(2, 1), cell(2, 1)],
+      ctx(),
+    );
+    expect(next.lanes[0]!.waypoints).toEqual([
+      [1, 1],
+      [2, 1],
+    ]);
+  });
+
+  it("PATH modifies the active lane only", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-only-a", width: 12, height: 10 });
+    doc = addLane(doc, "A");
+    doc = paintTiles(doc, [[0, 1], [1, 1]], "ROAD");
+    const mainBefore = doc.lanes.find((l) => l.id === "MAIN")!.waypoints;
+    doc = applyAuthor(doc, selectPathTool(), cell(0, 1), ctx("A"));
+    doc = applyAuthor(doc, selectPathTool(), cell(1, 1), ctx("A"));
+    expect(doc.lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual(mainBefore);
+    expect(doc.lanes.find((l) => l.id === "A")!.waypoints).toEqual([
+      [0, 1],
+      [1, 1],
+    ]);
+  });
+
+  it("another lane remains untouched while PATH paints", () => {
+    let doc = validDraft();
+    const main = doc.lanes.find((l) => l.id === "MAIN")!.waypoints;
+    doc = addLane(doc, "B");
+    doc = roadRow(doc, 8, 0, 3);
+    doc = applyPathClick(doc, "B", [0, 8]);
+    doc = applyPathClick(doc, "B", [3, 8]);
+    expect(doc.lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual(main);
+  });
+
+  it("path over WATER is rejected", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-water", width: 12, height: 10 });
+    doc = paintTiles(doc, [[2, 2]], "ROAD");
+    doc = paintTiles(doc, [[3, 2]], "WATER");
+    doc = applyPathClick(doc, "MAIN", [2, 2]);
+    expect(pathStepValid(doc, "MAIN", [3, 2])).toBe(false);
+    expect(applyPathClick(doc, "MAIN", [3, 2])).toBe(doc);
+  });
+
+  it("path over BLOCKED/MOUNTAIN is rejected", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-mtn", width: 12, height: 10 });
+    doc = paintTiles(doc, [[2, 2]], "ROAD");
+    doc = paintTiles(doc, [[2, 3]], "MOUNTAIN");
+    doc = applyPathClick(doc, "MAIN", [2, 2]);
+    expect(pathStepValid(doc, "MAIN", [2, 3])).toBe(false);
+    expect(applyPathClick(doc, "MAIN", [2, 3])).toBe(doc);
+  });
+
+  it("path over valid ROAD is accepted", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-road", width: 12, height: 10 });
+    doc = paintTiles(doc, [[2, 2], [3, 2]], "ROAD");
+    doc = applyPathClick(doc, "MAIN", [2, 2]);
+    const next = applyPathClick(doc, "MAIN", [3, 2]);
+    expect(next.lanes[0]!.waypoints).toEqual([
+      [2, 2],
+      [3, 2],
+    ]);
+  });
+
+  it("erase modifies the active lane path only", () => {
+    let doc = validDraft();
+    doc = addLane(doc, "A");
+    doc = roadRow(doc, 2, 0, 8);
+    doc = applyPathClick(doc, "A", [0, 2]);
+    doc = applyPathClick(doc, "A", [4, 2]);
+    const aBefore = doc.lanes.find((l) => l.id === "A")!.waypoints;
+    const erased = erasePathAt(doc, "MAIN", 4, 2);
+    expect(erased.lanes.find((l) => l.id === "A")!.waypoints).toEqual(aBefore);
+    expect(erased.lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual([[-1, 2]]);
+  });
+
+  it("underlying ROAD remains after path erase", () => {
+    let doc = validDraft();
+    const erased = erasePathAt(doc, "MAIN", 8, 2);
+    expect(erased.terrain[2]![8]).toBe("ROAD");
+    expect(erased.terrain[2]![0]).toBe("ROAD");
+  });
+
+  it("other lane sharing the same tile remains after erase", () => {
+    let doc = validDraft();
+    doc = addLane(doc, "A");
+    doc = applyPathClick(doc, "A", [0, 2]);
+    doc = applyPathClick(doc, "A", [3, 2]);
+    const aBefore = doc.lanes.find((l) => l.id === "A")!.waypoints;
+    const erased = erasePathAt(doc, "MAIN", 2, 2);
+    expect(erased.lanes.find((l) => l.id === "A")!.waypoints).toEqual(aBefore);
+    expect(pathCells(erased.lanes.find((l) => l.id === "A")!.waypoints).some((c) => c[0] === 2 && c[1] === 2)).toBe(
+      true,
+    );
+  });
+
+  it("undo/redo path stroke works as one history entry", () => {
+    let start = createBlankMap({ displayName: "L", id: "path-stroke-hist", width: 12, height: 10 });
+    start = roadRow(start, 2, 0, 5);
+    let s = sessionFrom(start);
+    const preview = applyAuthorStroke(
+      s.doc,
+      selectPathTool(),
+      [cell(0, 2), cell(1, 2), cell(2, 2), cell(3, 2), cell(4, 2), cell(5, 2)],
+      ctx(),
+    );
+    s = commitStroke(s, preview);
+    expect(s.past.length).toBe(1);
+    expect(s.doc.lanes[0]!.waypoints).toEqual([
+      [0, 2],
+      [1, 2],
+      [2, 2],
+      [3, 2],
+      [4, 2],
+      [5, 2],
+    ]);
+    s = undo(s);
+    expect(s.doc.lanes[0]!.waypoints).toEqual([]);
+    s = redo(s);
+    expect(s.doc.lanes[0]!.waypoints.length).toBe(6);
+  });
+
+  it("exported ordered route matches the authored route exactly", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-export", width: 12, height: 10 });
+    doc = roadRow(doc, 4, 1, 6);
+    doc = applyPathClick(doc, "MAIN", [1, 4]);
+    doc = applyPathClick(doc, "MAIN", [6, 4]);
+    const authored = doc.lanes[0]!.waypoints;
+    expect(toExport(doc).lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual(authored);
+    expect(toProductionMapDef(doc).path).toEqual(authored);
+  });
+
+  it("validation accepts a clean orthogonal route", () => {
+    expect(validateMap(validDraft()).ok).toBe(true);
+  });
+
+  it("validation rejects a disconnected route", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-disc-val", width: 12, height: 10 });
+    doc = { ...doc, lanes: [{ id: "MAIN", waypoints: [[0, 0], [1, 1], [3, 1]] }] };
+    const r = validateMap(doc);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.message.includes("disconnected") || e.code === "DIAGONAL")).toBe(true);
+  });
+
+  it("spawn/path connectivity validation works", () => {
+    let doc = validDraft();
+    doc = applySpawn(doc, "MAIN", [4, 8]);
+    const r = validateMap(doc);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.code === "SPAWN")).toBe(true);
+    expect(doc.lanes[0]!.waypoints.slice(1)).toEqual(validDraft().lanes[0]!.waypoints.slice(1));
+  });
+
+  it("endpoint/path connectivity validation works", () => {
+    let doc = validDraft();
+    doc = applyEndpoint(doc, "MAIN", [4, 8]);
+    const r = validateMap(doc);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.code === "ENDPOINT")).toBe(true);
+    expect(doc.lanes[0]!.waypoints[0]).toEqual([-1, 2]);
+  });
+
+  it("PATHS OFF hides visualization but preserves data", () => {
+    const woods = fromProductionMap(MAP_BY_ID["woods"]!);
+    const hidden = visiblePathOverlays(woods, { ...DEFAULT_LAYERS, paths: false }, "MAIN");
+    expect(hidden).toEqual([]);
+    expect(woods.lanes[0]!.waypoints).toEqual(MAP_BY_ID["woods"]!.path);
+    expect(visiblePathOverlays(woods, { ...DEFAULT_LAYERS, roads: false }, "MAIN")[0]!.cells.length).toBeGreaterThan(10);
+  });
+
+  it("moving spawn or endpoint preserves the existing path", () => {
+    let doc = validDraft();
+    const mid = doc.lanes[0]!.waypoints.slice(1, -1);
+    doc = applySpawn(doc, "MAIN", [0, 5]);
+    expect(doc.lanes[0]!.waypoints.slice(1)).toEqual(validDraft().lanes[0]!.waypoints.slice(1));
+    doc = applyEndpoint(doc, "MAIN", [9, 5]);
+    expect(doc.lanes[0]!.waypoints.slice(1, -1)).toEqual(mid);
+    expect(doc.lanes[0]!.waypoints[0]).toEqual([0, 5]);
+    expect(doc.lanes[0]!.waypoints.at(-1)).toEqual([9, 5]);
+  });
+
+  it("CLEAR PATH drops the route and keeps spawn", () => {
+    const cleared = clearLanePath(validDraft(), "MAIN");
+    expect(cleared.lanes[0]!.waypoints).toEqual([[-1, 2]]);
+    expect(cleared.terrain[2]![4]).toBe("ROAD");
   });
 });
