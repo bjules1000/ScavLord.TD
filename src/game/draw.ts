@@ -35,6 +35,8 @@ const rnd = (seed: number) => {
 };
 
 export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: { lanePorts?: boolean }) {
+  // Base terrain only. Suspended bridges are drawn later via drawElevatedSurfaces
+  // so LOW entities can pass underneath the deck.
   const pal = map.def.palette;
   const r = rnd(7);
   const cell = TILE / 8;
@@ -161,9 +163,13 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
   for (const c of map.COVER) drawCover(ctx, c.tx * TILE, c.ty * TILE, c.type);
   for (const p of map.PROPS) drawProp(ctx, p.tx * TILE, p.ty * TILE, p.type);
   for (const c of map.CHECKPOINT) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
-  for (const b of map.def.bridges ?? []) drawRaidBridge(ctx, b.tx, b.ty, b.orientation);
 
   if (shouldDrawLanePortMarkers("raid", opts?.lanePorts)) drawLanePortMarkers(ctx, map);
+}
+
+/** HIGH overlay pass. Drawn after LOW entities so the deck occludes the road underneath. */
+export function drawElevatedSurfaces(ctx: CanvasRenderingContext2D, map: GameMap) {
+  for (const b of map.def.bridges ?? []) drawRaidBridge(ctx, b.tx, b.ty, b.orientation);
 }
 
 /** Dev/debug extract pads. Not used in normal raids. */

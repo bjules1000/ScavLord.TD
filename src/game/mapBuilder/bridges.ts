@@ -14,7 +14,8 @@
  * Bridge does not block LOS above or below in this milestone. Invisible walls
  * are a separate edge primitive.
  *
- * Raid presentation never draws this overlay yet. Map Builder BRIDGES layer only.
+ * Raid drawing uses the HIGH overlay pass after LOW entities. Movement/LOS
+ * still do not consume the overlay.
  */
 import { inBounds, terrainAt } from "./document";
 import type { BridgeOrientation, BridgeTile, EditorMapDoc, SurfaceLevel, TerrainKind } from "./schema";

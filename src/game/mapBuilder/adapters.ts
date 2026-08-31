@@ -154,7 +154,7 @@ export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
   if (doc.bridges.length) {
     notes.push({
       code: "BRIDGES",
-      message: "Suspended bridge overlays exist; production still uses base terrain/path only.",
+      message: "Suspended bridge overlays exist; raid movement/LOS do not consume them yet.",
     });
   }
   return notes;
