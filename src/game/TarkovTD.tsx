@@ -9,7 +9,9 @@ import {
   buildMap,
   coverProtectionFrom,
   isBuildable,
+  isMountain,
   isRoad,
+  isWater,
   laneRoute,
   pathPoint,
   type CoverPiece,
@@ -19,10 +21,42 @@ import { assignSpawnLane, lanePathProgress } from "./lanes";
 import {
   canPlaceOperator,
   enemyLaneSurface,
-  lowObstacleBlocksOperator,
+  applyHighGroundCombat,
+  clampAccuracy,
+  hasSuspendedBridge,
   operatorPlacementSurface,
   partitionBySurface,
 } from "./surfaces";
+import { absorbWithArmor } from "./armor";
+import {
+  BARRICADE_BUILD_COST,
+  BARRICADE_HP,
+  BARRICADE_COST,
+  EDGE_LABEL,
+  MAX_BARRICADE_LEVEL,
+  WIRE_BUILD_COST,
+  WIRE_COST,
+  WIRE_HP,
+  WIRE_SLOW_DURATION,
+  WIRE_SPEED_MULT,
+  WIRE_TICK_DAMAGE,
+  applyWireCrossing,
+  barricadeCoverCell,
+  barricadeOnEdge,
+  canPlaceBarricade,
+  canPlaceWire,
+  canRepairDefense,
+  clearWireContact,
+  edgeFromCursor,
+  interceptingBarricade,
+  liveWireAt,
+  payDefense,
+  repairCost,
+  repairDefense,
+  upgradeCost,
+  type BarricadeEdge,
+  type DefensePiece,
+} from "./defenses";
 import {
   ARMORS,
   ATTACHMENTS,
@@ -102,8 +136,12 @@ import {
 } from "./shotgun";
 import {
   SLOT_LABEL,
+  armorItemId,
+  detachArmor,
   detachAttachment,
+  dropEquippedGear,
   equippedMagSize,
+  equipArmor,
   equipAttachment,
   expandPackedWeapon,
   slotOf,
@@ -136,14 +174,8 @@ const RARITY_ORDER: Record<string, number> = { epic: 0, rare: 1, common: 2 };
 
 /** in-raid scrapping pays far better than selling in the hideout, but into raid funds */
 const RAID_SCRAP_MULT = 1.8;
-const BARRICADE_COST = 150;
-const WIRE_COST = 120;
-const BARRICADE_HP = 260;
-const WIRE_HP = 100;
 const RECRUIT_BASE = 160;
 const CRATE_TIME = 10; // seconds an operator must hold the crate
-const MAX_BARRICADE_LEVEL = 3;
-const upgradeCost = (level: number) => 140 * level;
 
 
 type Phase = "hideout" | "prep" | "combat" | "loot" | "dead" | "extracted";
@@ -160,15 +192,7 @@ interface Drop {
   items: Item[];
 }
 type PlaceMode = null | "operator" | "barricade" | "wire";
-interface Obstacle {
-  id: number;
-  tx: number;
-  ty: number;
-  kind: "barricade" | "wire";
-  hp: number;
-  maxHp: number;
-  level: number;
-}
+type Obstacle = DefensePiece;
 interface CrateState {
   tx: number;
   ty: number;
@@ -194,6 +218,7 @@ interface GameState {
   phase: Phase;
   hoverTx: number;
   hoverTy: number;
+  hoverEdge: BarricadeEdge | null;
   selectedId: number | null;
   selectedObstacle: number | null;
   place: PlaceMode;
@@ -227,6 +252,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     phase,
     hoverTx: -1,
     hoverTy: -1,
+    hoverEdge: null,
     selectedId: null,
     selectedObstacle: null,
     place: null,
@@ -267,32 +293,38 @@ export function debuffMods(ids: string[]): DebuffMods {
 export const pmcMaxHp = (level: number, mods: DebuffMods) =>
   Math.round((TOWER_BASE_HP * 1.4 + (level - 1) * 16) * mods.pmcHp);
 
-function buildableFor(map: GameMap, s: GameState, tx: number, ty: number) {
-  return isBuildable(map, tx, ty) && !s.obstacles.some((o) => o.tx === tx && o.ty === ty);
+function barricadePlaceableAt(map: GameMap, s: GameState, tx: number, ty: number, edge: BarricadeEdge) {
+  return canPlaceBarricade(
+    tx,
+    ty,
+    edge,
+    (x, y) => isRoad(map, x, y) || isWater(map, x, y) || isMountain(map, x, y),
+    (x, y) => isBuildable(map, x, y),
+    s.obstacles,
+    (x, y) => hasSuspendedBridge(map, x, y),
+  );
 }
 
-/** Operator hire/reposition. HIGH bridge decks are legal even over ROAD/WATER. */
+/** Operator hire/reposition. HIGH bridge decks are legal even over ROAD/WATER. Edge barricades do not occupy the cell. */
 function operatorPlaceableFor(map: GameMap, s: GameState, tx: number, ty: number) {
   if (!canPlaceOperator(map, tx, ty)) return false;
   if (s.towers.some((t) => t.tx === tx && t.ty === ty)) return false;
-  const surface = operatorPlacementSurface(map, tx, ty);
-  if (!surface) return false;
-  return !lowObstacleBlocksOperator(
-    surface,
-    s.obstacles.some((o) => o.tx === tx && o.ty === ty),
-  );
+  return true;
 }
 
 function coverList(map: GameMap, s: GameState): CoverPiece[] {
   return [
     ...map.COVER,
     ...s.obstacles
-      .filter((o) => o.kind === "barricade")
-      .map((o) => ({ tx: o.tx, ty: o.ty, type: "full" as const })),
+      .filter((o) => o.kind === "barricade" && o.hp > 0 && o.edge)
+      .map((o) => {
+        const cell = barricadeCoverCell(o.tx, o.ty, o.edge!);
+        return { tx: cell.tx, ty: cell.ty, type: "full" as const };
+      }),
   ];
 }
 
-export function towerStats(t: Tower, mods?: DebuffMods) {
+export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap) {
   const w = WEAPONS[t.weapon] ?? WEAPONS["toz"]!;
   const folded = applyAttachmentMods(w, t.attachments);
   let damage = folded.damage;
@@ -310,12 +342,19 @@ export function towerStats(t: Tower, mods?: DebuffMods) {
       cooldown /= mods.pmcRof;
     }
   }
+  if (map) {
+    const boosted = applyHighGroundCombat(range, accuracy, map, t.tx, t.ty);
+    range = boosted.range;
+    accuracy = boosted.accuracy;
+  } else {
+    accuracy = clampAccuracy(accuracy);
+  }
   return {
     weapon: w,
     damage,
     range,
     cooldown,
-    accuracy: Math.max(0.15, Math.min(0.99, accuracy)),
+    accuracy,
     pen,
     splash,
     slots: folded.slots,
@@ -330,8 +369,6 @@ const weaponItemId = (weaponId: string) =>
   ITEMS.find((i) => i.kind === "weapon" && i.ref === weaponId)?.id ?? null;
 const attachItemId = (attId: string) =>
   ITEMS.find((i) => i.kind === "attachment" && i.ref === attId)?.id ?? null;
-const armorItemId = (armorId: string) =>
-  ITEMS.find((i) => i.kind === "armor" && i.ref === armorId)?.id ?? null;
 
 /** Where the player's operator sets up when the raid starts: safest tile nearest the road head. */
 function pmcSpawnTile(map: GameMap, s: GameState) {
@@ -784,15 +821,12 @@ export default function TarkovTD() {
         tower.ammo = result.ammo;
         pushLog(result.message);
       } else if (item.kind === "armor" && item.ref) {
-        if (!tower.pmc) return pushLog("Only your own operator can strap on body armor.");
-        const def = ARMORS[item.ref];
-        if (!def) return;
-        const old = tower.armor ? armorItemId(tower.armor) : null;
-        tower.armor = item.ref;
-        tower.armorHp = def.durability;
-        s.backpack = s.backpack.filter((i) => i.uid !== uid);
-        if (old) addToBackpack([makeItem(old, newUid())!]);
-        pushLog(`${item.name} strapped on — ${Math.round(def.reduction * 100)}% incoming absorbed.`);
+        const result = equipArmor(item, tower.armor ?? null, s.backpack);
+        if (!result.ok) return pushLog(result.reason);
+        tower.armor = result.armor ?? item.ref;
+        tower.armorHp = result.armorHp ?? ARMORS[item.ref]!.durability;
+        s.backpack = result.backpack;
+        pushLog(result.message);
       } else if (item.kind === "meds") {
         if (tower.hp >= tower.maxHp) return pushLog("Operator is at full health.");
         tower.hp = Math.min(tower.maxHp, tower.hp + (item.heal ?? 50));
@@ -825,6 +859,22 @@ export default function TarkovTD() {
       tower.attachments = result.attachments;
       s.backpack = result.backpack;
       tower.ammo = result.ammo;
+      pushLog(result.message);
+      rerender();
+    },
+    [backpackSlots, pushLog, rerender],
+  );
+
+  const stripArmor = useCallback(
+    (towerId: number) => {
+      const s = gs.current;
+      const tower = s.towers.find((t) => t.id === towerId);
+      if (!tower) return;
+      const result = detachArmor(tower.armor, s.backpack, backpackSlots(), newUid());
+      if (!result.ok) return pushLog(result.reason);
+      tower.armor = result.armor ?? null;
+      tower.armorHp = result.armorHp ?? 0;
+      s.backpack = result.backpack;
       pushLog(result.message);
       rerender();
     },
@@ -902,13 +952,7 @@ export default function TarkovTD() {
 
 
     const dropGear = (t: Tower, s: GameState) => {
-      const items: Item[] = [];
-      const wid = weaponItemId(t.weapon);
-      if (wid) items.push(makeItem(wid, newUid())!);
-      for (const a of t.attachments) {
-        const aid = attachItemId(a);
-        if (aid) items.push(makeItem(aid, newUid())!);
-      }
+      const items = dropEquippedGear(t.weapon, t.attachments, newUid, t.armor ?? null);
       if (items.length) s.drops.push({ id: s.nextId++, tx: t.tx, ty: t.ty, items });
     };
 
@@ -940,6 +984,7 @@ export default function TarkovTD() {
           x: laneRoute(mapRef.current, ev.lane).PIX[0]![0],
           y: laneRoute(mapRef.current, ev.lane).PIX[0]![1],
           surface: enemyLaneSurface(),
+          contactingWireId: null,
           slow: 0,
           hitFlash: 0,
           step: Math.random() * 4,
@@ -958,7 +1003,7 @@ export default function TarkovTD() {
         e.slow = Math.max(0, e.slow - dt);
         if (isSettledOut(e)) continue;
         const route = laneRoute(mapRef.current, e.lane);
-        const sp = def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? 0.45 : 1);
+        const sp = def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? WIRE_SPEED_MULT : 1);
         let move = sp * dt;
         while (move > 0 && e.seg < route.SEG_LEN.length) {
           const len = route.SEG_LEN[e.seg]!;
@@ -994,14 +1039,14 @@ export default function TarkovTD() {
 
         const etx = Math.floor(e.x / TILE);
         const ety = Math.floor(e.y / TILE);
-        const wire = s.obstacles.find(
-          (o) => o.kind === "wire" && o.hp > 0 && o.tx === etx && o.ty === ety,
-        );
+        const wire = liveWireAt(s.obstacles, etx, ety);
         if (wire) {
-          e.slow = 0.8;
-          wire.hp -= dt * 9;
-          applyWireDamage(e, dt * 3);
+          const cross = applyWireCrossing(wire, e);
+          if (cross.slowed) e.slow = WIRE_SLOW_DURATION;
+          if (wire.hp > 0) applyWireDamage(e, dt * WIRE_TICK_DAMAGE);
           if (Math.random() < dt * 3) spawnParticles(e.x, e.y, "#9a9484", 1, 25);
+        } else {
+          clearWireContact(e, null);
         }
         if (isSettledOut(e)) continue;
 
@@ -1083,7 +1128,7 @@ export default function TarkovTD() {
 
       // towers fire
       for (const t of s.towers) {
-        const st = towerStats(t, mods);
+        const st = towerStats(t, mods, mapRef.current);
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
         t.hurt = Math.max(0, t.hurt - dt);
@@ -1211,25 +1256,17 @@ export default function TarkovTD() {
               const cover = coverList(mapRef.current, s);
               const prot = coverProtectionFrom(cover, tw.tx, tw.ty, b.sx ?? b.x, b.sy ?? b.y);
               if (prot > 0) {
-                const shield = s.obstacles.find(
-                  (o) =>
-                    o.kind === "barricade" &&
-                    Math.abs(o.tx - tw.tx) <= 1 &&
-                    Math.abs(o.ty - tw.ty) <= 1,
-                );
+                const shield = interceptingBarricade(s.obstacles, tw.tx, tw.ty, b.sx ?? b.x, b.sy ?? b.y, TILE);
                 if (shield) shield.hp -= b.damage * prot;
               }
               const missed = Math.random() < prot * 0.55;
               if (!missed) {
                 let dmg = b.damage * (1 - prot);
-                const armorDef = tw.armor ? ARMORS[tw.armor] : undefined;
-                if (armorDef && (tw.armorHp ?? 0) > 0) {
-                  const absorbed = dmg * armorDef.reduction;
-                  tw.armorHp = Math.max(0, (tw.armorHp ?? 0) - absorbed);
-                  dmg -= absorbed;
-                  if (tw.armorHp === 0)
-                    s.floats.push({ x: b.tx, y: b.ty - 18, life: 1.1, text: "ARMOR BROKEN", color: "#ff9d3c" });
-                }
+                const soaked = absorbWithArmor(dmg, tw.armor, tw.armorHp ?? 0);
+                tw.armorHp = soaked.armorHp;
+                dmg = soaked.damage;
+                if (soaked.broke)
+                  s.floats.push({ x: b.tx, y: b.ty - 18, life: 1.1, text: "ARMOR BROKEN", color: "#ff9d3c" });
                 tw.hp -= dmg;
                 tw.hurt = 0.12;
                 spawnParticles(b.tx, b.ty, "#ff6b4a", 4, 45);
@@ -1371,7 +1408,7 @@ export default function TarkovTD() {
 
       for (const c of s.crates) drawCrate(ctx, c.tx, c.ty, c.progress, c.opened);
       for (const o of s.obstacles)
-        drawObstacle(ctx, o.tx, o.ty, o.kind, o.hp / o.maxHp, o.level);
+        drawObstacle(ctx, o.tx, o.ty, o.kind, o.hp / o.maxHp, o.level, o.edge ?? "N");
 
       for (const d of s.drops) drawDropBag(ctx, d.tx, d.ty, performance.now());
 
@@ -1416,13 +1453,17 @@ export default function TarkovTD() {
         }
       }
 
-      if ((s.place === "barricade" || s.place === "wire") && s.hoverTx >= 0) {
+      if (s.place === "barricade" && s.hoverTx >= 0 && s.hoverEdge) {
+        const ok = barricadePlaceableAt(mapRef.current, s, s.hoverTx, s.hoverTy, s.hoverEdge);
+        drawObstacle(ctx, s.hoverTx, s.hoverTy, "barricade", 1, 1, s.hoverEdge, {
+          ghost: true,
+          invalid: !ok,
+        });
+      } else if ((s.place === "barricade" || s.place === "wire") && s.hoverTx >= 0) {
         const ok =
           s.place === "wire"
-            ? isRoad(mapRef.current, s.hoverTx, s.hoverTy) &&
-              !s.obstacles.some((o) => o.tx === s.hoverTx && o.ty === s.hoverTy)
-            : buildableFor(mapRef.current, s, s.hoverTx, s.hoverTy) &&
-              !s.towers.some((t) => t.tx === s.hoverTx && t.ty === s.hoverTy);
+            ? canPlaceWire(s.hoverTx, s.hoverTy, (x, y) => isRoad(mapRef.current, x, y), s.obstacles)
+            : false;
         ctx.fillStyle = ok ? "rgba(240,180,0,0.22)" : "rgba(255,70,50,0.25)";
         ctx.fillRect(s.hoverTx * TILE, s.hoverTy * TILE, TILE, TILE);
         ctx.strokeStyle = ok ? "#f0b400" : "#ff5a3c";
@@ -1432,7 +1473,7 @@ export default function TarkovTD() {
 
       const sel = s.towers.find((t) => t.id === s.selectedId);
       if (sel) {
-        const st = towerStats(sel);
+        const st = towerStats(sel, undefined, mapRef.current);
         ctx.beginPath();
         ctx.arc(sel.tx * TILE + TILE / 2, sel.ty * TILE + TILE / 2, st.range, 0, Math.PI * 2);
         ctx.strokeStyle = sel.targetMode === "MANUAL" ? "rgba(232,140,48,0.75)" : "rgba(110,220,255,0.7)";
@@ -1540,22 +1581,37 @@ export default function TarkovTD() {
       return;
     }
 
-    if (s.place === "barricade" || s.place === "wire") {
-      const cost = s.place === "barricade" ? BARRICADE_COST : WIRE_COST;
-      const taken = s.obstacles.some((o) => o.tx === tx && o.ty === ty);
-      const ok =
-        s.place === "wire"
-          ? isRoad(mapRef.current, tx, ty) && !taken
-          : buildableFor(mapRef.current, s, tx, ty) && !s.towers.some((t) => t.tx === tx && t.ty === ty);
-      if (!ok)
-        return pushLog(
-          s.place === "wire" ? "Barbed wire goes on the road." : "Barricades go on free ground.",
-        );
-      if (s.roubles < cost) return pushLog("Not enough roubles.");
-      s.roubles -= cost;
-      const hp = s.place === "barricade" ? BARRICADE_HP : WIRE_HP;
-      s.obstacles.push({ id: s.nextId++, tx, ty, kind: s.place, hp, maxHp: hp, level: 1 });
-      pushLog(s.place === "barricade" ? "Barricade set up." : "Barbed wire strung across the road.");
+    if (s.place === "barricade") {
+      const world = toWorld(ev);
+      const edge = edgeFromCursor(world.x, world.y, tx, ty, TILE);
+      if (!barricadePlaceableAt(mapRef.current, s, tx, ty, edge))
+        return pushLog("Barricades go on a free ground or high-ground edge — not road, water, mountain, or bridges.");
+      const paid = payDefense(s.roubles, BARRICADE_BUILD_COST);
+      if (!paid.ok) return pushLog(paid.reason);
+      s.roubles = paid.roubles;
+      s.obstacles.push({
+        id: s.nextId++,
+        tx,
+        ty,
+        kind: "barricade",
+        hp: BARRICADE_HP,
+        maxHp: BARRICADE_HP,
+        level: 1,
+        edge,
+      });
+      pushLog(`Barricade set on the ${EDGE_LABEL[edge]} edge.`);
+      rerender();
+      return;
+    }
+
+    if (s.place === "wire") {
+      if (!canPlaceWire(tx, ty, (x, y) => isRoad(mapRef.current, x, y), s.obstacles))
+        return pushLog("Barbed wire goes on the road.");
+      const paid = payDefense(s.roubles, WIRE_BUILD_COST);
+      if (!paid.ok) return pushLog(paid.reason);
+      s.roubles = paid.roubles;
+      s.obstacles.push({ id: s.nextId++, tx, ty, kind: "wire", hp: WIRE_HP, maxHp: WIRE_HP, level: 1 });
+      pushLog("Barbed wire strung across the road.");
       rerender();
       return;
     }
@@ -1581,9 +1637,18 @@ export default function TarkovTD() {
       }
     }
 
-    const barricade = s.obstacles.find((o) => o.tx === tx && o.ty === ty && o.kind === "barricade");
-    if (barricade && !s.place) {
-      s.selectedObstacle = barricade.id === s.selectedObstacle ? null : barricade.id;
+    const worldClick = toWorld(ev);
+    const clickEdge = edgeFromCursor(worldClick.x, worldClick.y, tx, ty, TILE);
+    const edgeBag = barricadeOnEdge(s.obstacles, tx, ty, clickEdge);
+    if (edgeBag && !s.place) {
+      s.selectedObstacle = edgeBag.id === s.selectedObstacle ? null : edgeBag.id;
+      s.selectedId = null;
+      rerender();
+      return;
+    }
+    const wirePick = s.obstacles.find((o) => o.kind === "wire" && o.tx === tx && o.ty === ty);
+    if (wirePick && !s.place) {
+      s.selectedObstacle = wirePick.id === s.selectedObstacle ? null : wirePick.id;
       s.selectedId = null;
       rerender();
       return;
@@ -1698,6 +1763,14 @@ export default function TarkovTD() {
     rerender();
   };
 
+  const repairSelectedDefense = () => {
+    if (!selBarricade) return;
+    const paid = repairDefense(selBarricade, s.phase, s.roubles, selBarricade.kind);
+    if (!paid.ok) return pushLog(paid.reason);
+    s.roubles = paid.roubles;
+    pushLog(`${selBarricade.kind === "wire" ? "Wire" : "Barricade"} repaired.`);
+    rerender();
+  };
 
   const takeChoice = (item: Item) => {
     const cap = backpackSlots();
@@ -1760,6 +1833,10 @@ export default function TarkovTD() {
         const aid = attachItemId(a);
         if (aid) carried.push(makeItem(aid, newUid())!);
       }
+      if (t.armor) {
+        const aid = armorItemId(t.armor);
+        if (aid) carried.push(makeItem(aid, newUid())!);
+      }
     }
     s.recovered = carried;
     s.backpack = s.backpack.flatMap((item) => expandPackedWeapon(item, newUid));
@@ -1779,13 +1856,7 @@ export default function TarkovTD() {
   const doDismiss = () => {
     if (!selected) return;
     const st = towerStats(selected);
-    const wid = weaponItemId(selected.weapon);
-    const items: Item[] = [];
-    if (wid) items.push(makeItem(wid, newUid())!);
-    for (const a of selected.attachments) {
-      const aid = attachItemId(a);
-      if (aid) items.push(makeItem(aid, newUid())!);
-    }
+    const items = dropEquippedGear(selected.weapon, selected.attachments, newUid, selected.armor ?? null);
     addToBackpack(items);
     s.towers = s.towers.filter((t) => t.id !== selected.id);
     s.selectedId = null;
@@ -1925,11 +1996,15 @@ export default function TarkovTD() {
                   height={H}
                   onMouseMove={(ev) => {
                     const [tx, ty] = toTile(ev);
+                    const world = toWorld(ev);
                     gs.current.hoverTx = tx;
                     gs.current.hoverTy = ty;
+                    gs.current.hoverEdge =
+                      gs.current.place === "barricade" ? edgeFromCursor(world.x, world.y, tx, ty, TILE) : null;
                   }}
                   onMouseLeave={() => {
                     gs.current.hoverTx = -1;
+                    gs.current.hoverEdge = null;
                   }}
                   onClick={onClick}
                   onDragOver={(ev) => ev.preventDefault()}
@@ -2555,7 +2630,7 @@ export default function TarkovTD() {
               {selected ? (
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
                   {(() => {
-                    const st = towerStats(selected);
+                    const st = towerStats(selected, undefined, mapRef.current);
                     const status = combatStatus(
                       selected.reloadLeft,
                       selected.engageTargetId != null,
@@ -2615,15 +2690,22 @@ export default function TarkovTD() {
                         : `${(st.reloadMs / 1000).toFixed(1)}s MAG`
                     }
                   />
-                  {selected.pmc && (
-                    <StatRow
-                      label="ARMOR"
-                      value={
-                        selected.armor
-                          ? `${ARMORS[selected.armor]?.name} ${Math.round(selected.armorHp ?? 0)}`
-                          : "NONE"
-                      }
-                    />
+                  {selected.armor ? (
+                    <>
+                      <StatRow
+                        label="ARMOR"
+                        value={`${ARMORS[selected.armor]?.name ?? "ARMOR"} · ${Math.round((ARMORS[selected.armor]?.reduction ?? 0) * 100)}%`}
+                      />
+                      <StatRow
+                        label="DURABILITY"
+                        value={`${Math.round(selected.armorHp ?? 0)}/${ARMORS[selected.armor]?.durability ?? 0}`}
+                      />
+                      <button type="button" className="pixel-btn w-full" onClick={() => stripArmor(selected.id)}>
+                        DETACH ARMOR
+                      </button>
+                    </>
+                  ) : (
+                    <StatRow label="ARMOR" value="NONE" />
                   )}
                   <StatRow
                     label="COVER"
@@ -2711,19 +2793,36 @@ export default function TarkovTD() {
                 </div>
               ) : selBarricade ? (
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
-                  <div className="text-foreground">BARRICADE · LVL {selBarricade.level}</div>
+                  <div className="text-foreground">
+                    {selBarricade.kind === "wire"
+                      ? "BARBED WIRE"
+                      : `BARRICADE · ${selBarricade.edge ? EDGE_LABEL[selBarricade.edge] : "EDGE"} · LVL ${selBarricade.level}`}
+                  </div>
                   <StatRow
                     label="HP"
                     value={`${Math.max(0, Math.round(selBarricade.hp))}/${Math.round(selBarricade.maxHp)}`}
                   />
+                  {selBarricade.kind === "barricade" && (
+                    <button
+                      onClick={upgradeBarricade}
+                      disabled={selBarricade.level >= MAX_BARRICADE_LEVEL}
+                      className="pixel-btn w-full disabled:opacity-40"
+                    >
+                      {selBarricade.level >= MAX_BARRICADE_LEVEL
+                        ? "FULLY REINFORCED"
+                        : `REINFORCE ${upgradeCost(selBarricade.level)}₽`}
+                    </button>
+                  )}
                   <button
-                    onClick={upgradeBarricade}
-                    disabled={selBarricade.level >= MAX_BARRICADE_LEVEL}
+                    onClick={repairSelectedDefense}
+                    disabled={!canRepairDefense(s.phase, selBarricade.hp, selBarricade.maxHp)}
                     className="pixel-btn w-full disabled:opacity-40"
                   >
-                    {selBarricade.level >= MAX_BARRICADE_LEVEL
-                      ? "FULLY REINFORCED"
-                      : `REINFORCE ${upgradeCost(selBarricade.level)}₽`}
+                    {s.phase !== "prep"
+                      ? "REPAIR BETWEEN WAVES"
+                      : selBarricade.hp >= selBarricade.maxHp
+                        ? "INTACT"
+                        : `REPAIR ${repairCost(selBarricade.kind)}₽`}
                   </button>
                 </div>
               ) : (

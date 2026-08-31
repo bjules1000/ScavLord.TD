@@ -1,4 +1,5 @@
 import {
+  ARMORS,
   ATTACHMENTS,
   ITEMS,
   WEAPONS,
@@ -38,6 +39,10 @@ export function weaponItemId(weaponId: string): string | null {
 
 export function attachItemId(attachId: string): string | null {
   return ITEMS.find((i) => i.kind === "attachment" && i.ref === attachId)?.id ?? null;
+}
+
+export function armorItemId(armorId: string): string | null {
+  return ITEMS.find((i) => i.kind === "armor" && i.ref === armorId)?.id ?? null;
 }
 
 export function packWeaponItem(weaponId: string, attachments: readonly string[], uid: number): Item | null {
@@ -80,6 +85,8 @@ export type RaidEquipOk = {
   ammo: number;
   weapon: string;
   message: string;
+  armor?: string | null;
+  armorHp?: number;
 };
 export type RaidEquipErr = { ok: false; reason: string };
 export type RaidEquipResult = RaidEquipOk | RaidEquipErr;
@@ -186,19 +193,93 @@ export function swapRaidWeapon(
   };
 }
 
-export function dropEquippedGear(weaponId: string, attachments: readonly string[], uidStart: number): Item[] {
+export function dropEquippedGear(
+  weaponId: string,
+  attachments: readonly string[],
+  nextUid: () => number,
+  armorId?: string | null,
+): Item[] {
   const items: Item[] = [];
-  let uid = uidStart;
   const wid = weaponItemId(weaponId);
   if (wid) {
-    const gun = makeItem(wid, uid++);
+    const gun = makeItem(wid, nextUid());
     if (gun) items.push(gun);
   }
   for (const a of attachments) {
     const aid = attachItemId(a);
     if (!aid) continue;
-    const item = makeItem(aid, uid++);
+    const item = makeItem(aid, nextUid());
     if (item) items.push(item);
   }
+  if (armorId) {
+    const aid = armorItemId(armorId);
+    if (aid) {
+      const item = makeItem(aid, nextUid());
+      if (item) items.push(item);
+    }
+  }
   return items;
+}
+
+export function equipArmor(
+  item: Item,
+  currentArmor: string | null | undefined,
+  backpack: readonly Item[],
+): RaidEquipResult {
+  if (item.kind !== "armor" || !item.ref) return { ok: false, reason: "Not armor." };
+  const def = ARMORS[item.ref];
+  if (!def) return { ok: false, reason: "Incompatible armor." };
+  const idx = backpack.findIndex((i) => i.uid === item.uid);
+  if (idx < 0) return { ok: false, reason: "Item is not in the raid backpack." };
+  if (currentArmor) {
+    const oldAid = armorItemId(currentArmor);
+    const oldItem = oldAid ? makeItem(oldAid, item.uid) : null;
+    if (!oldItem) return { ok: false, reason: "Unknown armor." };
+    const nextPack = backpack.map((it, i) => (i === idx ? { ...oldItem, uid: item.uid } : it));
+    return {
+      ok: true,
+      attachments: [],
+      backpack: nextPack,
+      ammo: 0,
+      weapon: "",
+      armor: item.ref,
+      armorHp: def.durability,
+      message: `${item.name} swapped in.`,
+    };
+  }
+  const nextPack = backpack.filter((it) => it.uid !== item.uid);
+  return {
+    ok: true,
+    attachments: [],
+    backpack: nextPack,
+    ammo: 0,
+    weapon: "",
+    armor: item.ref,
+    armorHp: def.durability,
+    message: `${item.name} strapped on — ${Math.round(def.reduction * 100)}% incoming absorbed.`,
+  };
+}
+
+export function detachArmor(
+  currentArmor: string | null | undefined,
+  backpack: readonly Item[],
+  capacity: number,
+  uid: number,
+): RaidEquipResult {
+  if (!currentArmor) return { ok: false, reason: "Nothing to detach." };
+  if (backpack.length >= capacity) return { ok: false, reason: "BACKPACK FULL" };
+  const aid = armorItemId(currentArmor);
+  if (!aid) return { ok: false, reason: "Unknown armor." };
+  const item = makeItem(aid, uid);
+  if (!item) return { ok: false, reason: "Unknown armor." };
+  return {
+    ok: true,
+    attachments: [],
+    backpack: [...backpack, item],
+    ammo: 0,
+    weapon: "",
+    armor: null,
+    armorHp: 0,
+    message: `${item.name} detached.`,
+  };
 }

@@ -7,6 +7,7 @@ import { ENEMIES } from "./data";
 import { drawGear, drawSprite, floorImage } from "./sprites";
 import type { GearFrameName } from "./sprites";
 import type { WeaponClass } from "./gear";
+import { obstacleDrawAlpha, type BarricadeEdge } from "./defenses";
 
 /** Map a weapon class to the pixel gun art in the gear atlas. */
 function gunFrame(cls: WeaponClass, firing: boolean): GearFrameName {
@@ -205,7 +206,7 @@ function drawRaidBridge(ctx: CanvasRenderingContext2D, tx: number, ty: number, o
   ctx.fillRect(x + 2, y + TILE - 4, TILE - 4, 2);
 }
 
-/** Player-built barricades and barbed wire. Barricades render heavier as they upgrade. */
+/** Player-built barricades sit on a tile edge. Wire stays road-centered. */
 export function drawObstacle(
   ctx: CanvasRenderingContext2D,
   tx: number,
@@ -213,37 +214,37 @@ export function drawObstacle(
   kind: "barricade" | "wire",
   hpFrac: number,
   level = 1,
+  edge: BarricadeEdge = "N",
+  look?: { ghost?: boolean; invalid?: boolean },
 ) {
   const x = tx * TILE;
   const y = ty * TILE;
   ctx.save();
-  ctx.globalAlpha = 0.45 + hpFrac * 0.55;
+  ctx.globalAlpha = obstacleDrawAlpha(hpFrac, look?.ghost === true);
+  const invalid = look?.invalid === true;
   if (kind === "barricade") {
-    const name = level >= 3 ? "tower3" : level >= 2 ? "tower2" : "tower1";
-    const ok = drawSprite(ctx, name, x - 4, y - TILE * 0.45, TILE + 8, TILE * 1.45);
-    if (!ok) {
-    px(ctx, "#2b2419", x + 4, y + TILE - 16, TILE - 8, 12);
-    px(ctx, "#6b5a3c", x + 4, y + 10, TILE - 8, 10);
-    px(ctx, "#8a7449", x + 4, y + 10, TILE - 8, 3);
-    px(ctx, "#4a3d28", x + 8, y + 20, 6, TILE - 24);
-    px(ctx, "#4a3d28", x + TILE - 14, y + 20, 6, TILE - 24);
-    px(ctx, "#c9c2a6", x + 6, y + 12, 4, 2);
-    if (level >= 2) {
-      // sandbag stack reinforcement
-      px(ctx, "#5d543c", x + 5, y + 4, TILE - 10, 7);
-      px(ctx, "#776d4e", x + 6, y + 5, TILE - 12, 2);
-      px(ctx, "#413a29", x + 5, y + 10, TILE - 10, 1);
+    const thick = 10 + Math.min(6, (level - 1) * 3);
+    const shadow = invalid ? "#3a1512" : "#2b2419";
+    const body = invalid ? "#8a3a30" : "#6b5a3c";
+    const highlight = invalid ? "#c94b3a" : "#8a7449";
+    const stitch = invalid ? "#7a3028" : "#5d543c";
+    if (edge === "N" || edge === "S") {
+      const by = edge === "N" ? y + 2 : y + TILE - thick - 2;
+      px(ctx, shadow, x + 3, by + 1, TILE - 6, thick);
+      px(ctx, body, x + 3, by, TILE - 6, thick - 2);
+      px(ctx, highlight, x + 4, by, TILE - 8, 3);
+      px(ctx, stitch, x + 5, by + 4, TILE - 10, 3);
+      if (level >= 2) px(ctx, "#776d4e", x + 6, by + 5, TILE - 12, 2);
+      if (level >= 3) px(ctx, "#4b5058", x + 6, by + 2, TILE - 12, 4);
+    } else {
+      const bx = edge === "W" ? x + 2 : x + TILE - thick - 2;
+      px(ctx, shadow, bx + 1, y + 3, thick, TILE - 6);
+      px(ctx, body, bx, y + 3, thick - 2, TILE - 6);
+      px(ctx, highlight, bx, y + 4, 3, TILE - 8);
+      px(ctx, stitch, bx + 4, y + 5, 3, TILE - 10);
+      if (level >= 2) px(ctx, "#776d4e", bx + 5, y + 6, 2, TILE - 12);
+      if (level >= 3) px(ctx, "#4b5058", bx + 2, y + 6, 4, TILE - 12);
     }
-    if (level >= 3) {
-      // welded steel plate + rivets
-      px(ctx, "#4b5058", x + 6, y + 14, TILE - 12, 8);
-      px(ctx, "#6c727b", x + 6, y + 14, TILE - 12, 2);
-      for (let i = 0; i < 4; i++) px(ctx, "#9aa1ab", x + 9 + i * 7, y + 19, 2, 2);
-    }
-    }
-
-    // level pips
-    for (let i = 0; i < level; i++) px(ctx, "#f0b400", x + 5 + i * 5, y + TILE - 5, 3, 3);
   } else {
     px(ctx, "#3a3a33", x + 4, y + TILE / 2 - 2, TILE - 8, 3);
     for (let i = 0; i < 5; i++) {

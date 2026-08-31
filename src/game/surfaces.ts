@@ -133,3 +133,40 @@ export function partitionBySurface<T extends { surface?: SurfaceLevel }>(items: 
   }
   return { low, high };
 }
+
+/** HIGH_GROUND terrain only. A suspended bridge is HIGH for occupancy/render, not this bonus. */
+export const HIGH_GROUND_RANGE_MULT = 1.12;
+export const HIGH_GROUND_ACCURACY_BONUS = 0.05;
+export const ACCURACY_MIN = 0.15;
+export const ACCURACY_MAX = 0.99;
+
+export function grantsHighGroundCombatBonus(map: GameMap, tx: number, ty: number): boolean {
+  return elevatedSurfaceAt(map, tx, ty) === "HIGH_GROUND";
+}
+
+export function terrainCombatMods(map: GameMap, tx: number, ty: number): {
+  rangeMult: number;
+  accuracyBonus: number;
+} {
+  if (!grantsHighGroundCombatBonus(map, tx, ty)) return { rangeMult: 1, accuracyBonus: 0 };
+  return { rangeMult: HIGH_GROUND_RANGE_MULT, accuracyBonus: HIGH_GROUND_ACCURACY_BONUS };
+}
+
+export function clampAccuracy(accuracy: number): number {
+  return Math.max(ACCURACY_MIN, Math.min(ACCURACY_MAX, accuracy));
+}
+
+export function applyHighGroundCombat(
+  range: number,
+  accuracy: number,
+  map: GameMap,
+  tx: number,
+  ty: number,
+): { range: number; accuracy: number } {
+  const terrain = terrainCombatMods(map, tx, ty);
+  return {
+    range: range * terrain.rangeMult,
+    accuracy: clampAccuracy(accuracy + terrain.accuracyBonus),
+  };
+}
+
