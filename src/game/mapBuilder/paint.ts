@@ -1,8 +1,10 @@
 import { inBounds, isWalkableTerrain, nextObjectId, occupantAt, terrainAt } from "./document";
 import { edgeKey } from "./edges";
 import { pathAppendCells } from "./pathing";
+import { emptyLane, isLegalPort } from "./ports";
 import type { CheckpointPart, CoverType, PropType } from "../map";
 import type {
+  BoundaryPort,
   EditorCheckpoint,
   EditorCover,
   EditorCrate,
@@ -178,7 +180,7 @@ export function setLaneWaypoints(
 export function addLane(doc: EditorMapDoc, id: string): EditorMapDoc {
   if (doc.status === "locked") return doc;
   if (doc.lanes.some((l) => l.id === id)) return doc;
-  return { ...doc, lanes: [...doc.lanes, { id, waypoints: [] }] };
+  return { ...doc, lanes: [...doc.lanes, emptyLane(id)] };
 }
 
 export function removeLane(doc: EditorMapDoc, id: string): EditorMapDoc {
@@ -218,30 +220,36 @@ export function applyPathClick(doc: EditorMapDoc, laneId: string, cell: [number,
   return setLaneWaypoints(doc, laneId, [...lane.waypoints, ...added]);
 }
 
-/** Keeps the spawn (first waypoint) and drops the rest of the route. */
+/** Keeps spawn/endpoint ports and drops the in-map route. */
 export function clearLanePath(doc: EditorMapDoc, laneId: string): EditorMapDoc {
   if (doc.status === "locked") return doc;
   const lane = doc.lanes.find((l) => l.id === laneId);
   if (!lane || lane.waypoints.length === 0) return doc;
-  if (lane.waypoints.length === 1) return setLaneWaypoints(doc, laneId, []);
-  return setLaneWaypoints(doc, laneId, [lane.waypoints[0]!]);
+  return setLaneWaypoints(doc, laneId, []);
 }
 
-export function applySpawn(doc: EditorMapDoc, laneId: string, cell: [number, number]): EditorMapDoc {
+export function applySpawn(doc: EditorMapDoc, laneId: string, port: BoundaryPort): EditorMapDoc {
   if (doc.status === "locked") return doc;
+  if (!isLegalPort(port, doc.width, doc.height)) return doc;
   const lane = doc.lanes.find((l) => l.id === laneId);
   if (!lane) return doc;
-  if (!lane.waypoints.length) return setLaneWaypoints(doc, laneId, [cell]);
-  return setLaneWaypoints(doc, laneId, [cell, ...lane.waypoints.slice(1)]);
+  return {
+    ...doc,
+    lanes: doc.lanes.map((l) => (l.id === laneId ? { ...l, spawn: { tx: port.tx, ty: port.ty, edge: port.edge } } : l)),
+  };
 }
 
-export function applyEndpoint(doc: EditorMapDoc, laneId: string, cell: [number, number]): EditorMapDoc {
+export function applyEndpoint(doc: EditorMapDoc, laneId: string, port: BoundaryPort): EditorMapDoc {
   if (doc.status === "locked") return doc;
+  if (!isLegalPort(port, doc.width, doc.height)) return doc;
   const lane = doc.lanes.find((l) => l.id === laneId);
   if (!lane) return doc;
-  if (!lane.waypoints.length) return setLaneWaypoints(doc, laneId, [cell]);
-  if (lane.waypoints.length === 1) return setLaneWaypoints(doc, laneId, [lane.waypoints[0]!, cell]);
-  return setLaneWaypoints(doc, laneId, [...lane.waypoints.slice(0, -1), cell]);
+  return {
+    ...doc,
+    lanes: doc.lanes.map((l) =>
+      l.id === laneId ? { ...l, endpoint: { tx: port.tx, ty: port.ty, edge: port.edge } } : l,
+    ),
+  };
 }
 
 export function renameLane(doc: EditorMapDoc, from: string, to: string): EditorMapDoc {

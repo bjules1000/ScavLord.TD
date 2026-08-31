@@ -1,8 +1,9 @@
-import { MAP_BUILDER_SCHEMA_VERSION, isTerrainKind, type EditorMapDoc, type TerrainKind } from "./schema";
+import { MAP_BUILDER_SCHEMA_VERSION, isTerrainKind, type EditorMapDoc, type TerrainKind, type TileEdge } from "./schema";
 import { validateNewMapInput } from "./document";
 import { GATE_IDS, SPECIAL_ZONE_TYPES, TILE_EDGES } from "./schema";
 import type { PropType } from "../map";
 import { PROP_TYPES } from "./schema";
+import { emptyLane, exportPort, importPort, peelLaneFromWaypoints } from "./ports";
 
 export interface ExportedMap {
   schemaVersion: 1;
@@ -23,7 +24,12 @@ export interface ExportedMap {
   sector: string;
   geo: { x: number; y: number };
   terrain: TerrainKind[][];
-  lanes: Array<{ id: string; waypoints: Array<[number, number]> }>;
+  lanes: Array<{
+    id: string;
+    waypoints: Array<[number, number]>;
+    spawn?: { tile: [number, number]; edge: TileEdge } | null;
+    endpoint?: { tile: [number, number]; edge: TileEdge } | null;
+  }>;
   props: Array<{ type: PropType; tx: number; ty: number }>;
   cover: Array<{ type: EditorMapDoc["cover"][number]["type"]; tx: number; ty: number }>;
   crates: Array<{ tx: number; ty: number }>;
@@ -63,6 +69,8 @@ export function toExport(doc: EditorMapDoc): ExportedMap {
       .map((l) => ({
         id: l.id,
         waypoints: l.waypoints.map(([x, y]) => [x, y] as [number, number]),
+        spawn: exportPort(l.spawn),
+        endpoint: exportPort(l.endpoint),
       })),
     props: [...doc.props]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.type.localeCompare(b.type))
@@ -144,10 +152,22 @@ function slugLoose(id: string): string {
 }
 
 export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapDoc {
-  const lanes = payload.lanes.map((l) => ({
-    id: String(l.id),
-    waypoints: (l.waypoints ?? []).map((w) => [Number(w[0]), Number(w[1])] as [number, number]),
-  }));
+  const width = payload.width;
+  const height = payload.height;
+  const lanes = payload.lanes.map((l) => {
+    const waypoints = (l.waypoints ?? []).map((w) => [Number(w[0]), Number(w[1])] as [number, number]);
+    const spawn = importPort(l.spawn, width, height);
+    const endpoint = importPort(l.endpoint, width, height);
+    if (spawn || endpoint) {
+      return {
+        id: String(l.id),
+        waypoints: waypoints.filter(([x, y]) => x >= 0 && y >= 0 && x < width && y < height),
+        spawn,
+        endpoint,
+      };
+    }
+    return peelLaneFromWaypoints(String(l.id), waypoints, width, height);
+  });
   return {
     schemaVersion: MAP_BUILDER_SCHEMA_VERSION,
     id: draftId,
@@ -167,7 +187,7 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
     sector: payload.sector,
     geo: payload.geo,
     terrain: payload.terrain.map((row) => row.slice() as TerrainKind[]),
-    lanes: lanes.length ? lanes : [{ id: "MAIN", waypoints: [] }],
+    lanes: lanes.length ? lanes : [emptyLane("MAIN")],
     props: payload.props.map((p, i) => ({ id: `prop-${i + 1}`, type: p.type, tx: p.tx, ty: p.ty })),
     cover: payload.cover.map((c, i) => ({ id: `cover-${i + 1}`, type: c.type, tx: c.tx, ty: c.ty })),
     crates: payload.crates.map((c, i) => ({ id: `crate-${i + 1}`, tx: c.tx, ty: c.ty })),

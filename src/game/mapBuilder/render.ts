@@ -3,7 +3,8 @@ import { drawCheckpoint, drawCover, drawCrate, drawProp } from "../draw";
 import type { CheckpointPart, CoverType, PropType } from "../map";
 import { inBounds, terrainAt } from "./document";
 import { laneLabelShort, pathCells } from "./pathing";
-import type { EditorMapDoc, TerrainKind, TileEdge } from "./schema";
+import { EDITOR_GUTTER, canvasPixelSize, hitLanePort, overlayPathCells, portOutsideCell } from "./ports";
+import type { BoundaryPort, EditorMapDoc, TerrainKind, TileEdge } from "./schema";
 
 export interface LayerFlags {
   terrain: boolean;
@@ -48,7 +49,7 @@ export function visiblePathOverlays(
   if (!layers.paths) return [];
   return doc.lanes.map((lane) => ({
     id: lane.id,
-    cells: pathCells(lane.waypoints),
+    cells: pathCells(overlayPathCells(lane)),
     style: pathStrokeStyle(lane.id === activeLaneId),
     active: lane.id === activeLaneId,
   }));
@@ -72,6 +73,7 @@ export function tileAt(px: number, py: number, doc: EditorMapDoc): { tx: number;
 /**
  * Map a client pointer onto a tile using the canvas display box.
  * Works at any zoom because it uses displayed size vs logical TILE grid.
+ * `gutter` is presentation-only space around the playable grid (default 0 for tests).
  */
 export function clientToTile(
   clientX: number,
@@ -80,14 +82,23 @@ export function clientToTile(
   width: number,
   height: number,
   tile = TILE,
+  gutter = 0,
 ): { tx: number; ty: number; localX: number; localY: number } | null {
   if (rect.width <= 0 || rect.height <= 0) return null;
-  const px = ((clientX - rect.left) / rect.width) * (width * tile);
-  const py = ((clientY - rect.top) / rect.height) * (height * tile);
-  const tx = Math.floor(px / tile);
-  const ty = Math.floor(py / tile);
-  if (tx < 0 || ty < 0 || tx >= width || ty >= height) return null;
-  return { tx, ty, localX: px - tx * tile, localY: py - ty * tile };
+  const canvasW = width * tile + gutter * 2;
+  const canvasH = height * tile + gutter * 2;
+  const px = ((clientX - rect.left) / rect.width) * canvasW;
+  const py = ((clientY - rect.top) / rect.height) * canvasH;
+  const playableX = px - gutter;
+  const playableY = py - gutter;
+  const tx = Math.floor(playableX / tile);
+  const ty = Math.floor(playableY / tile);
+  if (gutter <= 0) {
+    if (tx < 0 || ty < 0 || tx >= width || ty >= height) return null;
+  } else if (tx < -1 || ty < -1 || tx > width || ty > height) {
+    return null;
+  }
+  return { tx, ty, localX: playableX - tx * tile, localY: playableY - ty * tile };
 }
 
 export function drawEditorMap(
@@ -105,20 +116,27 @@ export function drawEditorMap(
     ghostCover?: CoverType | null;
     ghostCheckpoint?: CheckpointPart["type"] | null;
     pathPreview?: Array<[number, number]>;
+    portPreview?: BoundaryPort | null;
   } | null,
   activeLaneId: string,
 ) {
+  const gutter = EDITOR_GUTTER;
+  const { w: canvasW, h: canvasH } = canvasPixelSize(doc.width, doc.height);
   const W = doc.width * TILE;
   const H = doc.height * TILE;
-  const pal = doc.palette;
-  ctx.clearRect(0, 0, W, H);
+  ctx.clearRect(0, 0, canvasW, canvasH);
+  ctx.fillStyle = "#0a0c08";
+  ctx.fillRect(0, 0, canvasW, canvasH);
+
+  ctx.save();
+  ctx.translate(gutter, gutter);
 
   if (layers.terrain) {
     for (let y = 0; y < doc.height; y++) {
       for (let x = 0; x < doc.width; x++) {
         const kind = terrainAt(doc, x, y) ?? "GROUND";
         const n = ((x * 17 + y * 31) % 10) / 10;
-        const ground = n > 0.7 ? pal.grassA : n > 0.35 ? pal.grassB : pal.grassC;
+        const ground = n > 0.7 ? doc.palette.grassA : n > 0.35 ? doc.palette.grassB : doc.palette.grassC;
         ctx.fillStyle = kind === "GROUND" || kind === "ROAD" ? ground : TERRAIN_FILL[kind] || ground;
         if (kind === "HIGH_GROUND") ctx.fillStyle = TERRAIN_FILL.HIGH_GROUND;
         ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
@@ -139,6 +157,7 @@ export function drawEditorMap(
   }
 
   if (layers.roads) {
+    const pal = doc.palette;
     for (let y = 0; y < doc.height; y++) {
       for (let x = 0; x < doc.width; x++) {
         if (terrainAt(doc, x, y) !== "ROAD") continue;
@@ -200,21 +219,22 @@ export function drawEditorMap(
 
   if (layers.paths || layers.markers) {
     for (const lane of doc.lanes) {
-      const cells = pathCells(lane.waypoints);
-      const firstOnMap = cells.find(([x, y]) => x >= 0 && y >= 0 && x < doc.width && y < doc.height);
-      const spawn = lane.waypoints[0];
-      const labelAt = firstOnMap ?? spawn;
-      if (!labelAt) continue;
-      drawLaneLabel(ctx, labelAt[0], labelAt[1], laneLabelShort(lane.id), lane.id === activeLaneId);
+      const firstOnMap = lane.waypoints.find(([x, y]) => x >= 0 && y >= 0 && x < doc.width && y < doc.height);
+      if (!firstOnMap) continue;
+      drawLaneLabel(ctx, firstOnMap[0], firstOnMap[1], laneLabelShort(lane.id), lane.id === activeLaneId);
     }
   }
 
   if (layers.markers) {
     for (const lane of doc.lanes) {
-      const spawn = lane.waypoints[0];
-      const end = lane.waypoints[lane.waypoints.length - 1];
-      if (spawn) drawMarker(ctx, spawn[0], spawn[1], "#4dd36a", "S");
-      if (end && lane.waypoints.length > 1) drawMarker(ctx, end[0], end[1], "#f0b400", "E");
+      if (lane.spawn) {
+        const [sx, sy] = portOutsideCell(lane.spawn);
+        drawMarker(ctx, sx, sy, "#4dd36a", "S");
+      }
+      if (lane.endpoint) {
+        const [ex, ey] = portOutsideCell(lane.endpoint);
+        drawMarker(ctx, ex, ey, "#f0b400", "E");
+      }
     }
     for (const g of doc.gates) {
       drawEdgeMark(ctx, g.tx, g.ty, g.edge, "#ff7a2f");
@@ -246,32 +266,46 @@ export function drawEditorMap(
     if (hover.ghostItem === "path" && hover.pathPreview && hover.pathPreview.length) {
       drawPathPolyline(ctx, hover.pathPreview, hover.invalid ? "#c23b2c" : PATH_ACTIVE_COLOR, 3, 0.55);
     }
-    ctx.save();
-    ctx.globalAlpha = hover.invalid ? 0.45 : 0.4;
-    ctx.fillStyle = hover.invalid ? "#c23b2c" : hover.ghost ?? "#f0b400";
-    ctx.fillRect(hover.tx * TILE, hover.ty * TILE, TILE, TILE);
-    if (!hover.invalid && hover.ghostItem === "prop" && hover.ghostProp) {
-      ctx.globalAlpha = 0.55;
-      drawProp(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostProp);
+    const portPreview = hover.portPreview;
+    if (portPreview && (hover.ghostItem === "spawn" || hover.ghostItem === "end")) {
+      ctx.save();
+      ctx.globalAlpha = hover.invalid ? 0.35 : 0.55;
+      const [mx, my] = portOutsideCell(portPreview);
+      drawMarker(ctx, mx, my, hover.ghostItem === "spawn" ? "#4dd36a" : "#f0b400", hover.ghostItem === "spawn" ? "S" : "E");
+      ctx.restore();
+      ctx.strokeStyle = hover.invalid ? "#c23b2c" : "#f0b400";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(hover.tx * TILE + 1, hover.ty * TILE + 1, TILE - 2, TILE - 2);
+    } else {
+      ctx.save();
+      ctx.globalAlpha = hover.invalid ? 0.45 : 0.4;
+      ctx.fillStyle = hover.invalid ? "#c23b2c" : hover.ghost ?? "#f0b400";
+      ctx.fillRect(hover.tx * TILE, hover.ty * TILE, TILE, TILE);
+      if (!hover.invalid && hover.ghostItem === "prop" && hover.ghostProp) {
+        ctx.globalAlpha = 0.55;
+        drawProp(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostProp);
+      }
+      if (!hover.invalid && hover.ghostItem === "cover" && hover.ghostCover) {
+        ctx.globalAlpha = 0.55;
+        drawCover(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostCover);
+      }
+      if (!hover.invalid && hover.ghostItem === "crate") {
+        ctx.globalAlpha = 0.55;
+        drawCrate(ctx, hover.tx, hover.ty, 0, false);
+      }
+      if (!hover.invalid && hover.ghostItem === "checkpoint" && hover.ghostCheckpoint) {
+        ctx.globalAlpha = 0.55;
+        drawCheckpoint(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostCheckpoint);
+      }
+      if (hover.edge) drawEdgeMark(ctx, hover.tx, hover.ty, hover.edge, hover.invalid ? "#c23b2c" : "#f0b400");
+      ctx.restore();
+      ctx.strokeStyle = hover.invalid ? "#c23b2c" : hover.ghostItem === "erase" ? "#c23b2c" : "#f0b400";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(hover.tx * TILE + 1, hover.ty * TILE + 1, TILE - 2, TILE - 2);
     }
-    if (!hover.invalid && hover.ghostItem === "cover" && hover.ghostCover) {
-      ctx.globalAlpha = 0.55;
-      drawCover(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostCover);
-    }
-    if (!hover.invalid && hover.ghostItem === "crate") {
-      ctx.globalAlpha = 0.55;
-      drawCrate(ctx, hover.tx, hover.ty, 0, false);
-    }
-    if (!hover.invalid && hover.ghostItem === "checkpoint" && hover.ghostCheckpoint) {
-      ctx.globalAlpha = 0.55;
-      drawCheckpoint(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostCheckpoint);
-    }
-    if (hover.edge) drawEdgeMark(ctx, hover.tx, hover.ty, hover.edge, hover.invalid ? "#c23b2c" : "#f0b400");
-    ctx.restore();
-    ctx.strokeStyle = hover.invalid ? "#c23b2c" : hover.ghostItem === "erase" ? "#c23b2c" : "#f0b400";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(hover.tx * TILE + 1, hover.ty * TILE + 1, TILE - 2, TILE - 2);
   }
+
+  ctx.restore();
 }
 
 function drawPathPolyline(
@@ -359,6 +393,16 @@ function drawEdgeMark(ctx: CanvasRenderingContext2D, tx: number, ty: number, edg
 }
 
 export function hitObject(doc: EditorMapDoc, tx: number, ty: number): { kind: string; id: string } | null {
+  const port = hitLanePort(doc, tx, ty);
+  if (port) return { kind: port.kind, id: `${port.kind}:${port.laneId}` };
+  for (const lane of doc.lanes) {
+    if (lane.spawn && lane.spawn.tx === tx && lane.spawn.ty === ty) {
+      return { kind: "spawn", id: `spawn:${lane.id}` };
+    }
+    if (lane.endpoint && lane.endpoint.tx === tx && lane.endpoint.ty === ty) {
+      return { kind: "endpoint", id: `endpoint:${lane.id}` };
+    }
+  }
   const prop = doc.props.find((p) => p.tx === tx && p.ty === ty);
   if (prop) return { kind: "prop", id: prop.id };
   const cover = doc.cover.find((p) => p.tx === tx && p.ty === ty);

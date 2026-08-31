@@ -21,6 +21,7 @@ import { mapLaneDefs } from "../lanes";
 import { MAP_BY_ID, MAP_DEFS, type CoverType, type MapDef } from "../map";
 import { createBlankMap, emptyTerrain } from "./document";
 import { onMapCells, pathCells } from "./pathing";
+import { peelLaneFromWaypoints, productionPathFromLane } from "./ports";
 import { MAP_BUILDER_SCHEMA_VERSION, type EditorMapDoc, type TerrainKind } from "./schema";
 
 export function productionMaps(): MapDef[] {
@@ -46,10 +47,7 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     waveMods: def.waveMods ? { ...def.waveMods } : null,
     sector: def.sector,
     geo: { ...def.geo },
-    lanes: mapLaneDefs(def).map((l) => ({
-      id: l.id,
-      waypoints: l.path.map(([x, y]) => [x, y] as [number, number]),
-    })),
+    lanes: mapLaneDefs(def).map((l) => peelLaneFromWaypoints(l.id, l.path, COLS, ROWS)),
   };
   const terrain = emptyTerrain(COLS, ROWS);
   for (const lane of mapLaneDefs(def)) {
@@ -139,7 +137,7 @@ export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
 /** Deterministic MapDef subset that main can store. Extra export fields stay in the JSON. */
 export function toProductionMapDef(doc: EditorMapDoc): MapDef {
   const lane = doc.lanes.find((l) => l.id === "MAIN") ?? doc.lanes[0];
-  const path = lane ? lane.waypoints.map(([x, y]) => [x, y] as [number, number]) : [];
+  const path = lane ? productionPathFromLane(lane) : [];
   const def: MapDef = {
     id: doc.sourceMapId ?? doc.id.replace(/^(draft|import)-/, ""),
     name: doc.displayName,
@@ -169,7 +167,7 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
   if (doc.lanes.length > 1) {
     def.lanes = doc.lanes.map((l) => ({
       id: l.id,
-      path: l.waypoints.map(([x, y]) => [x, y] as [number, number]),
+      path: productionPathFromLane(l),
     }));
   }
   const water = waterTiles(doc);

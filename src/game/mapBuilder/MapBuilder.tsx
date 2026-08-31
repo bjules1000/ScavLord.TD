@@ -12,6 +12,7 @@ import { addLane, canPlaceOccupant, clearLanePath, removeLane, removeObject } fr
 import { nextLaneId, pathCells } from "./pathing";
 import { emptyStore, readStore, upsertDoc, writeStore } from "./persist";
 import { DEFAULT_LAYERS, clientToTile, drawEditorMap, hitObject, type LayerFlags } from "./render";
+import { EDITOR_GUTTER, canvasPixelSize, EDGE_LABEL, hitLanePort, portEdgeFromCursor } from "./ports";
 import {
   isAuthoringTool,
   isGameplayEraseMode,
@@ -105,8 +106,9 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    canvas.width = doc.width * TILE;
-    canvas.height = doc.height * TILE;
+    const size = canvasPixelSize(doc.width, doc.height);
+    canvas.width = size.w;
+    canvas.height = size.h;
     const edge =
       hover && (tool.id === "edge" || tool.id === "gate")
         ? edgeFromCursor(hover.localX, hover.localY)
@@ -136,9 +138,15 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       invalid = !pathStepValid(doc, laneId, [hover.tx, hover.ty]);
       pathPreview = pathPreviewCells(doc, laneId, [hover.tx, hover.ty]);
     }
-    if (hover && (tool.id === "spawn" || tool.id === "end" || tool.id === "zone" || tool.id === "gate")) {
+    let portPreview: { tx: number; ty: number; edge: "N" | "E" | "S" | "W" } | null = null;
+    if (hover && (tool.id === "spawn" || tool.id === "end")) {
       ghost = "#f0b400";
-      ghostItem = tool.id === "spawn" ? "spawn" : tool.id === "end" ? "end" : null;
+      ghostItem = tool.id === "spawn" ? "spawn" : "end";
+      const portEdge = portEdgeFromCursor(hover.tx, hover.ty, hover.localX, hover.localY, doc.width, doc.height);
+      invalid = !portEdge;
+      portPreview = portEdge ? { tx: hover.tx, ty: hover.ty, edge: portEdge } : null;
+    } else if (hover && (tool.id === "zone" || tool.id === "gate")) {
+      ghost = "#f0b400";
     }
     drawEditorMap(
       ctx,
@@ -156,6 +164,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             ghostCheckpoint: tool.id === "checkpoint" ? tool.type : null,
             ...(pathPreview ? { pathPreview } : {}),
             ...(edge ? { edge } : {}),
+            ...(portPreview ? { portPreview } : {}),
           }
         : null,
       laneId,
@@ -170,7 +179,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const pointerCell = (ev: PointerEvent<HTMLCanvasElement>): AuthorCell | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    return clientToTile(ev.clientX, ev.clientY, canvas.getBoundingClientRect(), doc.width, doc.height);
+    return clientToTile(ev.clientX, ev.clientY, canvas.getBoundingClientRect(), doc.width, doc.height, TILE, EDITOR_GUTTER);
   };
 
   const authorCtx = () => ({ laneId, zoneId, tileSize: TILE });
@@ -553,7 +562,11 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             <canvas
               ref={canvasRef}
               className="block cursor-crosshair"
-              style={{ width: doc.width * TILE * zoom, height: doc.height * TILE * zoom, imageRendering: "pixelated" }}
+              style={{
+                width: canvasPixelSize(doc.width, doc.height).w * zoom,
+                height: canvasPixelSize(doc.width, doc.height).h * zoom,
+                imageRendering: "pixelated",
+              }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
@@ -603,7 +616,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 CLEAR PATH
               </button>
               <div className="text-muted-foreground">
-                PATH draws only the selected lane, tile-center to tile-center, orthogonal only. First click starts the route; later clicks append adjacent tiles or fill a straight row/column. ERASE GAMEPLAY truncates the active-lane path from the clicked cell. CLEAR PATH keeps spawn and drops the rest of that lane's route.
+                PATH is in-map ROAD only. SPAWN and ENDPOINT attach to a border tile and sit just outside the map. Hover a boundary tile (corners pick the nearer edge) and click to place or move the port. ERASE GAMEPLAY on an outside marker removes that spawn or endpoint only. CLEAR PATH keeps ports and drops the route.
               </div>
             </Section>
             <Section title="LAYERS">
@@ -679,6 +692,39 @@ function Inspector({
   const tile = selected?.kind === "tile" && selected.id.includes(",")
     ? { tx: Number(selected.id.split(",")[0]), ty: Number(selected.id.split(",")[1]) }
     : hover;
+  const portHit =
+    selected?.kind === "spawn" || selected?.kind === "endpoint"
+      ? { kind: selected.kind as "spawn" | "endpoint", laneId: selected.id.split(":")[1] ?? "" }
+      : tile
+        ? hitLanePort(doc, tile.tx, tile.ty) ??
+          doc.lanes
+            .map((l) => {
+              if (l.spawn && l.spawn.tx === tile.tx && l.spawn.ty === tile.ty) {
+                return { kind: "spawn" as const, laneId: l.id };
+              }
+              if (l.endpoint && l.endpoint.tx === tile.tx && l.endpoint.ty === tile.ty) {
+                return { kind: "endpoint" as const, laneId: l.id };
+              }
+              return null;
+            })
+            .find(Boolean) ?? null
+        : null;
+  if (portHit) {
+    const lane = doc.lanes.find((l) => l.id === portHit.laneId);
+    const port = portHit.kind === "spawn" ? lane?.spawn : lane?.endpoint;
+    if (port) {
+      return (
+        <div>
+          {portHit.kind === "spawn" ? "SPAWN" : "ENDPOINT"}
+          <div>LANE {portHit.laneId}</div>
+          <div>BOUNDARY {EDGE_LABEL[port.edge]}</div>
+          <div>
+            TILE X{port.tx} Y{port.ty}
+          </div>
+        </div>
+      );
+    }
+  }
   const prop = doc.props.find((p) => p.id === selected?.id);
   const cover = doc.cover.find((p) => p.id === selected?.id);
   const crate = doc.crates.find((p) => p.id === selected?.id);

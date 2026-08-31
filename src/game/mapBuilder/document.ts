@@ -8,6 +8,7 @@ import {
   type EditorMapDoc,
   type TerrainKind,
 } from "./schema";
+import { emptyLane } from "./ports";
 
 export const DEFAULT_EDITOR_PALETTE: Palette = {
   grassA: "#2e3a24",
@@ -93,7 +94,7 @@ export function createBlankMap(input: {
     sector: "SECTOR DEV",
     geo: { x: 50, y: 50 },
     terrain: emptyTerrain(width, height),
-    lanes: [{ id: "MAIN", waypoints: [] }],
+    lanes: [emptyLane("MAIN")],
     props: [],
     cover: [],
     crates: [],

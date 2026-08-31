@@ -1,5 +1,6 @@
 import { inBounds, occupantAt, terrainAt } from "./document";
-import { isOrthogonalPair, pathCells, waypointInPlayableBounds } from "./pathing";
+import { isOrthogonalPair, pathCells } from "./pathing";
+import { isLegalPort, portConnectedToPath } from "./ports";
 import {
   GATE_IDS,
   isTerrainKind,
@@ -60,19 +61,52 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
     }
     laneIds.add(lane.id);
 
-    if (lane.waypoints.length < 2) {
-      errors.push(issue("error", "LANE", `Lane ${lane.id} needs a spawn and an endpoint.`));
-      continue;
+    if (!lane.spawn || !lane.endpoint) {
+      errors.push(issue("error", "LANE", `Lane ${lane.id} needs a spawn boundary port and an endpoint boundary port.`));
     }
-    const spawn = lane.waypoints[0]!;
-    const end = lane.waypoints[lane.waypoints.length - 1]!;
-    if (same(spawn, end) && lane.waypoints.length === 2) {
-      errors.push(issue("error", "LANE", `Lane ${lane.id} spawn and endpoint are the same cell.`));
+    if (lane.spawn && !isLegalPort(lane.spawn, doc.width, doc.height)) {
+      errors.push(
+        issue(
+          "error",
+          "SPAWN",
+          `Lane ${lane.id} spawn is not a legal boundary port (${lane.spawn.tx}, ${lane.spawn.ty} ${lane.spawn.edge}).`,
+        ),
+      );
+    }
+    if (lane.endpoint && !isLegalPort(lane.endpoint, doc.width, doc.height)) {
+      errors.push(
+        issue(
+          "error",
+          "ENDPOINT",
+          `Lane ${lane.id} endpoint is not a legal boundary port (${lane.endpoint.tx}, ${lane.endpoint.ty} ${lane.endpoint.edge}).`,
+        ),
+      );
+    }
+    if (lane.waypoints.length < 1) {
+      errors.push(issue("error", "LANE", `Lane ${lane.id} needs a path.`));
     }
     for (const [x, y] of lane.waypoints) {
-      if (!waypointInPlayableBounds(x, y, doc.width, doc.height)) {
-        errors.push(issue("error", "BOUNDS", `Lane ${lane.id} waypoint (${x}, ${y}) is out of bounds.`));
+      if (!inBounds(doc, x, y)) {
+        errors.push(issue("error", "BOUNDS", `Lane ${lane.id} path cell (${x}, ${y}) is outside the playable map.`));
       }
+    }
+    if (lane.spawn && lane.waypoints.length && !portConnectedToPath(lane.spawn, lane.waypoints, "start")) {
+      errors.push(
+        issue(
+          "error",
+          "SPAWN",
+          `Lane ${lane.id} spawn is not connected to the path at (${lane.spawn.tx}, ${lane.spawn.ty}).`,
+        ),
+      );
+    }
+    if (lane.endpoint && lane.waypoints.length && !portConnectedToPath(lane.endpoint, lane.waypoints, "end")) {
+      errors.push(
+        issue(
+          "error",
+          "ENDPOINT",
+          `Lane ${lane.id} endpoint is not connected to the path at (${lane.endpoint.tx}, ${lane.endpoint.ty}).`,
+        ),
+      );
     }
     for (let i = 0; i < lane.waypoints.length - 1; i++) {
       const a = lane.waypoints[i]!;
@@ -89,24 +123,6 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
             `Lane ${lane.id} has a diagonal-only step (${a[0]}, ${a[1]}) → (${b[0]}, ${b[1]}).`,
           ),
         );
-        if (i === 0) {
-          errors.push(
-            issue(
-              "error",
-              "SPAWN",
-              `Lane ${lane.id} spawn is not connected to the path (${a[0]}, ${a[1]}) → (${b[0]}, ${b[1]}).`,
-            ),
-          );
-        }
-        if (i === lane.waypoints.length - 2) {
-          errors.push(
-            issue(
-              "error",
-              "ENDPOINT",
-              `Lane ${lane.id} endpoint is not connected to the path (${a[0]}, ${a[1]}) → (${b[0]}, ${b[1]}).`,
-            ),
-          );
-        }
       }
     }
     const cells = pathCells(lane.waypoints);

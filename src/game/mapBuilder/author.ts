@@ -18,6 +18,7 @@ import {
   placeProp,
   setLaneWaypoints,
 } from "./paint";
+import { hitLanePort, portEdgeFromCursor } from "./ports";
 import type { EditorMapDoc, TileEdge } from "./schema";
 import type { EditorTool } from "./tools";
 import { isDragPlaceProp } from "./tools";
@@ -69,10 +70,16 @@ export function applyAuthor(
       return erasePropAt(doc, cell.tx, cell.ty, edgeOf(cell, tile));
     case "path":
       return applyPathClick(doc, ctx.laneId, pos);
-    case "spawn":
-      return applySpawn(doc, ctx.laneId, snapCell(cell, doc, tile));
-    case "end":
-      return applyEndpoint(doc, ctx.laneId, snapCell(cell, doc, tile));
+    case "spawn": {
+      const edge = portEdgeFromCursor(cell.tx, cell.ty, cell.localX, cell.localY, doc.width, doc.height, tile);
+      if (!edge) return doc;
+      return applySpawn(doc, ctx.laneId, { tx: cell.tx, ty: cell.ty, edge });
+    }
+    case "end": {
+      const edge = portEdgeFromCursor(cell.tx, cell.ty, cell.localX, cell.localY, doc.width, doc.height, tile);
+      if (!edge) return doc;
+      return applyEndpoint(doc, ctx.laneId, { tx: cell.tx, ty: cell.ty, edge });
+    }
     case "zone":
       return paintZoneCells(doc, [pos], ctx.zoneId);
     case "gate":
@@ -105,16 +112,6 @@ export function isSinglePlaceTool(tool: EditorTool): boolean {
   if (tool.id === "prop") return !isDragPlaceProp(tool.type);
   if (tool.id === "checkpoint") return tool.type !== "post";
   return tool.id === "spawn" || tool.id === "end" || tool.id === "gate" || tool.id === "edge";
-}
-
-function snapCell(cell: AuthorCell, doc: EditorMapDoc, tile: number): [number, number] {
-  let x = cell.tx;
-  let y = cell.ty;
-  if (cell.tx === 0 && cell.localX < tile / 3) x = -1;
-  if (cell.tx === doc.width - 1 && cell.localX > (tile * 2) / 3) x = doc.width;
-  if (cell.ty === 0 && cell.localY < tile / 3) y = -1;
-  if (cell.ty === doc.height - 1 && cell.localY > (tile * 2) / 3) y = doc.height;
-  return [x, y];
 }
 
 export function erasePropAt(doc: EditorMapDoc, tx: number, ty: number, edge?: TileEdge): EditorMapDoc {
@@ -165,15 +162,21 @@ export function erasePathAt(doc: EditorMapDoc, laneId: string, tx: number, ty: n
 export function eraseSpawn(doc: EditorMapDoc, laneId: string): EditorMapDoc {
   if (doc.status === "locked") return doc;
   const lane = doc.lanes.find((l) => l.id === laneId);
-  if (!lane || !lane.waypoints.length) return doc;
-  return setLaneWaypoints(doc, laneId, lane.waypoints.slice(1));
+  if (!lane || !lane.spawn) return doc;
+  return {
+    ...doc,
+    lanes: doc.lanes.map((l) => (l.id === laneId ? { ...l, spawn: null } : l)),
+  };
 }
 
 export function eraseEndpoint(doc: EditorMapDoc, laneId: string): EditorMapDoc {
   if (doc.status === "locked") return doc;
   const lane = doc.lanes.find((l) => l.id === laneId);
-  if (!lane || lane.waypoints.length < 2) return doc;
-  return setLaneWaypoints(doc, laneId, lane.waypoints.slice(0, -1));
+  if (!lane || !lane.endpoint) return doc;
+  return {
+    ...doc,
+    lanes: doc.lanes.map((l) => (l.id === laneId ? { ...l, endpoint: null } : l)),
+  };
 }
 
 export function eraseZoneAt(doc: EditorMapDoc, tx: number, ty: number): EditorMapDoc {
@@ -194,13 +197,12 @@ export function eraseGateAt(doc: EditorMapDoc, tx: number, ty: number): EditorMa
 }
 
 export function eraseGameplayAt(doc: EditorMapDoc, laneId: string, tx: number, ty: number): EditorMapDoc {
-  const lane = doc.lanes.find((l) => l.id === laneId);
-  const spawn = lane?.waypoints[0];
-  const end = lane && lane.waypoints.length > 1 ? lane.waypoints[lane.waypoints.length - 1] : undefined;
-  if (spawn && spawn[0] === tx && spawn[1] === ty) return eraseSpawn(doc, laneId);
-  if (end && end[0] === tx && end[1] === ty) return eraseEndpoint(doc, laneId);
+  const hit = hitLanePort(doc, tx, ty, laneId);
+  if (hit?.kind === "spawn") return eraseSpawn(doc, laneId);
+  if (hit?.kind === "endpoint") return eraseEndpoint(doc, laneId);
   if (doc.gates.some((g) => g.tx === tx && g.ty === ty)) return eraseGateAt(doc, tx, ty);
   if (doc.zones.some((z) => z.cells.some(([x, y]) => x === tx && y === ty))) return eraseZoneAt(doc, tx, ty);
+  const lane = doc.lanes.find((l) => l.id === laneId);
   if (lane && pathCells(lane.waypoints).some((c) => c[0] === tx && c[1] === ty)) {
     return erasePathAt(doc, laneId, tx, ty);
   }
@@ -232,13 +234,11 @@ export function gameplayEraseTarget(
   tx: number,
   ty: number,
 ): "spawn" | "endpoint" | "gate" | "zone" | "path" | null {
-  const lane = doc.lanes.find((l) => l.id === laneId);
-  const spawn = lane?.waypoints[0];
-  const end = lane && lane.waypoints.length > 1 ? lane.waypoints[lane.waypoints.length - 1] : undefined;
-  if (spawn && spawn[0] === tx && spawn[1] === ty) return "spawn";
-  if (end && end[0] === tx && end[1] === ty) return "endpoint";
+  const hit = hitLanePort(doc, tx, ty, laneId);
+  if (hit) return hit.kind;
   if (doc.gates.some((g) => g.tx === tx && g.ty === ty)) return "gate";
   if (doc.zones.some((z) => z.cells.some(([x, y]) => x === tx && y === ty))) return "zone";
+  const lane = doc.lanes.find((l) => l.id === laneId);
   if (lane && pathCells(lane.waypoints).some((c) => c[0] === tx && c[1] === ty)) return "path";
   return null;
 }

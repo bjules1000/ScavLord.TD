@@ -69,9 +69,7 @@ export function nextLaneId(existing: readonly EditorLane[]): string {
 }
 
 export function isLegalPathTerrain(doc: EditorMapDoc, x: number, y: number): boolean {
-  if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) {
-    return waypointInPlayableBounds(x, y, doc.width, doc.height);
-  }
+  if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) return false;
   return doc.terrain[y]![x] === "ROAD";
 }
 

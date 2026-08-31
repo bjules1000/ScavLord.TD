@@ -35,9 +35,17 @@ export const CHECKPOINT_TYPES: CheckpointPart["type"][] = ["booth", "gate", "gat
 export const EDGE_OBJECT_TYPES = ["fence", "wall"] as const;
 export type EdgeObjectType = (typeof EDGE_OBJECT_TYPES)[number];
 
+export interface BoundaryPort {
+  tx: number;
+  ty: number;
+  edge: TileEdge;
+}
+
 export interface EditorLane {
   id: string;
   waypoints: Array<[number, number]>;
+  spawn: BoundaryPort | null;
+  endpoint: BoundaryPort | null;
 }
 
 export interface EditorProp {

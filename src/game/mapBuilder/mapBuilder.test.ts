@@ -45,8 +45,20 @@ import {
   paintZoneCells,
   placeProp,
   removeObject,
+  setLaneWaypoints,
 } from "./paint";
 import { pathCells } from "./pathing";
+import {
+  EDITOR_GUTTER,
+  canvasPixelSize,
+  isLegalPort,
+  legalPortEdges,
+  markerOutsidePlayableGrid,
+  overlayPathCells,
+  peelLaneFromWaypoints,
+  portEdgeFromCursor,
+  portOutsideCell,
+} from "./ports";
 import { MAP_BUILDER_STORAGE_KEY as SCHEMA_KEY } from "./schema";
 import {
   emptyStore,
@@ -63,10 +75,11 @@ import { TILE } from "../data";
 function validDraft() {
   let doc = createBlankMap({ displayName: "TEST MAP", id: "test-map", width: 20, height: 13 });
   const tiles: Array<[number, number]> = [];
-  for (let x = 0; x <= 8; x++) tiles.push([x, 2]);
+  for (let x = 0; x <= 19; x++) tiles.push([x, 2]);
   doc = paintTiles(doc, tiles, "ROAD");
-  doc = applySpawn(doc, "MAIN", [-1, 2]);
-  doc = applyEndpoint(doc, "MAIN", [8, 2]);
+  doc = setLaneWaypoints(doc, "MAIN", tiles);
+  doc = applySpawn(doc, "MAIN", { tx: 0, ty: 2, edge: "W" });
+  doc = applyEndpoint(doc, "MAIN", { tx: 19, ty: 2, edge: "E" });
   return doc;
 }
 
@@ -78,7 +91,12 @@ describe("map builder drafts", () => {
     expect(draft.displayName).toBe(woods.name);
     expect(draft.status).toBe("draft");
     expect(draft.lanes[0]!.id).toBe("MAIN");
-    expect(draft.lanes[0]!.waypoints).toEqual(woods.path);
+    expect(draft.lanes[0]!.spawn).toEqual({ tx: 0, ty: 1, edge: "W" });
+    expect(draft.lanes[0]!.endpoint).toEqual({ tx: 19, ty: 5, edge: "E" });
+    expect(draft.lanes[0]!.waypoints.every(([x, y]) => x >= 0 && y >= 0 && x < 20 && y < 13)).toBe(true);
+    expect(draft.lanes[0]!.waypoints[0]).toEqual([0, 1]);
+    expect(draft.lanes[0]!.waypoints.at(-1)).toEqual([19, 5]);
+    expect(draft.lanes[0]!.waypoints).not.toEqual(woods.path);
     expect(draft.props.length).toBe(woods.props.length);
     expect(draft.terrain[1]![4]).toBe("ROAD");
     expect(draft.terrain[0]![0]).toBe("GROUND");
@@ -87,8 +105,14 @@ describe("map builder drafts", () => {
   it("loads GRAIN GATE with both authored lanes and water", () => {
     const grain = fromProductionMap(MAP_BY_ID["kolkhoz"]!);
     expect(grain.lanes.map((l) => l.id)).toEqual(["MAIN", "A"]);
-    expect(grain.lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual(MAP_BY_ID["kolkhoz"]!.path);
-    expect(grain.lanes.find((l) => l.id === "A")!.waypoints.at(-1)).toEqual([19, 10]);
+    const main = grain.lanes.find((l) => l.id === "MAIN")!;
+    const a = grain.lanes.find((l) => l.id === "A")!;
+    expect(main.waypoints).toEqual(MAP_BY_ID["kolkhoz"]!.path);
+    expect(main.spawn).toEqual({ tx: 0, ty: 3, edge: "W" });
+    expect(main.endpoint).toEqual({ tx: 16, ty: 0, edge: "N" });
+    expect(a.waypoints.at(-1)).toEqual([19, 10]);
+    expect(a.spawn).toEqual({ tx: 0, ty: 5, edge: "W" });
+    expect(a.endpoint).toEqual({ tx: 19, ty: 10, edge: "E" });
     expect(grain.terrain[0]![5]).toBe("WATER");
     expect(grain.terrain[3]![0]).toBe("ROAD");
     expect(grain.terrain[5]![0]).toBe("ROAD");
@@ -103,7 +127,7 @@ describe("map builder drafts", () => {
     expect(doc.terrain.length).toBe(10);
     expect(doc.terrain[0]!.length).toBe(12);
     expect(doc.terrain.every((row) => row.every((c) => c === "GROUND"))).toBe(true);
-    expect(doc.lanes).toEqual([{ id: "MAIN", waypoints: [] }]);
+    expect(doc.lanes).toEqual([{ id: "MAIN", waypoints: [], spawn: null, endpoint: null }]);
   });
 });
 
@@ -194,8 +218,8 @@ describe("map builder lanes", () => {
   it("keeps lane IDs independent", () => {
     let doc = validDraft();
     doc = addLane(doc, "A");
-    doc = applySpawn(doc, "A", [-1, 6]);
-    doc = applyEndpoint(doc, "A", [4, 6]);
+    doc = applySpawn(doc, "A", { tx: 0, ty: 6, edge: "W" });
+    doc = applyEndpoint(doc, "A", { tx: 19, ty: 6, edge: "E" });
     const main = doc.lanes.find((l) => l.id === "MAIN")!;
     const a = doc.lanes.find((l) => l.id === "A")!;
     expect(main.waypoints).not.toEqual(a.waypoints);
@@ -212,14 +236,14 @@ describe("map builder lanes", () => {
 
   it("fails a disconnected / incomplete path", () => {
     let doc = createBlankMap({ displayName: "L", id: "lane-disc", width: 12, height: 10 });
-    doc = applySpawn(doc, "MAIN", [0, 0]);
+    doc = applySpawn(doc, "MAIN", { tx: 0, ty: 0, edge: "W" });
     const r = validateMap(doc);
     expect(r.ok).toBe(false);
   });
 
   it("fails a diagonal-only path", () => {
     let doc = createBlankMap({ displayName: "L", id: "lane-diag", width: 12, height: 10 });
-    doc = { ...doc, lanes: [{ id: "MAIN", waypoints: [[0, 0], [1, 1]] }] };
+    doc = { ...doc, lanes: [{ id: "MAIN", waypoints: [[0, 0], [1, 1]], spawn: null, endpoint: null }] };
     const r = validateMap(doc);
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => e.code === "DIAGONAL")).toBe(true);
@@ -232,13 +256,13 @@ describe("map builder lanes", () => {
 
   it("fails duplicate lane IDs", () => {
     let doc = validDraft();
-    doc = { ...doc, lanes: [...doc.lanes, { id: "MAIN", waypoints: [[0, 5], [4, 5]] }] };
+    doc = { ...doc, lanes: [...doc.lanes, { id: "MAIN", waypoints: [[0, 5], [4, 5]], spawn: null, endpoint: null }] };
     expect(validateMap(doc).errors.some((e) => e.message.includes("Duplicate"))).toBe(true);
   });
 
   it("fails an out-of-bounds marker", () => {
     let doc = validDraft();
-    doc = { ...doc, lanes: [{ id: "MAIN", waypoints: [[-1, 2], [99, 2]] }] };
+    doc = { ...doc, lanes: [{ id: "MAIN", waypoints: [[-1, 2], [99, 2]], spawn: null, endpoint: null }] };
     expect(validateMap(doc).errors.some((e) => e.code === "BOUNDS")).toBe(true);
   });
 });
@@ -643,32 +667,37 @@ describe("map builder props and gameplay", () => {
 
   it("spawn and endpoint create, move, erase, and validate", () => {
     let doc = createBlankMap({ displayName: "L", id: "spawn-end", width: 12, height: 10 });
-    doc = applySpawn(doc, "MAIN", [0, 2]);
-    expect(doc.lanes[0]!.waypoints[0]).toEqual([0, 2]);
-    doc = applySpawn(doc, "MAIN", [1, 2]);
-    expect(doc.lanes[0]!.waypoints[0]).toEqual([1, 2]);
-    expect(doc.lanes[0]!.waypoints.length).toBe(1);
-    doc = applyEndpoint(doc, "MAIN", [6, 2]);
-    expect(doc.lanes[0]!.waypoints.at(-1)).toEqual([6, 2]);
-    doc = applyEndpoint(doc, "MAIN", [8, 2]);
-    expect(doc.lanes[0]!.waypoints.at(-1)).toEqual([8, 2]);
+    doc = applySpawn(doc, "MAIN", { tx: 0, ty: 2, edge: "W" });
+    expect(doc.lanes[0]!.spawn).toEqual({ tx: 0, ty: 2, edge: "W" });
+    expect(doc.lanes[0]!.waypoints).toEqual([]);
+    doc = applySpawn(doc, "MAIN", { tx: 0, ty: 5, edge: "W" });
+    expect(doc.lanes[0]!.spawn).toEqual({ tx: 0, ty: 5, edge: "W" });
+    expect(doc.lanes[0]!.waypoints).toEqual([]);
+    expect(applySpawn(doc, "MAIN", { tx: 1, ty: 2, edge: "W" })).toBe(doc);
+    doc = applyEndpoint(doc, "MAIN", { tx: 11, ty: 2, edge: "E" });
+    expect(doc.lanes[0]!.endpoint).toEqual({ tx: 11, ty: 2, edge: "E" });
+    doc = applyEndpoint(doc, "MAIN", { tx: 11, ty: 4, edge: "E" });
+    expect(doc.lanes[0]!.endpoint).toEqual({ tx: 11, ty: 4, edge: "E" });
     const missingEnd = eraseEndpoint(doc, "MAIN");
     expect(validateMap(missingEnd).errors.some((e) => e.message.includes("endpoint") || e.message.includes("spawn"))).toBe(
       true,
     );
     const missingSpawn = eraseSpawn(doc, "MAIN");
-    expect(missingSpawn.lanes[0]!.waypoints[0]).toEqual([8, 2]);
-    const cleared = eraseGameplayAt(doc, "MAIN", 1, 2);
-    expect(cleared.lanes[0]!.waypoints[0]).toEqual([8, 2]);
+    expect(missingSpawn.lanes[0]!.endpoint).toEqual({ tx: 11, ty: 4, edge: "E" });
+    expect(missingSpawn.lanes[0]!.waypoints).toEqual([]);
+    const cleared = eraseGameplayAt(doc, "MAIN", -1, 5);
+    expect(cleared.lanes[0]!.spawn).toBeNull();
+    expect(cleared.lanes[0]!.endpoint).toEqual({ tx: 11, ty: 4, edge: "E" });
+    expect(cleared.lanes[0]!.waypoints).toEqual([]);
   });
 
   it("spawn move undo restores previous location", () => {
     let s = sessionFrom(createBlankMap({ displayName: "L", id: "spawn-undo", width: 12, height: 10 }));
-    s = commit(s, applySpawn(s.doc, "MAIN", [0, 1]));
-    s = commit(s, applySpawn(s.doc, "MAIN", [3, 1]));
-    expect(s.doc.lanes[0]!.waypoints[0]).toEqual([3, 1]);
+    s = commit(s, applySpawn(s.doc, "MAIN", { tx: 0, ty: 1, edge: "W" }));
+    s = commit(s, applySpawn(s.doc, "MAIN", { tx: 0, ty: 3, edge: "W" }));
+    expect(s.doc.lanes[0]!.spawn).toEqual({ tx: 0, ty: 3, edge: "W" });
     s = undo(s);
-    expect(s.doc.lanes[0]!.waypoints[0]).toEqual([0, 1]);
+    expect(s.doc.lanes[0]!.spawn).toEqual({ tx: 0, ty: 1, edge: "W" });
   });
 
   it("special zone author, erase, preserve terrain, undo", () => {
@@ -759,8 +788,10 @@ describe("map builder path authoring", () => {
     expect(vis).toHaveLength(1);
     expect(vis[0]!.id).toBe("MAIN");
     expect(vis[0]!.cells.length).toBeGreaterThan(10);
-    expect(vis[0]!.cells).toEqual(pathCells(woods.lanes[0]!.waypoints));
-    expect(woods.lanes[0]!.waypoints).toEqual(MAP_BY_ID["woods"]!.path);
+    expect(vis[0]!.cells[0]).toEqual([-1, 1]);
+    expect(vis[0]!.cells.at(-1)).toEqual([20, 5]);
+    expect(woods.lanes[0]!.waypoints.every(([x, y]) => x >= 0 && y >= 0 && x < 20 && y < 13)).toBe(true);
+    expect(woods.lanes[0]!.waypoints).not.toEqual(MAP_BY_ID["woods"]!.path);
   });
 
   it("active lane path uses active/yellow style", () => {
@@ -977,7 +1008,13 @@ describe("map builder path authoring", () => {
     const aBefore = doc.lanes.find((l) => l.id === "A")!.waypoints;
     const erased = erasePathAt(doc, "MAIN", 4, 2);
     expect(erased.lanes.find((l) => l.id === "A")!.waypoints).toEqual(aBefore);
-    expect(erased.lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual([[-1, 2]]);
+    expect(erased.lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual([
+      [0, 2],
+      [1, 2],
+      [2, 2],
+      [3, 2],
+    ]);
+    expect(erased.lanes.find((l) => l.id === "MAIN")!.spawn).toEqual({ tx: 0, ty: 2, edge: "W" });
   });
 
   it("underlying ROAD remains after path erase", () => {
@@ -1042,7 +1079,7 @@ describe("map builder path authoring", () => {
 
   it("validation rejects a disconnected route", () => {
     let doc = createBlankMap({ displayName: "L", id: "path-disc-val", width: 12, height: 10 });
-    doc = { ...doc, lanes: [{ id: "MAIN", waypoints: [[0, 0], [1, 1], [3, 1]] }] };
+    doc = { ...doc, lanes: [{ id: "MAIN", waypoints: [[0, 0], [1, 1], [3, 1]], spawn: null, endpoint: null }] };
     const r = validateMap(doc);
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => e.message.includes("disconnected") || e.code === "DIAGONAL")).toBe(true);
@@ -1050,44 +1087,187 @@ describe("map builder path authoring", () => {
 
   it("spawn/path connectivity validation works", () => {
     let doc = validDraft();
-    doc = applySpawn(doc, "MAIN", [4, 8]);
+    const path = doc.lanes[0]!.waypoints.slice();
+    doc = applySpawn(doc, "MAIN", { tx: 0, ty: 8, edge: "W" });
     const r = validateMap(doc);
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => e.code === "SPAWN")).toBe(true);
-    expect(doc.lanes[0]!.waypoints.slice(1)).toEqual(validDraft().lanes[0]!.waypoints.slice(1));
+    expect(doc.lanes[0]!.waypoints).toEqual(path);
   });
 
   it("endpoint/path connectivity validation works", () => {
     let doc = validDraft();
-    doc = applyEndpoint(doc, "MAIN", [4, 8]);
+    doc = applyEndpoint(doc, "MAIN", { tx: 19, ty: 8, edge: "E" });
     const r = validateMap(doc);
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => e.code === "ENDPOINT")).toBe(true);
-    expect(doc.lanes[0]!.waypoints[0]).toEqual([-1, 2]);
+    expect(doc.lanes[0]!.waypoints[0]).toEqual([0, 2]);
   });
 
   it("PATHS OFF hides visualization but preserves data", () => {
     const woods = fromProductionMap(MAP_BY_ID["woods"]!);
     const hidden = visiblePathOverlays(woods, { ...DEFAULT_LAYERS, paths: false }, "MAIN");
     expect(hidden).toEqual([]);
-    expect(woods.lanes[0]!.waypoints).toEqual(MAP_BY_ID["woods"]!.path);
+    expect(woods.lanes[0]!.waypoints.every(([x, y]) => x >= 0 && y >= 0 && x < 20 && y < 13)).toBe(true);
     expect(visiblePathOverlays(woods, { ...DEFAULT_LAYERS, roads: false }, "MAIN")[0]!.cells.length).toBeGreaterThan(10);
   });
 
   it("moving spawn or endpoint preserves the existing path", () => {
     let doc = validDraft();
-    const mid = doc.lanes[0]!.waypoints.slice(1, -1);
-    doc = applySpawn(doc, "MAIN", [0, 5]);
-    expect(doc.lanes[0]!.waypoints.slice(1)).toEqual(validDraft().lanes[0]!.waypoints.slice(1));
-    doc = applyEndpoint(doc, "MAIN", [9, 5]);
-    expect(doc.lanes[0]!.waypoints.slice(1, -1)).toEqual(mid);
-    expect(doc.lanes[0]!.waypoints[0]).toEqual([0, 5]);
-    expect(doc.lanes[0]!.waypoints.at(-1)).toEqual([9, 5]);
+    const path = doc.lanes[0]!.waypoints.slice();
+    doc = applySpawn(doc, "MAIN", { tx: 0, ty: 5, edge: "W" });
+    expect(doc.lanes[0]!.waypoints).toEqual(path);
+    doc = applyEndpoint(doc, "MAIN", { tx: 19, ty: 5, edge: "E" });
+    expect(doc.lanes[0]!.waypoints).toEqual(path);
+    expect(doc.lanes[0]!.spawn).toEqual({ tx: 0, ty: 5, edge: "W" });
+    expect(doc.lanes[0]!.endpoint).toEqual({ tx: 19, ty: 5, edge: "E" });
   });
 
   it("CLEAR PATH drops the route and keeps spawn", () => {
     const cleared = clearLanePath(validDraft(), "MAIN");
-    expect(cleared.lanes[0]!.waypoints).toEqual([[-1, 2]]);
+    expect(cleared.lanes[0]!.waypoints).toEqual([]);
+    expect(cleared.lanes[0]!.spawn).toEqual({ tx: 0, ty: 2, edge: "W" });
+    expect(cleared.lanes[0]!.endpoint).toEqual({ tx: 19, ty: 2, edge: "E" });
     expect(cleared.terrain[2]![4]).toBe("ROAD");
   });
 });
+
+describe("map builder boundary ports", () => {
+  it("WEST spawn requires x=0 and EAST spawn requires x=width-1", () => {
+    const doc = createBlankMap({ displayName: "P", id: "port-we", width: 20, height: 13 });
+    expect(isLegalPort({ tx: 0, ty: 6, edge: "W" }, 20, 13)).toBe(true);
+    expect(isLegalPort({ tx: 1, ty: 6, edge: "W" }, 20, 13)).toBe(false);
+    expect(applySpawn(doc, "MAIN", { tx: 0, ty: 6, edge: "W" }).lanes[0]!.spawn).toEqual({ tx: 0, ty: 6, edge: "W" });
+    expect(applySpawn(doc, "MAIN", { tx: 1, ty: 6, edge: "W" }).lanes[0]!.spawn).toBeNull();
+    expect(isLegalPort({ tx: 19, ty: 6, edge: "E" }, 20, 13)).toBe(true);
+    expect(isLegalPort({ tx: 18, ty: 6, edge: "E" }, 20, 13)).toBe(false);
+    expect(applySpawn(doc, "MAIN", { tx: 19, ty: 6, edge: "E" }).lanes[0]!.spawn).toEqual({ tx: 19, ty: 6, edge: "E" });
+  });
+
+  it("NORTH requires y=0 and SOUTH requires y=height-1", () => {
+    const doc = createBlankMap({ displayName: "P", id: "port-ns", width: 20, height: 13 });
+    expect(isLegalPort({ tx: 8, ty: 0, edge: "N" }, 20, 13)).toBe(true);
+    expect(isLegalPort({ tx: 8, ty: 1, edge: "N" }, 20, 13)).toBe(false);
+    expect(applyEndpoint(doc, "MAIN", { tx: 8, ty: 0, edge: "N" }).lanes[0]!.endpoint).toEqual({ tx: 8, ty: 0, edge: "N" });
+    expect(isLegalPort({ tx: 8, ty: 12, edge: "S" }, 20, 13)).toBe(true);
+    expect(isLegalPort({ tx: 8, ty: 11, edge: "S" }, 20, 13)).toBe(false);
+    expect(applyEndpoint(doc, "MAIN", { tx: 8, ty: 12, edge: "S" }).lanes[0]!.endpoint).toEqual({ tx: 8, ty: 12, edge: "S" });
+  });
+
+  it("interior spawn and endpoint placement is rejected", () => {
+    const doc = createBlankMap({ displayName: "P", id: "port-in", width: 20, height: 13 });
+    expect(legalPortEdges(4, 6, 20, 13)).toEqual([]);
+    expect(applySpawn(doc, "MAIN", { tx: 4, ty: 6, edge: "W" })).toBe(doc);
+    expect(applyEndpoint(doc, "MAIN", { tx: 4, ty: 6, edge: "E" })).toBe(doc);
+  });
+
+  it("corner tile can select either valid boundary edge", () => {
+    expect(legalPortEdges(0, 0, 20, 13)).toEqual(["N", "W"]);
+    expect(portEdgeFromCursor(0, 0, 2, 22, 20, 13)).toBe("W");
+    expect(portEdgeFromCursor(0, 0, 22, 2, 20, 13)).toBe("N");
+    expect(legalPortEdges(19, 12, 20, 13)).toEqual(["E", "S"]);
+    expect(portEdgeFromCursor(19, 12, 40, 22, 20, 13)).toBe("E");
+    expect(portEdgeFromCursor(19, 12, 22, 40, 20, 13)).toBe("S");
+  });
+
+  it("spawn and endpoint markers render outside logical grid bounds", () => {
+    const spawn = { tx: 0, ty: 6, edge: "W" as const };
+    const end = { tx: 19, ty: 2, edge: "E" as const };
+    expect(markerOutsidePlayableGrid(spawn, 20, 13)).toBe(true);
+    expect(markerOutsidePlayableGrid(end, 20, 13)).toBe(true);
+    expect(portOutsideCell(spawn)[0]).toBe(-1);
+    expect(portOutsideCell(end)[0]).toBe(20);
+    const north = { tx: 14, ty: 0, edge: "N" as const };
+    const south = { tx: 4, ty: 12, edge: "S" as const };
+    expect(markerOutsidePlayableGrid(north, 20, 13)).toBe(true);
+    expect(markerOutsidePlayableGrid(south, 20, 13)).toBe(true);
+  });
+
+  it("playable dimensions remain unchanged and gutter is not editable terrain", () => {
+    const doc = createBlankMap({ displayName: "P", id: "port-gutter", width: 20, height: 13 });
+    expect(doc.width).toBe(20);
+    expect(doc.height).toBe(13);
+    const size = canvasPixelSize(doc.width, doc.height);
+    expect(size.w).toBe((20 + 2) * TILE);
+    expect(size.h).toBe((13 + 2) * TILE);
+    expect(size.w - doc.width * TILE).toBe(EDITOR_GUTTER * 2);
+    const painted = paintTiles(doc, [[-1, 2], [20, 2], [4, -1], [4, 13]], "ROAD");
+    expect(painted).toBe(doc);
+    expect(painted.terrain[2]![0]).toBe("GROUND");
+    const rect = { left: 0, top: 0, width: size.w, height: size.h };
+    const gutterHit = clientToTile(TILE * 0.5, TILE + TILE * 0.5, rect, 20, 13, TILE, EDITOR_GUTTER);
+    expect(gutterHit?.tx).toBe(-1);
+    expect(gutterHit?.ty).toBe(0);
+    const playable = clientToTile(TILE + TILE * 0.5, TILE + TILE * 0.5, rect, 20, 13, TILE, EDITOR_GUTTER);
+    expect(playable?.tx).toBe(0);
+    expect(playable?.ty).toBe(0);
+  });
+
+  it("path data contains only in-bounds tiles and overlay connects outside ports", () => {
+    const doc = validDraft();
+    expect(doc.lanes[0]!.waypoints.every(([x, y]) => x >= 0 && y >= 0 && x < doc.width && y < doc.height)).toBe(true);
+    const overlay = overlayPathCells(doc.lanes[0]!);
+    expect(overlay[0]).toEqual([-1, 2]);
+    expect(overlay.at(-1)).toEqual([20, 2]);
+    const vis = visiblePathOverlays(doc, DEFAULT_LAYERS, "MAIN")[0]!;
+    expect(vis.cells[0]).toEqual([-1, 2]);
+    expect(vis.cells.at(-1)).toEqual([20, 2]);
+    expect(vis.cells).toContainEqual([0, 2]);
+    expect(vis.cells).toContainEqual([19, 2]);
+  });
+
+  it("gameplay erase removes spawn only and undo restores it", () => {
+    const start = validDraft();
+    const path = start.lanes[0]!.waypoints.slice();
+    let s = sessionFrom(start);
+    s = commit(s, eraseGameplayAt(s.doc, "MAIN", -1, 2));
+    expect(s.doc.lanes[0]!.spawn).toBeNull();
+    expect(s.doc.lanes[0]!.endpoint).toEqual({ tx: 19, ty: 2, edge: "E" });
+    expect(s.doc.lanes[0]!.waypoints).toEqual(path);
+    expect(s.doc.terrain[2]![0]).toBe("ROAD");
+    s = undo(s);
+    expect(s.doc.lanes[0]!.spawn).toEqual({ tx: 0, ty: 2, edge: "W" });
+    expect(s.doc.lanes[0]!.waypoints).toEqual(path);
+  });
+
+  it("validation accepts a connected boundary port and rejects a disconnected one", () => {
+    expect(validateMap(validDraft()).ok).toBe(true);
+    const moved = applySpawn(validDraft(), "MAIN", { tx: 0, ty: 10, edge: "W" });
+    const r = validateMap(moved);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.code === "SPAWN" && e.message.includes("not connected"))).toBe(true);
+  });
+
+  it("deterministic export includes tile+edge and import round-trips the port", () => {
+    const doc = validDraft();
+    const exp = toExport(doc);
+    expect(exp.width).toBe(20);
+    expect(exp.height).toBe(13);
+    expect(exp.lanes[0]!.spawn).toEqual({ tile: [0, 2], edge: "W" });
+    expect(exp.lanes[0]!.endpoint).toEqual({ tile: [19, 2], edge: "E" });
+    expect(exp.lanes[0]!.waypoints.every(([x, y]) => x >= 0 && y >= 0 && x < 20 && y < 13)).toBe(true);
+    const parsed = parseImport(stringifyExport(doc));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const back = importedToDoc(parsed.payload, "import-ports");
+    expect(back.lanes[0]!.spawn).toEqual({ tx: 0, ty: 2, edge: "W" });
+    expect(back.lanes[0]!.endpoint).toEqual({ tx: 19, ty: 2, edge: "E" });
+    expect(back.lanes[0]!.waypoints).toEqual(doc.lanes[0]!.waypoints);
+    expect(toExport(back).lanes[0]!.spawn).toEqual(exp.lanes[0]!.spawn);
+  });
+
+  it("existing-map adapter produces a deterministic boundary direction", () => {
+    const woods = peelLaneFromWaypoints("MAIN", MAP_BY_ID["woods"]!.path, 20, 13);
+    expect(woods.spawn).toEqual({ tx: 0, ty: 1, edge: "W" });
+    expect(woods.endpoint).toEqual({ tx: 19, ty: 5, edge: "E" });
+    const grain = fromProductionMap(MAP_BY_ID["kolkhoz"]!);
+    expect(grain.lanes.find((l) => l.id === "MAIN")!.spawn).toEqual({ tx: 0, ty: 3, edge: "W" });
+    expect(grain.lanes.find((l) => l.id === "MAIN")!.endpoint).toEqual({ tx: 16, ty: 0, edge: "N" });
+    expect(grain.lanes.find((l) => l.id === "A")!.spawn).toEqual({ tx: 0, ty: 5, edge: "W" });
+    expect(grain.lanes.find((l) => l.id === "A")!.endpoint).toEqual({ tx: 19, ty: 10, edge: "E" });
+    const produced = toProductionMapDef(grain);
+    expect(produced.path[0]).toEqual([-1, 3]);
+    expect(produced.path.at(-1)).toEqual([16, -1]);
+  });
+});
+
