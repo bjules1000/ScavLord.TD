@@ -47,12 +47,12 @@ export default function DevItemPicker({
         placeholder="SEARCH"
         className="mt-1 w-full border border-border bg-background px-1 py-0.5 font-mono text-[10px] text-foreground"
       />
-      <div className="pixel-scrollbar mt-1 max-h-40 space-y-0.5 overflow-auto">
+      <div className="pixel-scrollbar mt-1 max-h-56 space-y-1 overflow-auto">
         {visible.map((def) => (
           <button
             key={def.id}
             type="button"
-            className="flex w-full items-center justify-between border border-transparent px-1 py-0.5 text-left font-mono text-[9px] hover:border-border"
+            className="flex w-full items-center justify-between border border-border bg-secondary/40 px-2 py-1 text-left font-mono text-[10px] hover:border-primary"
             style={{ color: RARITY_COLOR[def.rarity] }}
             onClick={() => onPick(def.id)}
           >

@@ -177,6 +177,8 @@ const START_LIVES = 20;
 const BASE_BACKPACK_SLOTS = 5;
 const BASE_LOADOUT_SLOTS = 3;
 const BASE_STASH_SLOTS = 40;
+/** Temporary raid QA buttons. Set false (or delete the row) after weight testing. */
+const SHOW_DEV_INVENTORY = true;
 
 const STASH_KIND_ORDER: Record<string, number> = {
   weapon: 0,
@@ -430,7 +432,6 @@ export default function TarkovTD() {
   >("all");
   const [questFilter, setQuestFilter] = useState<"all" | "open" | "done">("all");
   const [devPickerOpen, setDevPickerOpen] = useState(false);
-  const [devClearArmed, setDevClearArmed] = useState(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
   const [, force] = useState(0);
@@ -824,7 +825,7 @@ export default function TarkovTD() {
   const addDevBackpackItem = useCallback(
     (defId: string) => {
       const s = gs.current;
-      const result = devAddToBackpack(defId, s.backpack, backpackSlots(), newUid(), DEV_TOOLS_ENABLED);
+      const result = devAddToBackpack(defId, s.backpack, backpackSlots(), newUid(), SHOW_DEV_INVENTORY);
       if (!result.ok) {
         pushLog(result.reason === "BACKPACK FULL" ? "BACKPACK FULL" : result.reason);
         return;
@@ -838,10 +839,9 @@ export default function TarkovTD() {
 
   const clearDevBackpack = useCallback(() => {
     const s = gs.current;
-    const result = clearRaidBackpack(s.backpack, DEV_TOOLS_ENABLED);
+    const result = clearRaidBackpack(s.backpack, SHOW_DEV_INVENTORY);
     if (!result.ok) return;
     s.backpack = result.backpack;
-    setDevClearArmed(false);
     pushLog("DEV backpack cleared");
     rerender();
   }, [pushLog, rerender]);
@@ -2919,56 +2919,25 @@ export default function TarkovTD() {
                   BACKPACK {s.backpack.length}/{backpackSlots()}
                   {s.backpack.length >= backpackSlots() ? " FULL" : ""}
                 </div>
-                <div className="flex items-center gap-1">
-                  {s.backpack.length >= backpackSlots() && (
-                    <span className="font-mono text-[10px] text-destructive">FULL</span>
-                  )}
-                  {DEV_TOOLS_ENABLED && (
-                    <>
-                      <button
-                        type="button"
-                        className="pixel-btn px-1 py-0 text-[9px]"
-                        onClick={() => {
-                          setDevClearArmed(false);
-                          setDevPickerOpen((open) => !open);
-                        }}
-                      >
-                        DEV ADD
-                      </button>
-                      {devClearArmed ? (
-                        <>
-                          <button
-                            type="button"
-                            className="pixel-btn px-1 py-0 text-[9px] text-destructive"
-                            onClick={clearDevBackpack}
-                          >
-                            CONFIRM
-                          </button>
-                          <button
-                            type="button"
-                            className="pixel-btn px-1 py-0 text-[9px]"
-                            onClick={() => setDevClearArmed(false)}
-                          >
-                            CANCEL
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          className="pixel-btn px-1 py-0 text-[9px]"
-                          onClick={() => {
-                            setDevPickerOpen(false);
-                            setDevClearArmed(true);
-                          }}
-                        >
-                          CLEAR
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
+                {s.backpack.length >= backpackSlots() && (
+                  <span className="font-mono text-[10px] text-destructive">FULL</span>
+                )}
               </div>
-              {DEV_TOOLS_ENABLED && devPickerOpen && (
+              {SHOW_DEV_INVENTORY && (
+                <div className="mt-2 grid grid-cols-2 gap-1">
+                  <button
+                    type="button"
+                    className="pixel-btn pixel-btn-primary w-full"
+                    onClick={() => setDevPickerOpen((open) => !open)}
+                  >
+                    DEV ADD
+                  </button>
+                  <button type="button" className="pixel-btn w-full" onClick={clearDevBackpack}>
+                    DEV CLEAR
+                  </button>
+                </div>
+              )}
+              {SHOW_DEV_INVENTORY && devPickerOpen && (
                 <DevItemPicker onPick={addDevBackpackItem} onClose={() => setDevPickerOpen(false)} />
               )}
               <div className="mt-2 grid grid-cols-2 gap-1">
