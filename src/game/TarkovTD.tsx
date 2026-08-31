@@ -17,6 +17,13 @@ import {
 } from "./map";
 import { assignSpawnLane, lanePathProgress } from "./lanes";
 import {
+  canPlaceOperator,
+  enemyLaneSurface,
+  lowObstacleBlocksOperator,
+  operatorPlacementSurface,
+  partitionBySurface,
+} from "./surfaces";
+import {
   ARMORS,
   ATTACHMENTS,
   BACKPACKS,
@@ -51,6 +58,7 @@ import {
 import {
   drawCrate,
   drawDropBag,
+  drawElevatedSurfaces,
   drawEnemy,
   drawObstacle,
   drawOperator,
@@ -263,6 +271,18 @@ function buildableFor(map: GameMap, s: GameState, tx: number, ty: number) {
   return isBuildable(map, tx, ty) && !s.obstacles.some((o) => o.tx === tx && o.ty === ty);
 }
 
+/** Operator hire/reposition. HIGH bridge decks are legal even over ROAD/WATER. */
+function operatorPlaceableFor(map: GameMap, s: GameState, tx: number, ty: number) {
+  if (!canPlaceOperator(map, tx, ty)) return false;
+  if (s.towers.some((t) => t.tx === tx && t.ty === ty)) return false;
+  const surface = operatorPlacementSurface(map, tx, ty);
+  if (!surface) return false;
+  return !lowObstacleBlocksOperator(
+    surface,
+    s.obstacles.some((o) => o.tx === tx && o.ty === ty),
+  );
+}
+
 function coverList(map: GameMap, s: GameState): CoverPiece[] {
   return [
     ...map.COVER,
@@ -319,7 +339,7 @@ function pmcSpawnTile(map: GameMap, s: GameState) {
   let best: { tx: number; ty: number; score: number } | null = null;
   for (let ty = 0; ty < ROWS; ty++) {
     for (let tx = 0; tx < COLS; tx++) {
-      if (!buildableFor(map, s, tx, ty)) continue;
+      if (!operatorPlaceableFor(map, s, tx, ty)) continue;
       const d = Math.hypot(tx * TILE + TILE / 2 - sx, ty * TILE + TILE / 2 - sy);
       const score = bestCoverAt(map.COVER, tx, ty) * 400 - d;
       if (!best || score > best.score) best = { tx, ty, score };
@@ -432,6 +452,7 @@ export default function TarkovTD() {
       id: s.nextId++,
       tx: spot.tx,
       ty: spot.ty,
+      surface: operatorPlacementSurface(mapRef.current, spot.tx, spot.ty) ?? "GROUND",
       weapon: m.pmc.weapon,
       attachments: [...m.pmc.attachments],
       cd: 0,
@@ -918,6 +939,7 @@ export default function TarkovTD() {
           t: 0,
           x: laneRoute(mapRef.current, ev.lane).PIX[0]![0],
           y: laneRoute(mapRef.current, ev.lane).PIX[0]![1],
+          surface: enemyLaneSurface(),
           slow: 0,
           hitFlash: 0,
           step: Math.random() * 4,
@@ -1353,6 +1375,17 @@ export default function TarkovTD() {
 
       for (const d of s.drops) drawDropBag(ctx, d.tx, d.ty, performance.now());
 
+      const now = performance.now();
+      const towersByY = [...s.towers].sort((a, b) => a.ty - b.ty);
+      const enemiesByY = [...s.enemies].sort((a, b) => a.y - b.y);
+      const towersBySurface = partitionBySurface(towersByY);
+      const enemiesBySurface = partitionBySurface(enemiesByY);
+      for (const t of towersBySurface.low) drawTower(ctx, t, now);
+      for (const e of enemiesBySurface.low) drawEnemy(ctx, e);
+      drawElevatedSurfaces(ctx, mapRef.current);
+      for (const t of towersBySurface.high) drawTower(ctx, t, now);
+      for (const e of enemiesBySurface.high) drawEnemy(ctx, e);
+
       if (s.place === "operator") {
         const seen = new Set<string>();
         for (const c of coverList(mapRef.current, s)) {
@@ -1362,7 +1395,7 @@ export default function TarkovTD() {
               const ty = c.ty + oy;
               const key = `${tx},${ty}`;
               if (seen.has(key)) continue;
-              if (!buildableFor(mapRef.current, s, tx, ty)) continue;
+              if (!operatorPlaceableFor(mapRef.current, s, tx, ty)) continue;
               if (s.towers.some((t) => t.tx === tx && t.ty === ty)) continue;
               seen.add(key);
               const strong = c.type === "full";
@@ -1374,9 +1407,7 @@ export default function TarkovTD() {
             }
         }
         if (s.hoverTx >= 0) {
-          const ok =
-            buildableFor(mapRef.current, s, s.hoverTx, s.hoverTy) &&
-            !s.towers.some((t) => t.tx === s.hoverTx && t.ty === s.hoverTy);
+          const ok = operatorPlaceableFor(mapRef.current, s, s.hoverTx, s.hoverTy);
           ctx.fillStyle = ok ? "rgba(125,220,90,0.25)" : "rgba(255,70,50,0.25)";
           ctx.fillRect(s.hoverTx * TILE, s.hoverTy * TILE, TILE, TILE);
           ctx.strokeStyle = ok ? "#7ddc5a" : "#ff5a3c";
@@ -1422,20 +1453,13 @@ export default function TarkovTD() {
           ctx.stroke();
         }
         ctx.lineWidth = 1;
-        if (
-          s.hoverTx >= 0 &&
-          buildableFor(mapRef.current, s, s.hoverTx, s.hoverTy) &&
-          !s.towers.some((t) => t.tx === s.hoverTx && t.ty === s.hoverTy)
-        ) {
+        if (s.hoverTx >= 0 && operatorPlaceableFor(mapRef.current, s, s.hoverTx, s.hoverTy)) {
           ctx.strokeStyle = "rgba(125,220,90,0.8)";
           ctx.setLineDash([4, 4]);
           ctx.strokeRect(s.hoverTx * TILE + 2, s.hoverTy * TILE + 2, TILE - 4, TILE - 4);
           ctx.setLineDash([]);
         }
       }
-
-      for (const t of [...s.towers].sort((a, b) => a.ty - b.ty)) drawTower(ctx, t, performance.now());
-      for (const e of [...s.enemies].sort((a, b) => a.y - b.y)) drawEnemy(ctx, e);
 
       if (sel) {
         const mark = s.enemies.find((e) => e.id === sel.engageTargetId && !isSettledOut(e));
@@ -1566,7 +1590,7 @@ export default function TarkovTD() {
     }
 
     if (s.place === "operator") {
-      if (!buildableFor(mapRef.current, s, tx, ty))
+      if (!operatorPlaceableFor(mapRef.current, s, tx, ty))
         return pushLog("Can't deploy on the road, props, crates or cover.");
       const cost = recruitCost();
       if (s.roubles < cost) return pushLog("Not enough roubles to hire.");
@@ -1575,6 +1599,7 @@ export default function TarkovTD() {
         id: s.nextId++,
         tx,
         ty,
+        surface: operatorPlacementSurface(mapRef.current, tx, ty) ?? "GROUND",
         weapon: HIRED_WEAPON_ID,
         attachments: [],
         cd: 0,
@@ -1593,9 +1618,10 @@ export default function TarkovTD() {
     }
 
     const sel = s.towers.find((t) => t.id === s.selectedId);
-    if (sel && buildableFor(mapRef.current, s, tx, ty)) {
+    if (sel && operatorPlaceableFor(mapRef.current, s, tx, ty)) {
       sel.tx = tx;
       sel.ty = ty;
+      sel.surface = operatorPlacementSurface(mapRef.current, tx, ty) ?? "GROUND";
       sel.cd = Math.max(sel.cd, debuffMods(metaRef.current.pmc.debuffs).moveLock);
       pushLog("Operator repositioned.");
       rerender();

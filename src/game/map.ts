@@ -90,6 +90,8 @@ export interface GameMap {
   WATER: boolean[][];
   MOUNTAIN: boolean[][];
   HIGH_GROUND: boolean[][];
+  /** Suspended-bridge overlay. Independent of BLOCKED / WATER / HIGH_GROUND. */
+  BRIDGE: boolean[][];
   PROPS: Prop[];
   CHECKPOINT: CheckpointPart[];
   COVER: CoverPiece[];
@@ -414,6 +416,10 @@ export function buildMap(def: MapDef): GameMap {
   for (const [x, y] of def.highGround ?? []) {
     if (x >= 0 && y >= 0 && x < COLS && y < ROWS) HIGH_GROUND[y]![x] = true;
   }
+  const BRIDGE: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  for (const b of def.bridges ?? []) {
+    if (b.tx >= 0 && b.ty >= 0 && b.tx < COLS && b.ty < ROWS) BRIDGE[b.ty]![b.tx] = true;
+  }
   const occupied = (tx: number, ty: number) => !!BLOCKED[ty]?.[tx] || !!WATER[ty]?.[tx] || !!MOUNTAIN[ty]?.[tx];
   const PROPS = def.props.filter((p) => !occupied(p.tx, p.ty));
   const COVER: CoverPiece[] = def.cover
@@ -436,6 +442,7 @@ export function buildMap(def: MapDef): GameMap {
     WATER,
     MOUNTAIN,
     HIGH_GROUND,
+    BRIDGE,
     PROPS,
     CHECKPOINT: def.checkpoint,
     COVER,
@@ -474,6 +481,11 @@ export function isHighGround(map: GameMap, tx: number, ty: number) {
   return !!map.HIGH_GROUND[ty]![tx];
 }
 
+/**
+ * LOW-surface occupancy for barricades and ordinary ground.
+ * ROAD / WATER / MOUNTAIN are illegal to stand on at GROUND level.
+ * Does not describe HIGH bridge-deck placement — use `canPlaceOperator`.
+ */
 export function isBuildable(map: GameMap, tx: number, ty: number) {
   if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
   if (map.BLOCKED[ty]![tx]) return false;

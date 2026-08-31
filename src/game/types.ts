@@ -1,5 +1,8 @@
 import type { TargetMode } from "./targeting";
 
+/** Two tactical surfaces. Not a 3D Z stack. */
+export type SurfaceLevel = "GROUND" | "HIGH";
+
 export type TowerKind = "scout" | "sniper" | "gunner" | "grenadier";
 
 export interface TowerDef {
@@ -20,6 +23,12 @@ export interface Tower {
   id: number;
   tx: number;
   ty: number;
+  /**
+   * Tactical surface this operator occupies. Raid runtime only.
+   * GROUND = base cell; HIGH = high ground or suspended bridge deck.
+   * Pre-movement clicks onto a bridge select HIGH.
+   */
+  surface?: SurfaceLevel;
   /** weapon id from gear.ts WEAPONS */
   weapon: string;
   /** attachment ids from gear.ts ATTACHMENTS */
@@ -78,6 +87,8 @@ export interface Enemy {
   t: number;
   x: number;
   y: number;
+  /** Authored lane traffic stays GROUND even under a suspended bridge. */
+  surface?: SurfaceLevel;
   slow: number;
   hitFlash: number;
   step: number;
