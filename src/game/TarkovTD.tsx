@@ -164,6 +164,9 @@ import {
 import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
+import { DEV_TOOLS_ENABLED } from "./dev/tools";
+import { clearRaidBackpack, devAddToBackpack } from "./dev/inventory";
+import DevItemPicker from "./dev/DevItemPicker";
 
 const PLAYABLE_W = COLS * TILE;
 const PLAYABLE_H = ROWS * TILE;
@@ -426,6 +429,8 @@ export default function TarkovTD() {
     "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
   >("all");
   const [questFilter, setQuestFilter] = useState<"all" | "open" | "done">("all");
+  const [devPickerOpen, setDevPickerOpen] = useState(false);
+  const [devClearArmed, setDevClearArmed] = useState(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
   const [, force] = useState(0);
@@ -815,6 +820,31 @@ export default function TarkovTD() {
     },
     [backpackSlots, pushLog],
   );
+
+  const addDevBackpackItem = useCallback(
+    (defId: string) => {
+      const s = gs.current;
+      const result = devAddToBackpack(defId, s.backpack, backpackSlots(), newUid(), DEV_TOOLS_ENABLED);
+      if (!result.ok) {
+        pushLog(result.reason === "BACKPACK FULL" ? "BACKPACK FULL" : result.reason);
+        return;
+      }
+      s.backpack = result.backpack;
+      pushLog(`DEV + ${result.item.name}`);
+      rerender();
+    },
+    [backpackSlots, pushLog, rerender],
+  );
+
+  const clearDevBackpack = useCallback(() => {
+    const s = gs.current;
+    const result = clearRaidBackpack(s.backpack, DEV_TOOLS_ENABLED);
+    if (!result.ok) return;
+    s.backpack = result.backpack;
+    setDevClearArmed(false);
+    pushLog("DEV backpack cleared");
+    rerender();
+  }, [pushLog, rerender]);
 
   const equipOnTower = useCallback(
     (uid: number, towerId: number) => {
@@ -2195,13 +2225,15 @@ export default function TarkovTD() {
                     {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
                     {loadout.length}/{loadoutSlots}
                   </div>
-                  <Link
-                    to="/dev/map-editor"
-                    search={{ map: mapId }}
-                    className="pixel-btn mt-3 flex w-full items-center justify-center"
-                  >
-                    EDIT THIS MAP
-                  </Link>
+                  {DEV_TOOLS_ENABLED && (
+                    <Link
+                      to="/dev/map-editor"
+                      search={{ map: mapId }}
+                      className="pixel-btn mt-3 flex w-full items-center justify-center"
+                    >
+                      EDIT THIS MAP
+                    </Link>
+                  )}
                   <button onClick={deploy} className="pixel-btn pixel-btn-primary mt-2 w-full">
                     DEPLOY TO {(MAP_BY_ID[mapId] ?? MAP_DEFS[1]!).name}
                   </button>
@@ -2887,10 +2919,58 @@ export default function TarkovTD() {
                   BACKPACK {s.backpack.length}/{backpackSlots()}
                   {s.backpack.length >= backpackSlots() ? " FULL" : ""}
                 </div>
-                {s.backpack.length >= backpackSlots() && (
-                  <span className="font-mono text-[10px] text-destructive">FULL</span>
-                )}
+                <div className="flex items-center gap-1">
+                  {s.backpack.length >= backpackSlots() && (
+                    <span className="font-mono text-[10px] text-destructive">FULL</span>
+                  )}
+                  {DEV_TOOLS_ENABLED && (
+                    <>
+                      <button
+                        type="button"
+                        className="pixel-btn px-1 py-0 text-[9px]"
+                        onClick={() => {
+                          setDevClearArmed(false);
+                          setDevPickerOpen((open) => !open);
+                        }}
+                      >
+                        DEV ADD
+                      </button>
+                      {devClearArmed ? (
+                        <>
+                          <button
+                            type="button"
+                            className="pixel-btn px-1 py-0 text-[9px] text-destructive"
+                            onClick={clearDevBackpack}
+                          >
+                            CONFIRM
+                          </button>
+                          <button
+                            type="button"
+                            className="pixel-btn px-1 py-0 text-[9px]"
+                            onClick={() => setDevClearArmed(false)}
+                          >
+                            CANCEL
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="pixel-btn px-1 py-0 text-[9px]"
+                          onClick={() => {
+                            setDevPickerOpen(false);
+                            setDevClearArmed(true);
+                          }}
+                        >
+                          CLEAR
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
+              {DEV_TOOLS_ENABLED && devPickerOpen && (
+                <DevItemPicker onPick={addDevBackpackItem} onClose={() => setDevPickerOpen(false)} />
+              )}
               <div className="mt-2 grid grid-cols-2 gap-1">
                 {Array.from({ length: backpackSlots() }).map((_, i) => {
                   const item = s.backpack[i];
