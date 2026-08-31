@@ -3,6 +3,7 @@ import { shouldDrawLanePortMarkers } from "./lanePortsView";
 import { extractMarkerCenter, type GameMap } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
 import type { Enemy, Tower } from "./types";
+import { operatorWorldPos } from "./movement";
 import { ENEMIES } from "./data";
 import { drawGear, drawSprite, floorImage } from "./sprites";
 import type { GearFrameName } from "./sprites";
@@ -642,8 +643,7 @@ export function drawOperator(
 }
 
 export function drawTower(ctx: CanvasRenderingContext2D, t: Tower, time: number) {
-  const cx = t.tx * TILE + TILE / 2;
-  const cy = t.ty * TILE + TILE / 2;
+  const { x: cx, y: cy } = operatorWorldPos(t);
   drawOperator(ctx, t, cx, cy, SCALE, time);
 
   // attachment pips

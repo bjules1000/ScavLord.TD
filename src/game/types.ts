@@ -19,6 +19,22 @@ export interface TowerDef {
   desc: string;
 }
 
+export interface MoveNode {
+  tx: number;
+  ty: number;
+  surface: SurfaceLevel;
+}
+
+/** Raid-only operator travel. Not persisted. */
+export interface OperatorMoveState {
+  x: number;
+  y: number;
+  /** Remaining tile centers, current segment first. */
+  path: MoveNode[];
+  dest: MoveNode;
+  pendingDest: MoveNode | null;
+}
+
 export interface Tower {
   id: number;
   tx: number;
@@ -26,9 +42,11 @@ export interface Tower {
   /**
    * Tactical surface this operator occupies. Raid runtime only.
    * GROUND = base cell; HIGH = high ground or suspended bridge deck.
-   * Pre-movement clicks onto a bridge select HIGH.
+   * Logical surface updates when a movement segment completes.
    */
   surface?: SurfaceLevel;
+  /** In-raid travel. Null/absent when stationary. */
+  move?: OperatorMoveState | null;
   /** weapon id from gear.ts WEAPONS */
   weapon: string;
   /** attachment ids from gear.ts ATTACHMENTS */

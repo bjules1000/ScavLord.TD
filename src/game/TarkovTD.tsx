@@ -27,6 +27,18 @@ import {
   operatorPlacementSurface,
   partitionBySurface,
 } from "./surfaces";
+import {
+  clearOperatorMove,
+  findOperatorPath,
+  isOperatorMoving,
+  issueOperatorMove,
+  logicalNode,
+  operatorCanFire,
+  operatorMoveSpeedPx,
+  operatorWorldPos,
+  resolveMoveDestination,
+  stepOperatorMove,
+} from "./movement";
 import { absorbWithArmor } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -310,6 +322,18 @@ function operatorPlaceableFor(map: GameMap, s: GameState, tx: number, ty: number
   if (!canPlaceOperator(map, tx, ty)) return false;
   if (s.towers.some((t) => t.tx === tx && t.ty === ty)) return false;
   return true;
+}
+
+function towerPos(t: Tower) {
+  return operatorWorldPos(t);
+}
+
+function towerAtTile(towers: Tower[], tx: number, ty: number) {
+  return towers.find((t) => {
+    if (t.tx === tx && t.ty === ty) return true;
+    const p = operatorWorldPos(t);
+    return Math.floor(p.x / TILE) === tx && Math.floor(p.y / TILE) === ty;
+  });
 }
 
 function coverList(map: GameMap, s: GameState): CoverPiece[] {
@@ -1055,18 +1079,16 @@ export default function TarkovTD() {
         let tgt: Tower | null = null;
         let tgtD = Infinity;
         for (const t of s.towers) {
-          const tcx = t.tx * TILE + TILE / 2;
-          const tcy = t.ty * TILE + TILE / 2;
-          const d = Math.hypot(tcx - e.x, tcy - e.y);
+          const pos = towerPos(t);
+          const d = Math.hypot(pos.x - e.x, pos.y - e.y);
           if (d < def.fireRange * SCALE && d < tgtD) {
             tgtD = d;
             tgt = t;
           }
         }
         if (tgt) {
-          const tcx = tgt.tx * TILE + TILE / 2;
-          const tcy = tgt.ty * TILE + TILE / 2;
-          e.aim = Math.atan2(tcy - e.y, tcx - e.x);
+          const pos = towerPos(tgt);
+          e.aim = Math.atan2(pos.y - e.y, pos.x - e.x);
           if (e.fireCd <= 0) {
             e.fireCd = def.fireCooldown * (0.75 + Math.random() * 0.5);
             e.muzzle = 0.07;
@@ -1074,8 +1096,8 @@ export default function TarkovTD() {
               id: s.nextId++,
               x: e.x + Math.cos(e.aim) * 8,
               y: e.y - 2 + Math.sin(e.aim) * 8,
-              tx: tcx,
-              ty: tcy,
+              tx: pos.x,
+              ty: pos.y,
               targetId: -1,
               speed: 520 * SCALE,
               damage: def.towerDamage * (1 + (s.wave - 1) * 0.05),
@@ -1107,9 +1129,10 @@ export default function TarkovTD() {
         if (c.opened) continue;
         const ccx = c.tx * TILE + TILE / 2;
         const ccy = c.ty * TILE + TILE / 2;
-        const near = s.towers.some(
-          (t) => Math.hypot(t.tx * TILE + TILE / 2 - ccx, t.ty * TILE + TILE / 2 - ccy) < TILE * 1.6,
-        );
+        const near = s.towers.some((t) => {
+          const p = towerPos(t);
+          return Math.hypot(p.x - ccx, p.y - ccy) < TILE * 1.6;
+        });
         if (near) {
           c.progress += dt / CRATE_TIME;
           if (c.progress >= 1) {
@@ -1126,14 +1149,17 @@ export default function TarkovTD() {
         }
       }
 
-      // towers fire
+      // towers move, then fire (moving operators cannot shoot)
       for (const t of s.towers) {
+        if (isOperatorMoving(t)) stepOperatorMove(t, dt, mapRef.current, operatorMoveSpeedPx(t));
         const st = towerStats(t, mods, mapRef.current);
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
         t.hurt = Math.max(0, t.hurt - dt);
-        const cx = t.tx * TILE + TILE / 2;
-        const cy = t.ty * TILE + TILE / 2;
+        const pos = towerPos(t);
+        const cx = pos.x;
+        const cy = pos.y;
+        const moving = isOperatorMoving(t);
         const live = s.enemies
           .filter((e) => !isSettledOut(e))
           .map((e) => ({
@@ -1142,7 +1168,7 @@ export default function TarkovTD() {
           }));
         const best = selectTarget(t.targetMode, { x: cx, y: cy }, st.range, live, t.manualTargetId);
         const hasTarget = !!best;
-        if (t.targetMode === "MANUAL" && t.manualTargetId != null && !hasTarget) {
+        if (!moving && t.targetMode === "MANUAL" && t.manualTargetId != null && !hasTarget) {
           t.manualTargetId = null;
         }
         const reloaded = tickReload(
@@ -1160,7 +1186,7 @@ export default function TarkovTD() {
         if (best) {
           t.angle = Math.atan2(best.y - cy - 4, best.x - cx);
         }
-        if (best && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft)) {
+        if (best && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft) && operatorCanFire(t)) {
             t.cd = st.cooldown;
             t.flash = 0.06;
             t.ammo = consumeRound(t.ammo);
@@ -1254,6 +1280,7 @@ export default function TarkovTD() {
           if (!tw || dh <= steph || dh < 4) {
             if (tw) {
               const cover = coverList(mapRef.current, s);
+              // Cover uses the settled logical tile, not the interpolated world pos.
               const prot = coverProtectionFrom(cover, tw.tx, tw.ty, b.sx ?? b.x, b.sy ?? b.y);
               if (prot > 0) {
                 const shield = interceptingBarricade(s.obstacles, tw.tx, tw.ty, b.sx ?? b.x, b.sy ?? b.y, TILE);
@@ -1276,6 +1303,7 @@ export default function TarkovTD() {
                     s.phase = "dead";
                     s.shake = 16;
                     spawnParticles(b.tx, b.ty, "#ff3c3c", 40, 150);
+                    clearOperatorMove(tw);
                     s.towers = s.towers.filter((t) => t.id !== tw.id);
                     pushLog(`${metaRef.current.pmc.name} is dead. Everything they carried is gone.`);
                     paySettledKills(s);
@@ -1283,6 +1311,7 @@ export default function TarkovTD() {
                     return;
                   }
                   dropGear(tw, s);
+                  clearOperatorMove(tw);
                   s.towers = s.towers.filter((t) => t.id !== tw.id);
                   if (s.selectedId === tw.id) s.selectedId = null;
                   spawnParticles(b.tx, b.ty, "#ff8a3c", 22, 110);
@@ -1474,28 +1503,37 @@ export default function TarkovTD() {
       const sel = s.towers.find((t) => t.id === s.selectedId);
       if (sel) {
         const st = towerStats(sel, undefined, mapRef.current);
+        const pos = towerPos(sel);
         ctx.beginPath();
-        ctx.arc(sel.tx * TILE + TILE / 2, sel.ty * TILE + TILE / 2, st.range, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, st.range, 0, Math.PI * 2);
         ctx.strokeStyle = sel.targetMode === "MANUAL" ? "rgba(232,140,48,0.75)" : "rgba(110,220,255,0.7)";
         ctx.setLineDash([4, 4]);
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.strokeStyle = sel.targetMode === "MANUAL" ? "#e88c30" : "#6edcff";
-        ctx.strokeRect(sel.tx * TILE + 1, sel.ty * TILE + 1, TILE - 2, TILE - 2);
-        const scx = sel.tx * TILE + TILE / 2;
-        const scy = sel.ty * TILE + TILE / 2;
+        ctx.strokeRect(pos.x - TILE / 2 + 1, pos.y - TILE / 2 + 1, TILE - 2, TILE - 2);
         for (const c of adjacentCover(coverList(mapRef.current, s), sel.tx, sel.ty)) {
           const a = Math.atan2(c.ty - sel.ty, c.tx - sel.tx);
           ctx.beginPath();
-          ctx.arc(scx, scy, TILE * 0.62, a - 0.6, a + 0.6);
+          ctx.arc(pos.x, pos.y, TILE * 0.62, a - 0.6, a + 0.6);
           ctx.strokeStyle = c.type === "full" ? "rgba(110,220,255,0.9)" : "rgba(240,180,0,0.9)";
           ctx.lineWidth = 4;
           ctx.stroke();
         }
         ctx.lineWidth = 1;
-        if (s.hoverTx >= 0 && operatorPlaceableFor(mapRef.current, s, s.hoverTx, s.hoverTy)) {
-          ctx.strokeStyle = "rgba(125,220,90,0.8)";
+        if (sel.move?.path.length) {
+          ctx.fillStyle = "rgba(110,220,255,0.35)";
+          for (const step of sel.move.path) {
+            const c = { x: step.tx * TILE + TILE / 2, y: step.ty * TILE + TILE / 2 };
+            ctx.fillRect(c.x - 2, c.y - 2, 4, 4);
+          }
+        }
+        if (!s.place && s.hoverTx >= 0) {
+          const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), s.hoverTx, s.hoverTy);
+          const path = dest ? findOperatorPath(mapRef.current, logicalNode(sel), dest) : null;
+          const ok = !!dest && !!path;
+          ctx.strokeStyle = ok ? "rgba(125,220,90,0.8)" : "rgba(255,70,50,0.55)";
           ctx.setLineDash([4, 4]);
           ctx.strokeRect(s.hoverTx * TILE + 2, s.hoverTy * TILE + 2, TILE - 4, TILE - 4);
           ctx.setLineDash([]);
@@ -1616,7 +1654,7 @@ export default function TarkovTD() {
       return;
     }
 
-    const existing = s.towers.find((t) => t.tx === tx && t.ty === ty);
+    const existing = towerAtTile(s.towers, tx, ty);
     if (existing) {
       s.selectedId = existing.id === s.selectedId ? null : existing.id;
       s.selectedObstacle = null;
@@ -1683,13 +1721,14 @@ export default function TarkovTD() {
     }
 
     const sel = s.towers.find((t) => t.id === s.selectedId);
-    if (sel && operatorPlaceableFor(mapRef.current, s, tx, ty)) {
-      sel.tx = tx;
-      sel.ty = ty;
-      sel.surface = operatorPlacementSurface(mapRef.current, tx, ty) ?? "GROUND";
-      sel.cd = Math.max(sel.cd, debuffMods(metaRef.current.pmc.debuffs).moveLock);
-      pushLog("Operator repositioned.");
-      rerender();
+    if (sel && !s.place) {
+      const result = issueOperatorMove(mapRef.current, s.towers, sel, tx, ty);
+      if (!result.ok) {
+        pushLog(result.reason);
+        rerender();
+        return;
+      }
+      if (!result.alreadyThere) rerender();
       return;
     }
 
@@ -1858,6 +1897,7 @@ export default function TarkovTD() {
     const st = towerStats(selected);
     const items = dropEquippedGear(selected.weapon, selected.attachments, newUid, selected.armor ?? null);
     addToBackpack(items);
+    clearOperatorMove(selected);
     s.towers = s.towers.filter((t) => t.id !== selected.id);
     s.selectedId = null;
     pushLog(`Operator dismissed, ${st.weapon.name} back in the pack.`);
@@ -1869,7 +1909,7 @@ export default function TarkovTD() {
     const uid = dragUid.current;
     if (uid == null) return;
     const [tx, ty] = toTile({ clientX: ev.clientX, clientY: ev.clientY, currentTarget: ev.currentTarget });
-    const tower = gs.current.towers.find((t) => t.tx === tx && t.ty === ty);
+    const tower = towerAtTile(gs.current.towers, tx, ty);
     dragUid.current = null;
     if (!tower) return pushLog("Drop gear directly on an operator.");
     equipOnTower(uid, tower.id);
@@ -2635,6 +2675,7 @@ export default function TarkovTD() {
                       selected.reloadLeft,
                       selected.engageTargetId != null,
                       selected.targetMode === "MANUAL" && selected.manualTargetId == null,
+                      isOperatorMoving(selected),
                     );
                     const mag = st.magSize;
                     return (

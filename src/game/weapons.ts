@@ -89,13 +89,15 @@ export function maybeStartReload(
   return 0;
 }
 
-export type CombatStatus = "IDLE" | "ENGAGING" | "RELOADING" | "HOLD";
+export type CombatStatus = "IDLE" | "ENGAGING" | "RELOADING" | "HOLD" | "MOVING";
 
 export function combatStatus(
   reloadLeft: number,
   hasTarget: boolean,
   manualWithoutTarget: boolean,
+  moving = false,
 ): CombatStatus {
+  if (moving) return "MOVING";
   if (reloadLeft > 0) return "RELOADING";
   if (manualWithoutTarget) return "HOLD";
   if (hasTarget) return "ENGAGING";
