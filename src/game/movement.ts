@@ -2,11 +2,12 @@
  * Surface-aware operator movement.
  *
  * Nodes are (tx, ty, surface). LOW and HIGH on the same cell are distinct
- * (ROAD under a bridge vs the deck). LOW↔HIGH is allowed only on authored
- * HIGH_GROUND slope gaps — never by climbing a suspended bridge.
+ * (ROAD under a bridge vs the deck).
  *
- * Invisible walls use the existing canonical edge helper. Barricades, wire,
- * enemies, and other operators are not path blockers in this pass.
+ * Same surface (LOW→LOW, HIGH→HIGH) is allowed when the edge is open.
+ * LOW↔HIGH requires an authored HIGH_GROUND slope. A missing invisible wall
+ * only means the 2D edge is open — it is not an elevator. Suspended bridges
+ * are never slopes.
  */
 import { getEquippedWeight } from "./armor";
 import { COLS, ROWS, TILE } from "./data";
@@ -16,6 +17,7 @@ import {
   baseTerrainAt,
   elevatedSurfaceAt,
   entitySurface,
+  hasSuspendedBridge,
   inMapBounds,
   tileHasFurniture,
 } from "./surfaces";
@@ -109,9 +111,12 @@ export function walkableNodesAt(map: GameMap, tx: number, ty: number): MoveNode[
 }
 
 /**
- * Authored slope: HIGH_GROUND (not a bridge) orthogonally adjacent to walkable
- * LOW, with no invisible wall on that edge. Wall gaps are the slope schema;
- * bridges are never elevators.
+ * Authored slope: HIGH_GROUND terrain orthogonally adjacent to walkable LOW,
+ * with no wall on that edge.
+ *
+ * A missing wall only means the 2D edge is geometrically open. It does not
+ * grant an elevation change. Suspended-bridge overlays are never slopes —
+ * HIGH → HIGH onto the deck stays same-level; LOW stays LOW underneath.
  */
 export function isAuthoredSlope(map: GameMap, a: MoveNode, b: MoveNode): boolean {
   if (a.surface === b.surface) return false;
@@ -119,6 +124,7 @@ export function isAuthoredSlope(map: GameMap, a: MoveNode, b: MoveNode): boolean
   const high = a.surface === "HIGH" ? a : b;
   const low = a.surface === "GROUND" ? a : b;
   if (high.surface !== "HIGH" || low.surface !== "GROUND") return false;
+  if (hasSuspendedBridge(map, a.tx, a.ty) || hasSuspendedBridge(map, b.tx, b.ty)) return false;
   if (elevatedSurfaceAt(map, high.tx, high.ty) !== "HIGH_GROUND") return false;
   if (!canWalkHigh(map, high.tx, high.ty)) return false;
   if (!canWalkLow(map, low.tx, low.ty)) return false;
@@ -127,14 +133,18 @@ export function isAuthoredSlope(map: GameMap, a: MoveNode, b: MoveNode): boolean
 }
 
 export function canTraverse(map: GameMap, from: MoveNode, to: MoveNode): boolean {
-  const dx = to.tx - from.tx;
-  const dy = to.ty - from.ty;
-  if (Math.abs(dx) + Math.abs(dy) !== 1) return false;
+  if (Math.abs(to.tx - from.tx) + Math.abs(to.ty - from.ty) !== 1) return false;
   if (!canWalkSurface(map, from.tx, from.ty, from.surface)) return false;
   if (!canWalkSurface(map, to.tx, to.ty, to.surface)) return false;
   if (isRaidMovementBlockedAcrossEdge(map, [from.tx, from.ty], [to.tx, to.ty])) return false;
   if (from.surface === to.surface) return true;
-  return isAuthoredSlope(map, from, to);
+  if (
+    (from.surface === "GROUND" && to.surface === "HIGH") ||
+    (from.surface === "HIGH" && to.surface === "GROUND")
+  ) {
+    return isAuthoredSlope(map, from, to);
+  }
+  return false;
 }
 
 export function neighborsOf(map: GameMap, node: MoveNode): MoveNode[] {

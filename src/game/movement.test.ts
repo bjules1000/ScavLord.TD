@@ -24,7 +24,7 @@ import {
   tileCenter,
   walkableNodesAt,
 } from "./movement";
-import { applyHighGroundCombat, elevatedSurfaceAt, grantsHighGroundCombatBonus } from "./surfaces";
+import { applyHighGroundCombat, elevatedSurfaceAt, grantsHighGroundCombatBonus, hasSuspendedBridge } from "./surfaces";
 import { absorbWithArmor } from "./armor";
 import { ARMORS } from "./gear";
 import { canPlaceBarricade, canPlaceWire } from "./defenses";
@@ -250,6 +250,120 @@ describe("transitions", () => {
     const map = slopeMap();
     expect(canTraverse(map, node(3, 5, "GROUND"), node(3, 4, "HIGH"))).toBe(false);
     expect(canTraverse(map, node(2, 3, "GROUND"), node(3, 3, "HIGH"))).toBe(false);
+  });
+});
+
+describe("bridge is not an implicit slope", () => {
+  it("HIGH_GROUND → bridge HIGH allowed", () => {
+    const map = slopeMap();
+    expect(canTraverse(map, node(3, 2, "HIGH"), node(3, 3, "HIGH"))).toBe(true);
+  });
+
+  it("bridge HIGH → HIGH_GROUND allowed", () => {
+    const map = slopeMap();
+    expect(canTraverse(map, node(3, 3, "HIGH"), node(3, 2, "HIGH"))).toBe(true);
+  });
+
+  it("bridge HIGH → bridge HIGH allowed", () => {
+    const map = slopeMap();
+    expect(canTraverse(map, node(3, 3, "HIGH"), node(3, 4, "HIGH"))).toBe(true);
+  });
+
+  it("LOW ground → bridge HIGH rejected without slope", () => {
+    const map = slopeMap();
+    expect(canTraverse(map, node(3, 5, "GROUND"), node(3, 4, "HIGH"))).toBe(false);
+    expect(canTraverse(map, node(2, 3, "GROUND"), node(3, 3, "HIGH"))).toBe(false);
+  });
+
+  it("ROAD LOW → bridge HIGH rejected without slope", () => {
+    const map = testMap({
+      bridges: [{ tx: 1, ty: 0, orientation: "H" }],
+    });
+    expect(isRoad(map, 1, 0)).toBe(true);
+    expect(isRoad(map, 2, 0)).toBe(true);
+    expect(canTraverse(map, node(2, 0, "GROUND"), node(1, 0, "HIGH"))).toBe(false);
+    expect(canTraverse(map, node(1, 1, "GROUND"), node(1, 0, "HIGH"))).toBe(false);
+  });
+
+  it("bridge HIGH → LOW ground rejected without slope", () => {
+    const map = slopeMap();
+    expect(canTraverse(map, node(3, 3, "HIGH"), node(2, 3, "GROUND"))).toBe(false);
+    expect(canTraverse(map, node(3, 3, "HIGH"), node(3, 2, "GROUND"))).toBe(false);
+  });
+
+  it("bridge HIGH → ROAD LOW rejected without slope", () => {
+    const map = testMap({
+      bridges: [{ tx: 1, ty: 0, orientation: "H" }],
+    });
+    expect(canTraverse(map, node(1, 0, "HIGH"), node(1, 1, "GROUND"))).toBe(false);
+    expect(canTraverse(map, node(1, 0, "HIGH"), node(2, 0, "GROUND"))).toBe(false);
+  });
+
+  it("absence of invisible wall does NOT permit LOW ↔ HIGH", () => {
+    const map = slopeMap();
+    expect(isRaidMovementBlockedAcrossEdge(map, [3, 2], [3, 3])).toBe(false);
+    expect(isAuthoredSlope(map, node(3, 2, "HIGH"), node(3, 3, "GROUND"))).toBe(false);
+    expect(canTraverse(map, node(3, 3, "GROUND"), node(3, 2, "HIGH"))).toBe(false);
+    expect(canTraverse(map, node(3, 2, "HIGH"), node(3, 3, "GROUND"))).toBe(false);
+  });
+
+  it("authored slope still permits LOW → HIGH", () => {
+    const map = slopeMap();
+    expect(hasSuspendedBridge(map, 2, 2)).toBe(false);
+    expect(hasSuspendedBridge(map, 2, 3)).toBe(false);
+    expect(isAuthoredSlope(map, node(2, 3, "GROUND"), node(2, 2, "HIGH"))).toBe(true);
+    expect(canTraverse(map, node(2, 3, "GROUND"), node(2, 2, "HIGH"))).toBe(true);
+  });
+
+  it("authored slope still permits HIGH → LOW", () => {
+    const map = slopeMap();
+    expect(isAuthoredSlope(map, node(2, 2, "HIGH"), node(2, 3, "GROUND"))).toBe(true);
+    expect(canTraverse(map, node(2, 2, "HIGH"), node(2, 3, "GROUND"))).toBe(true);
+  });
+
+  it("LOW route underneath bridge still works", () => {
+    const map = slopeMap();
+    const path = findOperatorPath(map, node(3, 5, "GROUND"), node(3, 3, "GROUND"));
+    expect(path).not.toBeNull();
+    expect(path!.every((p) => p.surface === "GROUND")).toBe(true);
+  });
+
+  it("HIGH route across bridge still works", () => {
+    const map = slopeMap();
+    const path = findOperatorPath(map, node(3, 2, "HIGH"), node(3, 4, "HIGH"));
+    expect(path).not.toBeNull();
+    expect(path!.every((p) => p.surface === "HIGH")).toBe(true);
+  });
+
+  it("Pine Cut bridge can no longer be used to climb up/down", () => {
+    const map = woods();
+    expect(hasSuspendedBridge(map, 13, 5)).toBe(true);
+    expect(hasSuspendedBridge(map, 13, 7)).toBe(true);
+    expect(elevatedSurfaceAt(map, 13, 4)).toBe("HIGH_GROUND");
+    expect(elevatedSurfaceAt(map, 13, 8)).toBe("HIGH_GROUND");
+    expect(isRaidMovementBlockedAcrossEdge(map, [13, 4], [13, 5])).toBe(false);
+    expect(isRaidMovementBlockedAcrossEdge(map, [13, 7], [13, 8])).toBe(false);
+
+    expect(canTraverse(map, node(13, 4, "HIGH"), node(13, 5, "HIGH"))).toBe(true);
+    expect(canTraverse(map, node(13, 5, "HIGH"), node(13, 4, "HIGH"))).toBe(true);
+    expect(canTraverse(map, node(13, 7, "HIGH"), node(13, 8, "HIGH"))).toBe(true);
+
+    expect(canTraverse(map, node(13, 5, "GROUND"), node(13, 4, "HIGH"))).toBe(false);
+    expect(canTraverse(map, node(13, 4, "HIGH"), node(13, 5, "GROUND"))).toBe(false);
+    expect(canTraverse(map, node(13, 7, "GROUND"), node(13, 8, "HIGH"))).toBe(false);
+    expect(canTraverse(map, node(13, 8, "HIGH"), node(13, 7, "GROUND"))).toBe(false);
+    expect(canTraverse(map, node(12, 7, "GROUND"), node(13, 7, "HIGH"))).toBe(false);
+    expect(canTraverse(map, node(13, 7, "HIGH"), node(12, 7, "GROUND"))).toBe(false);
+    expect(canTraverse(map, node(14, 7, "GROUND"), node(13, 7, "HIGH"))).toBe(false);
+    expect(canTraverse(map, node(13, 7, "HIGH"), node(14, 7, "GROUND"))).toBe(false);
+
+    const across = findOperatorPath(map, node(13, 4, "HIGH"), node(13, 8, "HIGH"));
+    expect(across).not.toBeNull();
+    expect(across!.every((p) => p.surface === "HIGH")).toBe(true);
+
+    const under = findOperatorPath(map, node(12, 7, "GROUND"), node(14, 7, "GROUND"));
+    expect(under).not.toBeNull();
+    expect(under!.every((p) => p.surface === "GROUND")).toBe(true);
   });
 });
 
