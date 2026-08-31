@@ -1,4 +1,5 @@
 import { COLS, ROWS, TILE } from "./data";
+import { mapLaneDefs } from "./lanes";
 
 export type PropType =
   | "crate"
@@ -51,6 +52,10 @@ export interface MapDef {
   /** short callsign shown on the region map */
   sector: string;
   path: Array<[number, number]>;
+  /** Extra/all authored lanes. When set, MAIN is also listed here and `path` matches MAIN. */
+  lanes?: Array<{ id: string; path: Array<[number, number]> }>;
+  /** Water tiles. Not road, not buildable. */
+  water?: Array<[number, number]>;
   props: Prop[];
   checkpoint: CheckpointPart[];
   cover: Array<[number, number, CoverType]>;
@@ -59,11 +64,20 @@ export interface MapDef {
 }
 
 
+export interface GameLane {
+  id: string;
+  PIX: Array<[number, number]>;
+  SEG_LEN: number[];
+}
+
 export interface GameMap {
   def: MapDef;
+  lanes: GameLane[];
+  /** MAIN / first lane, kept for spawn-tile search and older call sites. */
   PIX: Array<[number, number]>;
   SEG_LEN: number[];
   BLOCKED: boolean[][];
+  WATER: boolean[][];
   PROPS: Prop[];
   CHECKPOINT: CheckpointPart[];
   COVER: CoverPiece[];
@@ -175,60 +189,154 @@ export const MAP_DEFS: MapDef[] = [
     sector: "SECTOR C-7",
     palette: KOLKHOZ_PAL,
     path: [
-      [-1, 2],
+      [0, 3],
+      [1, 3],
+      [2, 3],
+      [3, 3],
+      [4, 3],
+      [5, 3],
+      [6, 3],
+      [7, 3],
+      [8, 3],
+      [9, 3],
+      [10, 3],
+      [10, 2],
+      [11, 2],
+      [12, 2],
+      [13, 2],
+      [13, 1],
+      [14, 1],
+      [15, 1],
+      [16, 1],
+      [16, 0],
+    ],
+    lanes: [
+      {
+        id: "MAIN",
+        path: [
+          [0, 3],
+          [1, 3],
+          [2, 3],
+          [3, 3],
+          [4, 3],
+          [5, 3],
+          [6, 3],
+          [7, 3],
+          [8, 3],
+          [9, 3],
+          [10, 3],
+          [10, 2],
+          [11, 2],
+          [12, 2],
+          [13, 2],
+          [13, 1],
+          [14, 1],
+          [15, 1],
+          [16, 1],
+          [16, 0],
+        ],
+      },
+      {
+        id: "A",
+        path: [
+          [0, 5],
+          [1, 5],
+          [2, 5],
+          [3, 5],
+          [4, 5],
+          [5, 5],
+          [6, 5],
+          [7, 5],
+          [8, 5],
+          [9, 5],
+          [10, 5],
+          [10, 6],
+          [10, 7],
+          [10, 8],
+          [11, 8],
+          [12, 8],
+          [13, 8],
+          [14, 8],
+          [15, 8],
+          [15, 9],
+          [15, 10],
+          [16, 10],
+          [17, 10],
+          [18, 10],
+          [19, 10],
+        ],
+      },
+    ],
+    water: [
+      [5, 0],
+      [6, 0],
+      [7, 0],
+      [8, 0],
+      [5, 1],
+      [6, 1],
+      [7, 1],
+      [8, 1],
       [5, 2],
+      [6, 2],
+      [7, 2],
+      [8, 2],
+      [5, 4],
+      [6, 4],
+      [7, 4],
+      [8, 4],
       [5, 6],
-      [1, 6],
-      [1, 10],
-      [11, 10],
-      [11, 4],
-      [16, 4],
-      [16, 9],
-      [20, 9],
+      [6, 6],
+      [7, 6],
+      [8, 6],
+      [5, 7],
+      [6, 7],
+      [7, 7],
+      [8, 7],
+      [4, 8],
+      [5, 8],
+      [6, 8],
+      [7, 8],
+      [8, 8],
+      [4, 9],
+      [5, 9],
+      [6, 9],
+      [7, 9],
+      [3, 10],
+      [4, 10],
+      [5, 10],
+      [6, 10],
+      [7, 10],
+      [3, 11],
+      [4, 11],
+      [5, 11],
+      [6, 11],
+      [3, 12],
+      [4, 12],
+      [5, 12],
+      [6, 12],
     ],
     props: [
-      { tx: 8, ty: 1, type: "hut" },
-      { tx: 14, ty: 1, type: "tree" },
-      { tx: 17, ty: 1, type: "tree" },
-      { tx: 18, ty: 2, type: "rock" },
-      { tx: 9, ty: 4, type: "crate" },
-      { tx: 8, ty: 6, type: "barrel" },
-      { tx: 3, ty: 8, type: "tree" },
-      { tx: 13, ty: 7, type: "hut" },
-      { tx: 6, ty: 11, type: "barrel" },
-      { tx: 15, ty: 11, type: "tree" },
-      { tx: 18, ty: 6, type: "rock" },
       { tx: 0, ty: 0, type: "tree" },
-      { tx: 2, ty: 4, type: "rock" },
-      { tx: 10, ty: 2, type: "crate" },
-      { tx: 1, ty: 12, type: "tree" },
-      { tx: 19, ty: 12, type: "tree" },
-      { tx: 9, ty: 11, type: "tree" },
-      { tx: 7, ty: 3, type: "tanker" },
-      { tx: 15, ty: 7, type: "truck" },
+      { tx: 3, ty: 0, type: "tree" },
+      { tx: 4, ty: 1, type: "tree" },
+      { tx: 0, ty: 8, type: "tree" },
+      { tx: 3, ty: 8, type: "tree" },
+      { tx: 1, ty: 9, type: "tree" },
+      { tx: 0, ty: 11, type: "tree" },
+      { tx: 2, ty: 11, type: "tree" },
+      { tx: 10, ty: 11, type: "tree" },
+      { tx: 2, ty: 12, type: "tree" },
+      { tx: 8, ty: 12, type: "tree" },
     ],
     checkpoint: [
-      { tx: 2, ty: 1, type: "booth" },
-      { tx: 2, ty: 2, type: "gate" },
-      { tx: 2, ty: 3, type: "post" },
-      { tx: 16, ty: 8, type: "gate2" },
+      { tx: 2, ty: 2, type: "booth" },
+      { tx: 2, ty: 3, type: "gate2" },
+      { tx: 2, ty: 4, type: "booth" },
+      { tx: 2, ty: 5, type: "gate2" },
+      { tx: 2, ty: 6, type: "post" },
     ],
-    cover: [
-      [3, 4, "full"],
-      [7, 7, "half"],
-      [10, 8, "half"],
-      [13, 3, "full"],
-      [14, 5, "half"],
-      [17, 6, "full"],
-      [4, 9, "half"],
-      [12, 11, "full"],
-    ],
-    crates: [
-      [6, 4],
-      [12, 8],
-      [17, 2],
-      [3, 11],
-    ],
+    cover: [],
+    crates: [],
   },
   {
     id: "factory",
@@ -296,16 +404,16 @@ export const MAP_DEFS: MapDef[] = [
 
 export const MAP_BY_ID: Record<string, MapDef> = Object.fromEntries(MAP_DEFS.map((m) => [m.id, m]));
 
-export function buildMap(def: MapDef): GameMap {
-  const PIX: Array<[number, number]> = def.path.map(([x, y]) => [
-    (x + 0.5) * TILE,
-    (y + 0.5) * TILE,
-  ]);
+function geometryFromPath(path: Array<[number, number]>): { PIX: Array<[number, number]>; SEG_LEN: number[] } {
+  const PIX: Array<[number, number]> = path.map(([x, y]) => [(x + 0.5) * TILE, (y + 0.5) * TILE]);
   const SEG_LEN = PIX.slice(0, -1).map((p, i) => {
     const q = PIX[i + 1]!;
     return Math.hypot(q[0] - p[0], q[1] - p[1]);
   });
-  const BLOCKED: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  return { PIX, SEG_LEN };
+}
+
+function stampRoad(BLOCKED: boolean[][], PIX: Array<[number, number]>) {
   for (let i = 0; i < PIX.length - 1; i++) {
     const [ax, ay] = PIX[i]!;
     const [bx, by] = PIX[i + 1]!;
@@ -321,24 +429,52 @@ export function buildMap(def: MapDef): GameMap {
         }
     }
   }
-  const PROPS = def.props.filter((p) => !BLOCKED[p.ty]?.[p.tx]);
+}
+
+export function buildMap(def: MapDef): GameMap {
+  const lanes = mapLaneDefs(def).map((lane) => ({ id: lane.id, ...geometryFromPath(lane.path) }));
+  const primary = lanes[0] ?? { id: "MAIN", ...geometryFromPath(def.path) };
+  const BLOCKED: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  for (const lane of lanes) stampRoad(BLOCKED, lane.PIX);
+  const WATER: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  for (const [x, y] of def.water ?? []) {
+    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) WATER[y]![x] = true;
+  }
+  const occupied = (tx: number, ty: number) => !!BLOCKED[ty]?.[tx] || !!WATER[ty]?.[tx];
+  const PROPS = def.props.filter((p) => !occupied(p.tx, p.ty));
   const COVER: CoverPiece[] = def.cover
-    .filter(([tx, ty]) => !BLOCKED[ty]?.[tx] && !PROPS.some((p) => p.tx === tx && p.ty === ty))
+    .filter(([tx, ty]) => !occupied(tx, ty) && !PROPS.some((p) => p.tx === tx && p.ty === ty))
     .map(([tx, ty, type]) => ({ tx, ty, type }));
   const CRATES = def.crates
     .map(([tx, ty]) => ({ tx, ty }))
     .filter(
       (c) =>
-        !BLOCKED[c.ty]?.[c.tx] &&
+        !occupied(c.tx, c.ty) &&
         !PROPS.some((p) => p.tx === c.tx && p.ty === c.ty) &&
         !COVER.some((p) => p.tx === c.tx && p.ty === c.ty),
     );
-  return { def, PIX, SEG_LEN, BLOCKED, PROPS, CHECKPOINT: def.checkpoint, COVER, CRATES };
+  return {
+    def,
+    lanes: lanes.length ? lanes : [primary],
+    PIX: primary.PIX,
+    SEG_LEN: primary.SEG_LEN,
+    BLOCKED,
+    WATER,
+    PROPS,
+    CHECKPOINT: def.checkpoint,
+    COVER,
+    CRATES,
+  };
 }
 
-export function pathPoint(map: GameMap, seg: number, t: number): [number, number] {
-  const a = map.PIX[seg] ?? map.PIX[0]!;
-  const b = map.PIX[seg + 1] ?? map.PIX[map.PIX.length - 1]!;
+export function laneRoute(map: GameMap, lane = 0): GameLane {
+  return map.lanes[lane] ?? map.lanes[0]!;
+}
+
+export function pathPoint(map: GameMap, seg: number, t: number, lane = 0): [number, number] {
+  const route = laneRoute(map, lane);
+  const a = route.PIX[seg] ?? route.PIX[0]!;
+  const b = route.PIX[seg + 1] ?? route.PIX[route.PIX.length - 1]!;
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
 }
 
@@ -347,9 +483,15 @@ export function isRoad(map: GameMap, tx: number, ty: number) {
   return !!map.BLOCKED[ty]![tx];
 }
 
+export function isWater(map: GameMap, tx: number, ty: number) {
+  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+  return !!map.WATER[ty]![tx];
+}
+
 export function isBuildable(map: GameMap, tx: number, ty: number) {
   if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
   if (map.BLOCKED[ty]![tx]) return false;
+  if (map.WATER[ty]![tx]) return false;
   if (map.PROPS.some((p) => p.tx === tx && p.ty === ty)) return false;
   if (map.CRATES.some((p) => p.tx === tx && p.ty === ty)) return false;
   if (map.COVER.some((c) => c.tx === tx && c.ty === ty)) return false;

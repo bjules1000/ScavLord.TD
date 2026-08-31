@@ -10,10 +10,12 @@ import {
   coverProtectionFrom,
   isBuildable,
   isRoad,
+  laneRoute,
   pathPoint,
   type CoverPiece,
   type GameMap,
 } from "./map";
+import { assignSpawnLane, lanePathProgress } from "./lanes";
 import {
   ARMORS,
   ATTACHMENTS,
@@ -69,7 +71,6 @@ import { settleHaul } from "./extract";
 import {
   TARGET_MODES,
   hitTestEnemy,
-  pathProgress,
   selectTarget,
 } from "./targeting";
 import {
@@ -140,6 +141,7 @@ type Phase = "hideout" | "prep" | "combat" | "loot" | "dead" | "extracted";
 interface SpawnEvent {
   at: number;
   kind: EnemyKind;
+  lane: number;
 }
 interface Drop {
   id: number;
@@ -904,10 +906,11 @@ export default function TarkovTD() {
           kind: ev.kind,
           hp,
           maxHp: hp,
+          lane: ev.lane,
           seg: 0,
           t: 0,
-          x: mapRef.current.PIX[0]![0],
-          y: mapRef.current.PIX[0]![1],
+          x: laneRoute(mapRef.current, ev.lane).PIX[0]![0],
+          y: laneRoute(mapRef.current, ev.lane).PIX[0]![1],
           slow: 0,
           hitFlash: 0,
           step: Math.random() * 4,
@@ -925,10 +928,11 @@ export default function TarkovTD() {
         e.hitFlash = Math.max(0, e.hitFlash - dt);
         e.slow = Math.max(0, e.slow - dt);
         if (isSettledOut(e)) continue;
+        const route = laneRoute(mapRef.current, e.lane);
         const sp = def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? 0.45 : 1);
         let move = sp * dt;
-        while (move > 0 && e.seg < mapRef.current.SEG_LEN.length) {
-          const len = mapRef.current.SEG_LEN[e.seg]!;
+        while (move > 0 && e.seg < route.SEG_LEN.length) {
+          const len = route.SEG_LEN[e.seg]!;
           const remain = (1 - e.t) * len;
           if (move < remain) {
             e.t += move / len;
@@ -940,13 +944,14 @@ export default function TarkovTD() {
           }
         }
         e.step += sp * dt * 0.25;
-        if (e.seg >= mapRef.current.SEG_LEN.length) {
+        if (e.seg >= route.SEG_LEN.length) {
           if (leakIfAlive(e)) {
             s.lives -= def.damage;
             s.shake = 8;
+            const end = route.PIX[route.PIX.length - 1]!;
             s.floats.push({
-              x: mapRef.current.PIX[mapRef.current.PIX.length - 1]![0],
-              y: mapRef.current.PIX[mapRef.current.PIX.length - 1]![1] - 16,
+              x: end[0],
+              y: end[1] - 16,
               life: 1,
               text: `-${def.damage} HP`,
               color: "#ff5a3c",
@@ -954,7 +959,7 @@ export default function TarkovTD() {
           }
           continue;
         }
-        const [x, y] = pathPoint(mapRef.current, e.seg, e.t);
+        const [x, y] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
         e.x = x;
         e.y = y;
 
@@ -1010,7 +1015,7 @@ export default function TarkovTD() {
             });
           }
         } else {
-          const [nx, ny] = pathPoint(mapRef.current, e.seg, Math.min(1, e.t + 0.05));
+          const [nx, ny] = pathPoint(mapRef.current, e.seg, Math.min(1, e.t + 0.05), e.lane);
           e.aim = Math.atan2(ny - e.y, nx - e.x);
         }
       }
@@ -1057,7 +1062,10 @@ export default function TarkovTD() {
         const cy = t.ty * TILE + TILE / 2;
         const live = s.enemies
           .filter((e) => !isSettledOut(e))
-          .map((e) => ({ ...e, pathProgress: pathProgress(e.seg, e.t) }));
+          .map((e) => ({
+            ...e,
+            pathProgress: lanePathProgress(e.seg, e.t, laneRoute(mapRef.current, e.lane).SEG_LEN.length),
+          }));
         const best = selectTarget(t.targetMode, { x: cx, y: cy }, st.range, live, t.manualTargetId);
         const hasTarget = !!best;
         if (t.targetMode === "MANUAL" && t.manualTargetId != null && !hasTarget) {
@@ -1599,9 +1607,12 @@ export default function TarkovTD() {
     const wave = buildWave(s.wave, mapRef.current.def.waveMods);
     let at = 400;
     const q: SpawnEvent[] = [];
+    let spawnIndex = 0;
+    const laneCount = mapRef.current.lanes.length;
     for (const g of wave.groups) {
       for (let i = 0; i < g.count; i++) {
-        q.push({ at, kind: g.kind });
+        q.push({ at, kind: g.kind, lane: assignSpawnLane(spawnIndex, laneCount) });
+        spawnIndex += 1;
         at += g.gap;
       }
       at += 700;

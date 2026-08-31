@@ -10,12 +10,14 @@
  *
  * Browser never writes repo files. Export is the handoff boundary.
  *
- * Main (3ed2823) MapDef is a single `path` plus props/cover/crates/checkpoints.
- * Water, high ground, mountain, extra lanes, gates, zones, and edge objects are
- * editor-native / future-compatible. `integrationNotes()` lists what main cannot
- * store yet so nothing is silently discarded at export time.
+ * Main MapDef stores `path` (MAIN), optional extra `lanes`, optional `water`,
+ * plus props/cover/crates/checkpoints.
+ * High ground, mountain, combat gates, zones, and edge objects remain
+ * editor-native / future-compatible. `integrationNotes()` lists what production
+ * cannot store yet so nothing is silently discarded at export time.
  */
 import { COLS, ROWS } from "../data";
+import { mapLaneDefs } from "../lanes";
 import { MAP_BY_ID, MAP_DEFS, type CoverType, type MapDef } from "../map";
 import { createBlankMap, emptyTerrain } from "./document";
 import { onMapCells, pathCells } from "./pathing";
@@ -44,11 +46,18 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     waveMods: def.waveMods ? { ...def.waveMods } : null,
     sector: def.sector,
     geo: { ...def.geo },
-    lanes: [{ id: "MAIN", waypoints: def.path.map(([x, y]) => [x, y] as [number, number]) }],
+    lanes: mapLaneDefs(def).map((l) => ({
+      id: l.id,
+      waypoints: l.path.map(([x, y]) => [x, y] as [number, number]),
+    })),
   };
-  const road = onMapCells(pathCells(def.path), COLS, ROWS);
   const terrain = emptyTerrain(COLS, ROWS);
-  for (const [x, y] of road) terrain[y]![x] = "ROAD";
+  for (const lane of mapLaneDefs(def)) {
+    for (const [x, y] of onMapCells(pathCells(lane.path), COLS, ROWS)) terrain[y]![x] = "ROAD";
+  }
+  for (const [x, y] of def.water ?? []) {
+    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) terrain[y]![x] = "WATER";
+  }
   doc.terrain = terrain;
   doc.props = def.props.map((p, i) => ({
     id: `prop-${i + 1}`,
@@ -98,12 +107,14 @@ export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
   if (doc.lanes.length > 1) {
     notes.push({
       code: "LANES",
-      message: `Export has ${doc.lanes.length} lanes; main MapDef stores one path. Keep extra lanes from the export.`,
+      message: `Export has ${doc.lanes.length} lanes; production MapDef.lanes must keep every route.`,
     });
   }
   const kinds = new Set<TerrainKind>();
   for (const row of doc.terrain) for (const cell of row) kinds.add(cell);
-  if (kinds.has("WATER")) notes.push({ code: "WATER", message: "Water tiles exist; main MapDef has no water grid." });
+  if (kinds.has("WATER")) {
+    notes.push({ code: "WATER", message: "Water tiles exist; production MapDef.water must keep them." });
+  }
   if (kinds.has("MOUNTAIN")) {
     notes.push({ code: "MOUNTAIN", message: "Mountain/blocked tiles exist; main MapDef has no blocked terrain." });
   }
@@ -155,7 +166,25 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
     palette: { ...doc.palette },
   };
   if (doc.waveMods) def.waveMods = { ...doc.waveMods };
+  if (doc.lanes.length > 1) {
+    def.lanes = doc.lanes.map((l) => ({
+      id: l.id,
+      path: l.waypoints.map(([x, y]) => [x, y] as [number, number]),
+    }));
+  }
+  const water = waterTiles(doc);
+  if (water) def.water = water;
   return def;
+}
+
+function waterTiles(doc: EditorMapDoc): Array<[number, number]> | undefined {
+  const out: Array<[number, number]> = [];
+  for (let y = 0; y < doc.height; y++) {
+    for (let x = 0; x < doc.width; x++) {
+      if (doc.terrain[y]![x] === "WATER") out.push([x, y]);
+    }
+  }
+  return out.length ? out : undefined;
 }
 
 export function draftIdForSource(sourceMapId: string): string {

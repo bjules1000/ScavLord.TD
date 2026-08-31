@@ -84,6 +84,19 @@ describe("map builder drafts", () => {
     expect(draft.terrain[0]![0]).toBe("GROUND");
   });
 
+  it("loads GRAIN GATE with both authored lanes and water", () => {
+    const grain = fromProductionMap(MAP_BY_ID["kolkhoz"]!);
+    expect(grain.lanes.map((l) => l.id)).toEqual(["MAIN", "A"]);
+    expect(grain.lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual(MAP_BY_ID["kolkhoz"]!.path);
+    expect(grain.lanes.find((l) => l.id === "A")!.waypoints.at(-1)).toEqual([19, 10]);
+    expect(grain.terrain[0]![5]).toBe("WATER");
+    expect(grain.terrain[3]![0]).toBe("ROAD");
+    expect(grain.terrain[5]![0]).toBe("ROAD");
+    const produced = toProductionMapDef(grain);
+    expect(produced.lanes?.map((l) => l.id).sort()).toEqual(["A", "MAIN"]);
+    expect(produced.water?.length).toBe(MAP_BY_ID["kolkhoz"]!.water?.length);
+  });
+
   it("creates a blank ground grid from validated new-map input", () => {
     expect(validateNewMapInput({ displayName: "", id: "ab", width: 20, height: 13 })).toBeTruthy();
     const doc = createBlankMap({ displayName: "BLANK", id: "blank-map", width: 12, height: 10 });

@@ -80,6 +80,16 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
   }
 
 
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!map.WATER[y]![x]) continue;
+      ctx.fillStyle = "#1a4a6a";
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      ctx.fillStyle = "#2a6a8a";
+      ctx.fillRect(x * TILE + 4, y * TILE + 4, TILE - 8, TILE - 8);
+    }
+  }
+
   // road: mud shoulders + cracked asphalt
   ctx.lineCap = "square";
   ctx.lineJoin = "miter";
@@ -116,7 +126,7 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
   for (let ty = 0; ty < ROWS; ty++) {
     for (let tx = 0; tx < COLS; tx++) {
       const n = r3();
-      const on = map.BLOCKED[ty]?.[tx];
+      const on = map.BLOCKED[ty]?.[tx] || map.WATER[ty]?.[tx];
       if (on || n > 0.16) continue;
       const name: "grass2" | "grass3" = n < 0.05 ? "grass2" : "grass3";
       const size = TILE * (0.8 + r3() * 0.45);
@@ -133,17 +143,19 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
 
 
   // extraction marker
-  const end = map.PIX[map.PIX.length - 1]!;
-  ctx.save();
-  ctx.translate(end[0], end[1]);
-  ctx.scale(SCALE, SCALE);
-  px(ctx, "#132b18", -16, -18, 32, 36);
-  px(ctx, "#1d5c2a", -14, -16, 28, 32);
-  px(ctx, "#4dd36a", -14, -16, 28, 4);
-  px(ctx, "#4dd36a", -14, 12, 28, 4);
-  px(ctx, "#0d1a10", -6, -6, 12, 12);
-  px(ctx, "#4dd36a", -4, -4, 8, 8);
-  ctx.restore();
+  for (const lane of map.lanes) {
+    const end = lane.PIX[lane.PIX.length - 1]!;
+    ctx.save();
+    ctx.translate(end[0], end[1]);
+    ctx.scale(SCALE, SCALE);
+    px(ctx, "#132b18", -16, -18, 32, 36);
+    px(ctx, "#1d5c2a", -14, -16, 28, 32);
+    px(ctx, "#4dd36a", -14, -16, 28, 4);
+    px(ctx, "#4dd36a", -14, 12, 28, 4);
+    px(ctx, "#0d1a10", -6, -6, 12, 12);
+    px(ctx, "#4dd36a", -4, -4, 8, 8);
+    ctx.restore();
+  }
 }
 
 /** Player-built barricades and barbed wire. Barricades render heavier as they upgrade. */
@@ -199,10 +211,13 @@ export function drawObstacle(
 
 
 function strokePath(ctx: CanvasRenderingContext2D, map: GameMap) {
-  ctx.beginPath();
-  ctx.moveTo(map.PIX[0]![0], map.PIX[0]![1]);
-  for (let i = 1; i < map.PIX.length; i++) ctx.lineTo(map.PIX[i]![0], map.PIX[i]![1]);
-  ctx.stroke();
+  for (const lane of map.lanes) {
+    if (!lane.PIX.length) continue;
+    ctx.beginPath();
+    ctx.moveTo(lane.PIX[0]![0], lane.PIX[0]![1]);
+    for (let i = 1; i < lane.PIX.length; i++) ctx.lineTo(lane.PIX[i]![0], lane.PIX[i]![1]);
+    ctx.stroke();
+  }
 }
 
 
