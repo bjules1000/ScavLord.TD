@@ -4,6 +4,8 @@ export const TILE = 44;
 export const SCALE = TILE / 32;
 export const COLS = 20;
 export const ROWS = 13;
+/** Presentation-only margin around the playable raid board. Not extra gameplay tiles. */
+export const BOARD_GUTTER = TILE;
 
 /** Default lane waypoints (Kolkhoz / Grain Gate) — unused; live paths live in map.ts. */
 export const PATH: Array<[number, number]> = [

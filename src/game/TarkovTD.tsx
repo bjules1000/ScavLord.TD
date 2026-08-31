@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { COLS, ENEMIES, ROWS, SCALE, TILE, buildWave, waveScale } from "./data";
+import { BOARD_GUTTER, COLS, ENEMIES, ROWS, SCALE, TILE, buildWave, waveScale } from "./data";
 import {
   MAP_DEFS,
   MAP_BY_ID,
@@ -106,8 +106,10 @@ import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
 
-const W = COLS * TILE;
-const H = ROWS * TILE;
+const PLAYABLE_W = COLS * TILE;
+const PLAYABLE_H = ROWS * TILE;
+const W = PLAYABLE_W + BOARD_GUTTER * 2;
+const H = PLAYABLE_H + BOARD_GUTTER * 2;
 const START_ROUBLES = 500;
 const START_LIVES = 20;
 const BASE_BACKPACK_SLOTS = 5;
@@ -401,7 +403,12 @@ export default function TarkovTD() {
     c.height = H;
     const ctx = c.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#0a0c08";
+    ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
     drawTerrain(ctx, mapRef.current);
+    ctx.restore();
     terrainRef.current = c;
     if (gs.current.phase === "hideout") gs.current = freshState([], "hideout", mapRef.current);
     rerender();
@@ -1337,6 +1344,8 @@ export default function TarkovTD() {
       ctx.save();
       if (s.shake > 0) ctx.translate((Math.random() - 0.5) * s.shake, (Math.random() - 0.5) * s.shake);
       ctx.drawImage(terrain, 0, 0);
+      ctx.save();
+      ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
 
       for (const c of s.crates) drawCrate(ctx, c.tx, c.ty, c.progress, c.opened);
       for (const o of s.obstacles)
@@ -1460,6 +1469,7 @@ export default function TarkovTD() {
         ctx.fillText(f.text, f.x, f.y);
       }
       ctx.globalAlpha = 1;
+      ctx.restore();
 
       ctx.fillStyle = "rgba(0,0,0,0.14)";
       for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
@@ -1481,8 +1491,8 @@ export default function TarkovTD() {
   const toWorld = (ev: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }) => {
     const rect = ev.currentTarget.getBoundingClientRect();
     return {
-      x: ((ev.clientX - rect.left) / rect.width) * W,
-      y: ((ev.clientY - rect.top) / rect.height) * H,
+      x: ((ev.clientX - rect.left) / rect.width) * W - BOARD_GUTTER,
+      y: ((ev.clientY - rect.top) / rect.height) * H - BOARD_GUTTER,
     };
   };
 

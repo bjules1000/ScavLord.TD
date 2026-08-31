@@ -1,5 +1,5 @@
 import { COLS, ROWS, SCALE, TILE } from "./data";
-import type { GameMap } from "./map";
+import { extractMarkerCenter, type GameMap } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
 import type { Enemy, Tower } from "./types";
 import { ENEMIES } from "./data";
@@ -142,9 +142,9 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap) {
   for (const c of map.CHECKPOINT) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
 
 
-  // extraction marker
+  // extraction marker — outside the playable board
   for (const lane of map.lanes) {
-    const end = lane.PIX[lane.PIX.length - 1]!;
+    const end = extractMarkerCenter(lane.PIX);
     ctx.save();
     ctx.translate(end[0], end[1]);
     ctx.scale(SCALE, SCALE);

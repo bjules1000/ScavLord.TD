@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { TILE } from "./data";
 import { assignSpawnLane, lanePathProgress, mapLaneDefs } from "./lanes";
-import { MAP_BY_ID, buildMap, isBuildable, isRoad, isWater, laneRoute, pathPoint } from "./map";
+import { MAP_BY_ID, buildMap, extractMarkerCenter, isBuildable, isRoad, isWater, laneRoute, pathPoint, worldInPlayableBoard } from "./map";
 
 describe("lane spawn split", () => {
   it("round-robins across two lanes with MAIN first", () => {
@@ -31,11 +32,30 @@ describe("GRAIN GATE dual-lane rebuild", () => {
     const lanes = mapLaneDefs(def);
     expect(lanes.map((l) => l.id)).toEqual(["MAIN", "A"]);
     expect(def.path).toEqual(lanes[0]!.path);
-    expect(lanes[0]!.path[0]).toEqual([0, 3]);
-    expect(lanes[0]!.path.at(-1)).toEqual([16, 0]);
-    expect(lanes[1]!.path[0]).toEqual([0, 5]);
-    expect(lanes[1]!.path.at(-1)).toEqual([19, 10]);
+    expect(lanes[0]!.path[0]).toEqual([-1, 3]);
+    expect(lanes[0]!.path.at(-1)).toEqual([16, -1]);
+    expect(lanes[1]!.path[0]).toEqual([-1, 5]);
+    expect(lanes[1]!.path.at(-1)).toEqual([20, 10]);
     expect(map.lanes.map((l) => l.id)).toEqual(["MAIN", "A"]);
+  });
+
+  it("keeps extract pads outside the playable board", () => {
+    for (const lane of map.lanes) {
+      const pos = extractMarkerCenter(lane.PIX);
+      expect(worldInPlayableBoard(pos[0], pos[1])).toBe(false);
+    }
+    for (const id of ["woods", "factory"] as const) {
+      const built = buildMap(MAP_BY_ID[id]!);
+      for (const lane of built.lanes) {
+        expect(worldInPlayableBoard(...extractMarkerCenter(lane.PIX))).toBe(false);
+      }
+    }
+    const onMapEnd = extractMarkerCenter([
+      [0.5 * TILE, 5.5 * TILE],
+      [19.5 * TILE, 5.5 * TILE],
+    ]);
+    expect(worldInPlayableBoard(onMapEnd[0], onMapEnd[1])).toBe(false);
+    expect(onMapEnd[0]).toBeGreaterThan(20 * TILE);
   });
 
   it("stamps both roads and water, and does not treat water as road", () => {

@@ -165,7 +165,11 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
   };
   if (doc.waveMods) def.waveMods = { ...doc.waveMods };
   if (doc.lanes.length > 1) {
-    def.lanes = doc.lanes.map((l) => ({
+    const ordered = [
+      ...doc.lanes.filter((l) => l.id === "MAIN"),
+      ...doc.lanes.filter((l) => l.id !== "MAIN"),
+    ];
+    def.lanes = ordered.map((l) => ({
       id: l.id,
       path: productionPathFromLane(l),
     }));

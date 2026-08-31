@@ -107,7 +107,9 @@ describe("map builder drafts", () => {
     expect(grain.lanes.map((l) => l.id)).toEqual(["MAIN", "A"]);
     const main = grain.lanes.find((l) => l.id === "MAIN")!;
     const a = grain.lanes.find((l) => l.id === "A")!;
-    expect(main.waypoints).toEqual(MAP_BY_ID["kolkhoz"]!.path);
+    expect(main.waypoints[0]).toEqual([0, 3]);
+    expect(main.waypoints.at(-1)).toEqual([16, 0]);
+    expect(main.waypoints.every(([x, y]) => x >= 0 && y >= 0 && x < 20 && y < 13)).toBe(true);
     expect(main.spawn).toEqual({ tx: 0, ty: 3, edge: "W" });
     expect(main.endpoint).toEqual({ tx: 16, ty: 0, edge: "N" });
     expect(a.waypoints.at(-1)).toEqual([19, 10]);

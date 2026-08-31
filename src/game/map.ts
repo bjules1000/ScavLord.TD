@@ -189,6 +189,7 @@ export const MAP_DEFS: MapDef[] = [
     sector: "SECTOR C-7",
     palette: KOLKHOZ_PAL,
     path: [
+      [-1, 3],
       [0, 3],
       [1, 3],
       [2, 3],
@@ -209,11 +210,13 @@ export const MAP_DEFS: MapDef[] = [
       [15, 1],
       [16, 1],
       [16, 0],
+      [16, -1],
     ],
     lanes: [
       {
         id: "MAIN",
         path: [
+          [-1, 3],
           [0, 3],
           [1, 3],
           [2, 3],
@@ -234,11 +237,13 @@ export const MAP_DEFS: MapDef[] = [
           [15, 1],
           [16, 1],
           [16, 0],
+          [16, -1],
         ],
       },
       {
         id: "A",
         path: [
+          [-1, 5],
           [0, 5],
           [1, 5],
           [2, 5],
@@ -264,6 +269,7 @@ export const MAP_DEFS: MapDef[] = [
           [17, 10],
           [18, 10],
           [19, 10],
+          [20, 10],
         ],
       },
     ],
@@ -411,6 +417,21 @@ function geometryFromPath(path: Array<[number, number]>): { PIX: Array<[number, 
     return Math.hypot(q[0] - p[0], q[1] - p[1]);
   });
   return { PIX, SEG_LEN };
+}
+
+export function worldInPlayableBoard(x: number, y: number, tile = TILE): boolean {
+  return x >= 0 && y >= 0 && x <= COLS * tile && y <= ROWS * tile;
+}
+
+/** Raid extract pad sits just outside the playable grid, never on an interior road tile. */
+export function extractMarkerCenter(pix: Array<[number, number]>, tile = TILE): [number, number] {
+  if (!pix.length) return [0, 0];
+  const last = pix[pix.length - 1]!;
+  if (!worldInPlayableBoard(last[0], last[1], tile)) return last;
+  const prev = pix[pix.length - 2] ?? last;
+  const dx = Math.sign(last[0] - prev[0]);
+  const dy = Math.sign(last[1] - prev[1]);
+  return [last[0] + dx * tile, last[1] + dy * tile];
 }
 
 function stampRoad(BLOCKED: boolean[][], PIX: Array<[number, number]>) {
