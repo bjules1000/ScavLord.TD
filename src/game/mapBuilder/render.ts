@@ -1,5 +1,6 @@
 import { TILE } from "../data";
 import { drawCheckpoint, drawCover, drawCrate, drawProp } from "../draw";
+import type { CheckpointPart, CoverType, PropType } from "../map";
 import { inBounds, terrainAt } from "./document";
 import { pathCells } from "./pathing";
 import type { EditorMapDoc, TerrainKind, TileEdge } from "./schema";
@@ -62,7 +63,17 @@ export function drawEditorMap(
   ctx: CanvasRenderingContext2D,
   doc: EditorMapDoc,
   layers: LayerFlags,
-  hover: { tx: number; ty: number; ghost: string | null; invalid?: boolean; edge?: TileEdge } | null,
+  hover: {
+    tx: number;
+    ty: number;
+    ghost: string | null;
+    invalid?: boolean;
+    edge?: TileEdge;
+    ghostItem?: "prop" | "cover" | "crate" | "checkpoint" | "spawn" | "end" | "erase" | null;
+    ghostProp?: PropType | null;
+    ghostCover?: CoverType | null;
+    ghostCheckpoint?: CheckpointPart["type"] | null;
+  } | null,
   activeLaneId: string,
 ) {
   const W = doc.width * TILE;
@@ -199,12 +210,28 @@ export function drawEditorMap(
 
   if (hover) {
     ctx.save();
-    ctx.globalAlpha = hover.invalid ? 0.45 : 0.35;
+    ctx.globalAlpha = hover.invalid ? 0.45 : 0.4;
     ctx.fillStyle = hover.invalid ? "#c23b2c" : hover.ghost ?? "#f0b400";
     ctx.fillRect(hover.tx * TILE, hover.ty * TILE, TILE, TILE);
+    if (!hover.invalid && hover.ghostItem === "prop" && hover.ghostProp) {
+      ctx.globalAlpha = 0.55;
+      drawProp(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostProp);
+    }
+    if (!hover.invalid && hover.ghostItem === "cover" && hover.ghostCover) {
+      ctx.globalAlpha = 0.55;
+      drawCover(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostCover);
+    }
+    if (!hover.invalid && hover.ghostItem === "crate") {
+      ctx.globalAlpha = 0.55;
+      drawCrate(ctx, hover.tx, hover.ty, 0, false);
+    }
+    if (!hover.invalid && hover.ghostItem === "checkpoint" && hover.ghostCheckpoint) {
+      ctx.globalAlpha = 0.55;
+      drawCheckpoint(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostCheckpoint);
+    }
     if (hover.edge) drawEdgeMark(ctx, hover.tx, hover.ty, hover.edge, hover.invalid ? "#c23b2c" : "#f0b400");
     ctx.restore();
-    ctx.strokeStyle = hover.invalid ? "#c23b2c" : "#f0b400";
+    ctx.strokeStyle = hover.invalid ? "#c23b2c" : hover.ghostItem === "erase" ? "#c23b2c" : "#f0b400";
     ctx.lineWidth = 2;
     ctx.strokeRect(hover.tx * TILE + 1, hover.ty * TILE + 1, TILE - 2, TILE - 2);
   }

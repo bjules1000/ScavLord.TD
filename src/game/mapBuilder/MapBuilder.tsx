@@ -7,49 +7,31 @@ import { createBlankMap, slugId, unlockRevision, validateNewMapInput } from "./d
 import { edgeFromCursor } from "./edges";
 import { exportFilename, importedToDoc, parseImport, stringifyExport } from "./export";
 import { canRedo, canUndo, commit, commitStroke, redo, replaceDoc, sessionFrom, undo, type EditorSession } from "./history";
-import {
-  addLane,
-  applyEndpoint,
-  applyPathClick,
-  applySpawn,
-  canPlaceOccupant,
-  eraseTiles,
-  paintTiles,
-  paintZoneCells,
-  placeCheckpoint,
-  placeCover,
-  placeCrate,
-  placeEdgeObject,
-  placeGate,
-  placeProp,
-  removeLane,
-  removeObject,
-  snapOffMap,
-} from "./paint";
+import { applyAuthorStroke, gameplayEraseTarget, pathStepValid, propAt, type AuthorCell } from "./author";
+import { addLane, canPlaceOccupant, removeLane, removeObject } from "./paint";
 import { nextLaneId } from "./pathing";
 import { emptyStore, readStore, upsertDoc, writeStore } from "./persist";
 import { DEFAULT_LAYERS, clientToTile, drawEditorMap, hitObject, type LayerFlags } from "./render";
-import { isInspectMode, isTerrainEraserMode, isTerrainPaintMode, selectTerrainTool } from "./tools";
-import type { EditorMapDoc, GateId, TerrainKind } from "./schema";
+import {
+  isAuthoringTool,
+  isGameplayEraseMode,
+  isInspectMode,
+  isPathMode,
+  isPropEraseMode,
+  isPropPlaceMode,
+  isTerrainEraserMode,
+  isTerrainPaintMode,
+  selectGameplayEraser,
+  selectPathTool,
+  selectPropEraser,
+  selectPropTool,
+  selectTerrainTool,
+  type EditorTool,
+} from "./tools";
+import type { EditorMapDoc, TerrainKind } from "./schema";
 import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
 import { lockDoc } from "./document";
-import type { CheckpointPart, CoverType, PropType } from "../map";
-
-type Tool =
-  | { id: "select" }
-  | { id: "eraser" }
-  | { id: "terrain"; terrain: TerrainKind }
-  | { id: "path" }
-  | { id: "spawn" }
-  | { id: "end" }
-  | { id: "gate"; gateId: GateId }
-  | { id: "zone" }
-  | { id: "prop"; type: PropType }
-  | { id: "cover"; type: CoverType }
-  | { id: "crate" }
-  | { id: "checkpoint"; type: CheckpointPart["type"] }
-  | { id: "edge"; type: "fence" | "wall" };
 
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
 const GHOST: Record<TerrainKind, string> = {
@@ -87,7 +69,7 @@ function seedSession(initialMapId?: string): EditorSession {
 
 export default function MapBuilder({ initialMapId }: { initialMapId?: string }) {
   const [session, setSession] = useState<EditorSession>(() => seedSession(initialMapId));
-  const [tool, setTool] = useState<Tool>({ id: "terrain", terrain: "ROAD" });
+  const [tool, setTool] = useState<EditorTool>({ id: "terrain", terrain: "ROAD" });
   const [laneId, setLaneId] = useState("MAIN");
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [layers, setLayers] = useState<LayerFlags>(DEFAULT_LAYERS);
@@ -101,7 +83,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const [newId, setNewId] = useState("new-sector");
   const [newW, setNewW] = useState(20);
   const [newH, setNewH] = useState(13);
-  const stroke = useRef<Array<[number, number]>>([]);
+  const stroke = useRef<AuthorCell[]>([]);
   const painting = useRef(false);
   const strokeBase = useRef<EditorMapDoc | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -131,18 +113,47 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
         : undefined;
     let ghost: string | null = null;
     let invalid = false;
-    if (hover && tool.id === "terrain") ghost = GHOST[tool.terrain];
-    if (hover && (tool.id === "prop" || tool.id === "cover" || tool.id === "crate" || tool.id === "checkpoint")) {
+    let ghostItem: "prop" | "cover" | "crate" | "checkpoint" | "spawn" | "end" | "erase" | null = null;
+    if (hover && isTerrainPaintMode(tool) && tool.id === "terrain") ghost = GHOST[tool.terrain];
+    if (hover && isPropPlaceMode(tool)) {
       ghost = "#c9c2a6";
-      invalid = !canPlaceOccupant(doc, hover.tx, hover.ty);
+      invalid = tool.id === "edge" ? false : !canPlaceOccupant(doc, hover.tx, hover.ty);
+      if (tool.id === "cover") ghostItem = "cover";
+      else if (tool.id === "crate") ghostItem = "crate";
+      else if (tool.id === "checkpoint") ghostItem = "checkpoint";
+      else ghostItem = "prop";
     }
-    if (hover && tool.id === "eraser") ghost = "#c23b2c";
-    if (hover && (tool.id === "path" || tool.id === "spawn" || tool.id === "end" || tool.id === "zone")) ghost = "#f0b400";
+    if (hover && (isTerrainEraserMode(tool) || isPropEraseMode(tool) || isGameplayEraseMode(tool))) {
+      ghost = "#c23b2c";
+      ghostItem = "erase";
+      if (isPropEraseMode(tool)) invalid = !propAt(doc, hover.tx, hover.ty);
+      if (isGameplayEraseMode(tool)) invalid = !gameplayEraseTarget(doc, laneId, hover.tx, hover.ty);
+    }
+    if (hover && isPathMode(tool)) {
+      ghost = "#f0b400";
+      invalid = !pathStepValid(doc, laneId, [hover.tx, hover.ty]);
+    }
+    if (hover && (tool.id === "spawn" || tool.id === "end" || tool.id === "zone" || tool.id === "gate")) {
+      ghost = "#f0b400";
+      ghostItem = tool.id === "spawn" ? "spawn" : tool.id === "end" ? "end" : null;
+    }
     drawEditorMap(
       ctx,
       doc,
       layers,
-      hover ? { tx: hover.tx, ty: hover.ty, ghost, invalid, ...(edge ? { edge } : {}) } : null,
+      hover
+        ? {
+            tx: hover.tx,
+            ty: hover.ty,
+            ghost,
+            invalid,
+            ghostItem,
+            ghostProp: tool.id === "prop" ? tool.type : null,
+            ghostCover: tool.id === "cover" ? tool.type : null,
+            ghostCheckpoint: tool.id === "checkpoint" ? tool.type : null,
+            ...(edge ? { edge } : {}),
+          }
+        : null,
       laneId,
     );
   }, [doc, layers, hover, tool, laneId]);
@@ -152,35 +163,21 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     setValidation(null);
   }, []);
 
-  const pointerCell = (ev: PointerEvent<HTMLCanvasElement>) => {
+  const pointerCell = (ev: PointerEvent<HTMLCanvasElement>): AuthorCell | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     return clientToTile(ev.clientX, ev.clientY, canvas.getBoundingClientRect(), doc.width, doc.height);
   };
 
-  const strokePreview = (tiles: Array<[number, number]>, erase: boolean) => {
-    const base = strokeBase.current ?? session.doc;
-    if (erase || isTerrainEraserMode(tool)) return eraseTiles(base, tiles);
-    if (isTerrainPaintMode(tool) && tool.id === "terrain") return paintTiles(base, tiles, tool.terrain);
-    if (tool.id === "zone") return paintZoneCells(base, tiles, zoneId);
-    return base;
-  };
+  const authorCtx = () => ({ laneId, zoneId, tileSize: TILE });
 
-  const paintAt = (tx: number, ty: number, localX: number, localY: number) => {
-    if (locked) return;
-    const base = session.doc;
-    if (tool.id === "path") apply(applyPathClick(base, laneId, [tx, ty]));
-    if (tool.id === "spawn") apply(applySpawn(base, laneId, snapOffMap(tx, ty, localX, localY, base.width, base.height, TILE)));
-    if (tool.id === "end") apply(applyEndpoint(base, laneId, snapOffMap(tx, ty, localX, localY, base.width, base.height, TILE)));
-    if (tool.id === "prop") apply(placeProp(base, tx, ty, tool.type));
-    if (tool.id === "cover") apply(placeCover(base, tx, ty, tool.type));
-    if (tool.id === "crate") apply(placeCrate(base, tx, ty));
-    if (tool.id === "checkpoint") apply(placeCheckpoint(base, tx, ty, tool.type));
-    if (tool.id === "edge") apply(placeEdgeObject(base, tx, ty, edgeFromCursor(localX, localY), tool.type));
-    if (tool.id === "gate") apply(placeGate(base, tool.gateId, laneId, tx, ty, edgeFromCursor(localX, localY)));
+  const strokePreview = (cells: AuthorCell[]) => {
+    const base = strokeBase.current ?? session.doc;
+    return applyAuthorStroke(base, tool, cells, authorCtx());
   };
 
   const onPointerDown = (ev: PointerEvent<HTMLCanvasElement>) => {
+    if (ev.button !== 0) return;
     ev.currentTarget.setPointerCapture(ev.pointerId);
     const cell = pointerCell(ev);
     if (!cell) return;
@@ -188,22 +185,17 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       setSelected(hitObject(doc, cell.tx, cell.ty));
       return;
     }
-    if (locked) return;
-    const drag = ev.button === 2 || isTerrainEraserMode(tool) || isTerrainPaintMode(tool) || tool.id === "zone";
-    if (drag) {
-      painting.current = true;
-      strokeBase.current = session.doc;
-      stroke.current = [[cell.tx, cell.ty]];
-      const next = strokePreview(stroke.current, ev.button === 2);
-      if (tool.id === "zone") {
-        const created = next.zones[next.zones.length - 1];
-        if (created && !zoneId) setZoneId(created.id);
-      }
-      liveRef.current = next;
-      setLiveDoc(next);
-      return;
+    if (locked || !isAuthoringTool(tool)) return;
+    painting.current = true;
+    strokeBase.current = session.doc;
+    stroke.current = [cell];
+    const next = strokePreview(stroke.current);
+    if (tool.id === "zone") {
+      const created = next.zones[next.zones.length - 1];
+      if (created && !zoneId) setZoneId(created.id);
     }
-    paintAt(cell.tx, cell.ty, cell.localX, cell.localY);
+    liveRef.current = next;
+    setLiveDoc(next);
   };
 
   const onPointerMove = (ev: PointerEvent<HTMLCanvasElement>) => {
@@ -211,9 +203,9 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     setHover(cell);
     if (!painting.current || !cell || locked) return;
     const last = stroke.current[stroke.current.length - 1];
-    if (last && last[0] === cell.tx && last[1] === cell.ty) return;
-    stroke.current.push([cell.tx, cell.ty]);
-    const next = strokePreview(stroke.current, ev.buttons === 2);
+    if (last && last.tx === cell.tx && last.ty === cell.ty) return;
+    stroke.current.push(cell);
+    const next = strokePreview(stroke.current);
     liveRef.current = next;
     setLiveDoc(next);
   };
@@ -483,11 +475,11 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 </Chip>
               ))}
               <Chip active={tool.id === "eraser"} onClick={() => setTool({ id: "eraser" })}>
-                ERASER
+                ERASE TERRAIN
               </Chip>
             </Section>
             <Section title="ROUTES / GAMEPLAY">
-              <Chip active={tool.id === "path"} onClick={() => setTool({ id: "path" })}>
+              <Chip active={tool.id === "path"} onClick={() => setTool(selectPathTool())}>
                 PATH
               </Chip>
               <Chip active={tool.id === "spawn"} onClick={() => setTool({ id: "spawn" })}>
@@ -504,10 +496,13 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                   GATE {g}
                 </Chip>
               ))}
+              <Chip active={tool.id === "erase-gameplay"} onClick={() => setTool(selectGameplayEraser())}>
+                ERASE GAMEPLAY
+              </Chip>
             </Section>
             <Section title="PROPS">
               {PROP_TYPES.map((p) => (
-                <Chip key={p} active={tool.id === "prop" && tool.type === p} onClick={() => setTool({ id: "prop", type: p })}>
+                <Chip key={p} active={tool.id === "prop" && tool.type === p} onClick={() => setTool(selectPropTool(p))}>
                   {p}
                 </Chip>
               ))}
@@ -529,6 +524,9 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               </Chip>
               <Chip active={tool.id === "edge" && tool.type === "wall"} onClick={() => setTool({ id: "edge", type: "wall" })}>
                 WALL EDGE
+              </Chip>
+              <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
+                ERASE PROP
               </Chip>
             </Section>
             <Section title="TOOLS">
@@ -587,7 +585,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 </button>
               )}
               <div className="text-muted-foreground">
-                Ordered click PATH. SPAWN / END can snap off the map edge. Factory GATE markers are metadata only — main has no combat-gate schedule.
+                PATH extends the last waypoint of the selected lane (orthogonal only). ERASE GAMEPLAY removes one spawn, endpoint, gate, zone cell, or active-lane path under the cursor. Factory GATE markers are metadata only.
               </div>
             </Section>
             <Section title="LAYERS">

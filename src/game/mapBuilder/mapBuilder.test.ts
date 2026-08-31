@@ -5,14 +5,31 @@ import { createBlankMap, lockDoc, unlockRevision, validateNewMapInput } from "./
 import { edgeFromCursor } from "./edges";
 import { exportFilename, importedToDoc, parseImport, stringifyExport, toExport } from "./export";
 import { HISTORY_LIMIT } from "./schema";
+import {
+  applyAuthor,
+  applyAuthorStroke,
+  eraseGameplayAt,
+  erasePathAt,
+  erasePropAt,
+  eraseSpawn,
+  eraseEndpoint,
+  eraseZoneAt,
+} from "./author";
 import { canRedo, canUndo, commit, commitStroke, redo, sessionFrom, undo } from "./history";
 import { clientToTile } from "./render";
 import {
   isInspectMode,
+  isPathMode,
+  isPropEraseMode,
+  isPropPlaceMode,
   isTerrainEraserMode,
   isTerrainPaintMode,
   selectEraserTool,
+  selectGameplayEraser,
   selectInspectTool,
+  selectPathTool,
+  selectPropEraser,
+  selectPropTool,
   selectTerrainTool,
   TERRAIN_PAINT_KINDS,
 } from "./tools";
@@ -481,5 +498,210 @@ describe("map builder terrain paint interaction", () => {
       expect(scrolled?.tx).toBe(14);
       expect(scrolled?.ty).toBe(8);
     }
+  });
+});
+
+function cell(tx: number, ty: number) {
+  return { tx, ty, localX: 22, localY: 22 };
+}
+
+function ctx(laneId = "MAIN") {
+  return { laneId, zoneId: null as string | null, tileSize: TILE };
+}
+
+describe("map builder props and gameplay", () => {
+  it("selecting TREE enters prop placement mode", () => {
+    const tool = selectPropTool("tree");
+    expect(isPropPlaceMode(tool)).toBe(true);
+    expect(isInspectMode(tool)).toBe(false);
+    expect(isPathMode(selectPathTool())).toBe(true);
+  });
+
+  it("clicking places a tree and preview does not commit until applyAuthor", () => {
+    const start = createBlankMap({ displayName: "P", id: "prop-place", width: 12, height: 10 });
+    expect(start.props.length).toBe(0);
+    const preview = placeProp(start, 3, 3, "tree");
+    expect(start.props.length).toBe(0);
+    expect(preview.props[0]!.type).toBe("tree");
+    const committed = applyAuthor(start, selectPropTool("tree"), cell(3, 3), ctx());
+    expect(committed.props.some((p) => p.tx === 3 && p.ty === 3 && p.type === "tree")).toBe(true);
+  });
+
+  it("duplicate hover/place on the same tile does not add a second prop", () => {
+    let doc = createBlankMap({ displayName: "P", id: "prop-dup", width: 12, height: 10 });
+    doc = placeProp(doc, 2, 2, "tree");
+    const again = placeProp(doc, 2, 2, "tree");
+    expect(again).toBe(doc);
+    expect(again.props.length).toBe(1);
+  });
+
+  it("prop erase removes only the prop", () => {
+    let doc = validDraft();
+    doc = placeProp(doc, 4, 4, "tree");
+    const terrain = doc.terrain[4]![4];
+    const waypoints = doc.lanes[0]!.waypoints;
+    const erased = erasePropAt(doc, 4, 4);
+    expect(erased.props.length).toBe(0);
+    expect(erased.terrain[4]![4]).toBe(terrain);
+    expect(erased.lanes[0]!.waypoints).toEqual(waypoints);
+    expect(isPropEraseMode(selectPropEraser())).toBe(true);
+  });
+
+  it("prop undo/redo and preview-vs-session commit work", () => {
+    const start = createBlankMap({ displayName: "P", id: "prop-hist", width: 12, height: 10 });
+    let s = sessionFrom(start);
+    const preview = applyAuthor(s.doc, selectPropTool("tree"), cell(1, 1), ctx());
+    expect(preview === preview).toBe(true);
+    s = commitStroke(s, preview);
+    expect(s.doc.props.length).toBe(1);
+    s = undo(s);
+    expect(s.doc.props.length).toBe(0);
+    s = redo(s);
+    expect(s.doc.props[0]!.type).toBe("tree");
+  });
+
+  it("PATH edits only the active lane", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-lane", width: 12, height: 10 });
+    doc = addLane(doc, "A");
+    doc = applyAuthor(doc, selectPathTool(), cell(0, 1), ctx("MAIN"));
+    doc = applyAuthor(doc, selectPathTool(), cell(1, 1), ctx("MAIN"));
+    doc = applyAuthor(doc, selectPathTool(), cell(0, 5), ctx("A"));
+    expect(doc.lanes.find((l) => l.id === "MAIN")!.waypoints).toEqual([
+      [0, 1],
+      [1, 1],
+    ]);
+    expect(doc.lanes.find((l) => l.id === "A")!.waypoints).toEqual([[0, 5]]);
+  });
+
+  it("extends orthogonally, rejects diagonal and zero-length steps", () => {
+    let doc = createBlankMap({ displayName: "L", id: "path-orth", width: 12, height: 10 });
+    doc = applyPathClick(doc, "MAIN", [0, 0]);
+    doc = applyPathClick(doc, "MAIN", [2, 0]);
+    const diagonal = applyPathClick(doc, "MAIN", [3, 1]);
+    expect(diagonal).toBe(doc);
+    const same = applyPathClick(doc, "MAIN", [2, 0]);
+    expect(same).toBe(doc);
+    expect(doc.lanes[0]!.waypoints).toEqual([
+      [0, 0],
+      [2, 0],
+    ]);
+  });
+
+  it("path erase removes active-lane data only and leaves ROAD", () => {
+    let doc = validDraft();
+    const other = addLane(doc, "A");
+    let both = applyPathClick(other, "A", [0, 8]);
+    both = applyPathClick(both, "A", [3, 8]);
+    const road = both.terrain[2]![0];
+    const erased = erasePathAt(both, "MAIN", 0, 2);
+    expect(erased.lanes.find((l) => l.id === "A")!.waypoints).toEqual([
+      [0, 8],
+      [3, 8],
+    ]);
+    expect(erased.terrain[2]![0]).toBe(road);
+    expect(erased.lanes.find((l) => l.id === "MAIN")!.waypoints.some((w) => w[0] === 0 && w[1] === 2)).toBe(false);
+  });
+
+  it("path stroke undo/redo and preview-vs-session commit work", () => {
+    const start = createBlankMap({ displayName: "L", id: "path-hist", width: 12, height: 10 });
+    let s = sessionFrom(start);
+    const preview = applyAuthorStroke(s.doc, selectPathTool(), [cell(0, 2), cell(1, 2), cell(2, 2)], ctx());
+    s = commitStroke(s, preview);
+    expect(s.doc.lanes[0]!.waypoints).toEqual([
+      [0, 2],
+      [1, 2],
+      [2, 2],
+    ]);
+    s = undo(s);
+    expect(s.doc.lanes[0]!.waypoints).toEqual([]);
+    s = redo(s);
+    expect(s.doc.lanes[0]!.waypoints.length).toBe(3);
+  });
+
+  it("spawn and endpoint create, move, erase, and validate", () => {
+    let doc = createBlankMap({ displayName: "L", id: "spawn-end", width: 12, height: 10 });
+    doc = applySpawn(doc, "MAIN", [0, 2]);
+    expect(doc.lanes[0]!.waypoints[0]).toEqual([0, 2]);
+    doc = applySpawn(doc, "MAIN", [1, 2]);
+    expect(doc.lanes[0]!.waypoints[0]).toEqual([1, 2]);
+    expect(doc.lanes[0]!.waypoints.length).toBe(1);
+    doc = applyEndpoint(doc, "MAIN", [6, 2]);
+    expect(doc.lanes[0]!.waypoints.at(-1)).toEqual([6, 2]);
+    doc = applyEndpoint(doc, "MAIN", [8, 2]);
+    expect(doc.lanes[0]!.waypoints.at(-1)).toEqual([8, 2]);
+    const missingEnd = eraseEndpoint(doc, "MAIN");
+    expect(validateMap(missingEnd).errors.some((e) => e.message.includes("endpoint") || e.message.includes("spawn"))).toBe(
+      true,
+    );
+    const missingSpawn = eraseSpawn(doc, "MAIN");
+    expect(missingSpawn.lanes[0]!.waypoints[0]).toEqual([8, 2]);
+    const cleared = eraseGameplayAt(doc, "MAIN", 1, 2);
+    expect(cleared.lanes[0]!.waypoints[0]).toEqual([8, 2]);
+  });
+
+  it("spawn move undo restores previous location", () => {
+    let s = sessionFrom(createBlankMap({ displayName: "L", id: "spawn-undo", width: 12, height: 10 }));
+    s = commit(s, applySpawn(s.doc, "MAIN", [0, 1]));
+    s = commit(s, applySpawn(s.doc, "MAIN", [3, 1]));
+    expect(s.doc.lanes[0]!.waypoints[0]).toEqual([3, 1]);
+    s = undo(s);
+    expect(s.doc.lanes[0]!.waypoints[0]).toEqual([0, 1]);
+  });
+
+  it("special zone author, erase, preserve terrain, undo", () => {
+    let s = sessionFrom(createBlankMap({ displayName: "Z", id: "zone-edit", width: 12, height: 10 }));
+    s = commit(s, paintZoneCells(s.doc, [[8, 8], [9, 8]], null));
+    expect(s.doc.zones[0]!.cells.length).toBe(2);
+    const terrain = s.doc.terrain[8]![8];
+    s = commit(s, eraseZoneAt(s.doc, 8, 8));
+    expect(s.doc.zones[0]!.cells).toEqual([[9, 8]]);
+    expect(s.doc.terrain[8]![8]).toBe(terrain);
+    s = undo(s);
+    expect(s.doc.zones[0]!.cells.length).toBe(2);
+  });
+
+  it("cardinal gate places, moves, and erases without touching other layers", () => {
+    let doc = createBlankMap({ displayName: "G", id: "gate-edit", width: 12, height: 10 });
+    doc = applyAuthor(doc, { id: "gate", gateId: "NORTH" }, cell(5, 1), ctx());
+    expect(doc.gates).toEqual([{ id: "NORTH", laneId: "MAIN", tx: 5, ty: 1, edge: "E" }]);
+    doc = applyAuthor(doc, { id: "gate", gateId: "NORTH" }, { tx: 6, ty: 1, localX: 2, localY: 22 }, ctx());
+    expect(doc.gates.length).toBe(1);
+    expect(doc.gates[0]!.tx).toBe(6);
+    doc = applyAuthor(doc, { id: "gate", gateId: "EAST" }, cell(10, 4), ctx());
+    const afterNorthGone = eraseGameplayAt(doc, "MAIN", 6, 1);
+    expect(afterNorthGone.gates.map((g) => g.id)).toEqual(["EAST"]);
+    expect(afterNorthGone.props.length).toBe(0);
+    expect(afterNorthGone.terrain[1]![6]).toBe("GROUND");
+  });
+
+  it("edge props determine N/E/S/W, coexist, reject duplicates, and erase one edge", () => {
+    expect(edgeFromCursor(22, 2, TILE)).toBe("N");
+    let doc = createBlankMap({ displayName: "E", id: "edge-edit", width: 12, height: 10 });
+    doc = applyAuthor(doc, { id: "edge", type: "fence" }, { tx: 4, ty: 4, localX: 22, localY: 2 }, ctx());
+    doc = applyAuthor(doc, { id: "edge", type: "wall" }, { tx: 4, ty: 4, localX: 40, localY: 22 }, ctx());
+    expect(doc.edges.length).toBe(2);
+    const dup = applyAuthor(doc, { id: "edge", type: "fence" }, { tx: 4, ty: 4, localX: 22, localY: 2 }, ctx());
+    expect(dup.edges.length).toBe(2);
+    const erased = erasePropAt(doc, 4, 4, "N");
+    expect(erased.edges.length).toBe(1);
+    expect(erased.edges[0]!.edge).toBe("E");
+    expect(selectGameplayEraser().id).toBe("erase-gameplay");
+  });
+
+  it("production maps stay immutable, locked rejects, draft accepts, export includes edits", () => {
+    const before = JSON.stringify(MAP_DEFS);
+    let draft = fromProductionMap(MAP_BY_ID["kolkhoz"]!);
+    draft = applyAuthor(draft, selectPropTool("tree"), cell(0, 4), ctx());
+    draft = applyAuthor(draft, { id: "gate", gateId: "WEST" }, cell(1, 2), ctx());
+    expect(JSON.stringify(MAP_DEFS)).toBe(before);
+    const locked = lockDoc(draft);
+    expect(applyAuthor(locked, selectPropTool("rock"), cell(0, 5), ctx())).toBe(locked);
+    const open = unlockRevision(locked);
+    const painted = applyAuthor(open, selectPropTool("rock"), cell(0, 5), ctx());
+    expect(painted.props.some((p) => p.type === "rock")).toBe(true);
+    const exp = toExport(painted);
+    expect(exp.props.some((p) => p.type === "tree")).toBe(true);
+    expect(exp.gates.some((g) => g.id === "WEST")).toBe(true);
+    expect(stringifyExport(painted).length).toBeGreaterThan(10);
   });
 });
