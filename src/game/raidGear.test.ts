@@ -90,7 +90,7 @@ describe("weapon swap", () => {
 describe("death drop identity", () => {
   it("does not duplicate an attachment that was already detached into the backpack", () => {
     const backpack = [mustItem("a_optic", 1)];
-    const dropped = dropEquippedGear("pm", [], 50);
+    const dropped = dropEquippedGear("pm", [], () => 50);
     const opticOnBody = dropped.filter((i) => i.ref === "optic");
     const opticInPack = backpack.filter((i) => i.ref === "optic");
     expect(opticOnBody).toHaveLength(0);

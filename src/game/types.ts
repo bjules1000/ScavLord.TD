@@ -44,7 +44,7 @@ export interface Tower {
   pmc?: boolean;
   level?: number;
   xp?: number;
-  /** armor id from gear.ts ARMORS (player operator only) */
+  /** armor id from gear.ts ARMORS */
   armor?: string | null;
   armorHp?: number;
   /** Rounds currently loaded. Raid runtime only. */
@@ -89,6 +89,8 @@ export interface Enemy {
   y: number;
   /** Authored lane traffic stays GROUND even under a suspended bridge. */
   surface?: SurfaceLevel;
+  /** Live wire currently occupying this enemy; null when off wire. */
+  contactingWireId: number | null;
   slow: number;
   hitFlash: number;
   step: number;

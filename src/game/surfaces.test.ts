@@ -3,6 +3,9 @@ import { buildWave } from "./data";
 import { MAP_BY_ID, buildMap, isBuildable, isRoad, isWater, type MapDef } from "./map";
 import {
   RAID_DRAW_PASSES,
+  HIGH_GROUND_ACCURACY_BONUS,
+  HIGH_GROUND_RANGE_MULT,
+  applyHighGroundCombat,
   baseTerrainAt,
   canOccupyHighSurface,
   canOccupyLowSurface,
@@ -11,9 +14,11 @@ import {
   enemyLaneSurface,
   entityDrawPass,
   entitySurface,
+  grantsHighGroundCombatBonus,
   hasSuspendedBridge,
   operatorPlacementSurface,
   raidDrawPassIndex,
+  terrainCombatMods,
 } from "./surfaces";
 
 const pal = MAP_BY_ID["woods"]!.palette;
@@ -238,5 +243,52 @@ describe("PINE CUT surface contract", () => {
     const wave = buildWave(1, MAP_BY_ID["woods"]!.waveMods);
     expect(wave.groups.length).toBeGreaterThan(0);
     expect(wave.groups.every((g) => g.count > 0)).toBe(true);
+  });
+});
+
+describe("HIGH_GROUND combat bonus", () => {
+  it("does not boost GROUND or a suspended bridge, and does boost HIGH_GROUND", () => {
+    const woods = buildMap(MAP_BY_ID["woods"]!);
+    const groundTx = 0;
+    const groundTy = 8;
+    const ground = applyHighGroundCombat(100, 0.5, woods, groundTx, groundTy);
+    expect(grantsHighGroundCombatBonus(woods, groundTx, groundTy)).toBe(false);
+    expect(ground.range).toBe(100);
+    expect(ground.accuracy).toBe(0.5);
+
+    expect(elevatedSurfaceAt(woods, 4, 1)).toBe("HIGH_GROUND");
+    const high = applyHighGroundCombat(100, 0.5, woods, 4, 1);
+    expect(terrainCombatMods(woods, 4, 1)).toEqual({
+      rangeMult: HIGH_GROUND_RANGE_MULT,
+      accuracyBonus: HIGH_GROUND_ACCURACY_BONUS,
+    });
+    expect(high.range).toBeCloseTo(100 * HIGH_GROUND_RANGE_MULT);
+    expect(high.accuracy).toBeCloseTo(0.55);
+
+    expect(elevatedSurfaceAt(woods, 13, 7)).toBe("SUSPENDED_BRIDGE");
+    expect(entitySurface({ surface: "HIGH" })).toBe("HIGH");
+    const bridge = applyHighGroundCombat(100, 0.5, woods, 13, 7);
+    expect(grantsHighGroundCombatBonus(woods, 13, 7)).toBe(false);
+    expect(bridge.range).toBe(100);
+    expect(bridge.accuracy).toBe(0.5);
+    expect(isRoad(woods, 13, 7)).toBe(true);
+  });
+
+  it("clamps accuracy to the legal maximum after the HIGH_GROUND bonus", () => {
+    const woods = buildMap(MAP_BY_ID["woods"]!);
+    const clamped = applyHighGroundCombat(80, 0.97, woods, 4, 1);
+    expect(clamped.accuracy).toBe(0.99);
+  });
+
+  it("recalculates when the operator moves between terrain types", () => {
+    const woods = buildMap(MAP_BY_ID["woods"]!);
+    const onGround = applyHighGroundCombat(80, 0.6, woods, 0, 8);
+    const onHill = applyHighGroundCombat(80, 0.6, woods, 4, 1);
+    const onBridge = applyHighGroundCombat(80, 0.6, woods, 13, 5);
+    expect(onGround.range).toBe(80);
+    expect(onHill.range).toBeCloseTo(80 * HIGH_GROUND_RANGE_MULT);
+    expect(onBridge.range).toBe(80);
+    expect(onHill.accuracy).toBeCloseTo(0.65);
+    expect(onBridge.accuracy).toBe(0.6);
   });
 });

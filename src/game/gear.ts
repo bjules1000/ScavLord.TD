@@ -297,6 +297,11 @@ export interface ArmorDef {
   durability: number;
   plate: string;
   trim: string;
+  /**
+   * Future operator movement reads this via getEquippedWeight().
+   * Unset on current vests — do not invent balance values.
+   */
+  weight?: number;
 }
 
 export const ARMORS: Record<string, ArmorDef> = {
