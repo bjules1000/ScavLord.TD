@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { CANONICAL_LOOT_RULES, RAID_SCRAP_MULT, raidScrapValue, type LootRules } from "../loot";
 import { MAP_DEFS } from "../map";
 import {
@@ -6,6 +6,7 @@ import {
   applyEconomyOverrides,
   canonicalItem,
   crateEvForSource,
+  earliestLootSummary,
   economyLabCatalog,
   economyOverridesEqual,
   effectiveItemDef,
@@ -17,18 +18,22 @@ import {
   getEconomyOverrides,
   itemEconomyFields,
   itemOverrideCount,
+  itemProgression,
   itemSourceRows,
   lootSourceCatalog,
+  lootSourceGroups,
   lootTableEntries,
   modifiedEconomyCount,
   resetEconomyItem,
-  resetEconomyTable,
+  resetEconomySource,
   rewardEvForSource,
   setItemEconomyField,
-  setItemWeight,
   setLootRule,
   setMapLootMult,
+  setSourceProfileField,
   sourceMapsLabel,
+  sourcePoolWarnings,
+  sourceTitle,
   type EconomyCategory,
   type EconomyLabView,
   type EconomyOverrides,
@@ -40,7 +45,7 @@ import {
 const EDITOR_COLS =
   "grid-cols-[minmax(8rem,1.1fr)_minmax(3.5rem,0.5fr)_minmax(5rem,0.7fr)_minmax(6rem,0.8fr)]";
 const TABLE_COLS =
-  "grid-cols-[minmax(7rem,1.2fr)_minmax(3.2rem,0.45fr)_minmax(4.2rem,0.55fr)_minmax(4.5rem,0.6fr)_minmax(5rem,0.7fr)]";
+  "grid-cols-[minmax(6.5rem,1.1fr)_minmax(3.2rem,0.4fr)_minmax(3.6rem,0.45fr)_minmax(3.4rem,0.45fr)_minmax(3.4rem,0.45fr)_minmax(4.6rem,0.55fr)_minmax(4.2rem,0.5fr)]";
 
 const RULE_FIELDS: Array<{ key: keyof LootRules; label: string; step: number }> = [
   { key: "weaponChanceBase", label: "Weapon base chance", step: 0.01 },
@@ -83,6 +88,7 @@ export default function EconomyLab({
   const [sourceFilter, setSourceFilter] = useState<LootSourceFilter>("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [draft, setDraft] = useState<EconomyOverrides>(() => getEconomyOverrides());
   const [copied, setCopied] = useState(false);
   const [wave, setWave] = useState(1);
@@ -93,10 +99,12 @@ export default function EconomyLab({
     [catalog, category, query],
   );
   const sources = useMemo(() => lootSourceCatalog(), []);
+  const sourceGroups = useMemo(() => lootSourceGroups(), []);
   const visibleSources = useMemo(
     () => filterLootSources(sources, sourceFilter, query),
     [sources, sourceFilter, query],
   );
+  const visibleSourceIds = useMemo(() => new Set(visibleSources.map((s) => s.id)), [visibleSources]);
 
   if (!enabled) return null;
 
@@ -160,7 +168,7 @@ export default function EconomyLab({
         </div>
 
         <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
-          {(["items", "tables"] as const).map((v) => (
+          {(["items", "sources"] as const).map((v) => (
             <button
               key={v}
               type="button"
@@ -169,7 +177,7 @@ export default function EconomyLab({
               }`}
               onClick={() => setView(v)}
             >
-              {v === "items" ? "ITEMS" : "LOOT TABLES"}
+              {v === "items" ? "ITEMS" : "LOOT SOURCES"}
             </button>
           ))}
           <label className="ml-auto flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
@@ -202,18 +210,34 @@ export default function EconomyLab({
                   {cat === "LOOT" ? "VALUABLES / LOOT" : cat}
                 </button>
               ))
-            : (["ALL", "MAP", "CRATE", "REWARD"] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  className={`pixel-btn px-3 py-2 text-[10px] ${
-                    sourceFilter === f ? "pixel-btn-primary" : "text-muted-foreground"
-                  }`}
-                  onClick={() => setSourceFilter(f)}
-                >
-                  {f}
-                </button>
-              ))}
+            : (
+              <>
+                {ECONOMY_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`pixel-btn px-3 py-2 text-[10px] ${
+                      category === cat ? "pixel-btn-primary" : "text-muted-foreground"
+                    }`}
+                    onClick={() => setCategory(cat)}
+                  >
+                    {cat === "LOOT" ? "VALUABLES / LOOT" : cat}
+                  </button>
+                ))}
+                {(["ALL", "CRATE", "REWARD", "SHOP"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={`pixel-btn px-3 py-2 text-[10px] ${
+                      sourceFilter === f ? "pixel-btn-primary" : "text-muted-foreground"
+                    }`}
+                    onClick={() => setSourceFilter(f)}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </>
+            )}
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -302,41 +326,67 @@ export default function EconomyLab({
                   })}
 
                   <div className="mt-4 font-mono text-[11px] text-muted-foreground">
-                    Raid scrap (derived): {roubles(raidScrapValue(liveItem.value))} = value × {RAID_SCRAP_MULT}. Not a
+                    Raid scrap (derived): {roubles(raidScrapValue(liveItem.value))} = value Ã— {RAID_SCRAP_MULT}. Not a
                     separate canonical field. Charisma sell/buy multipliers are player skills, not item economy.
                   </div>
 
                   <div className="mt-6 border-t-2 border-border pt-4">
-                    <div className="font-display text-[11px] text-primary">SOURCES</div>
+                    <div className="font-display text-[11px] text-primary">LOOT SOURCES</div>
                     <div className="mt-1 font-mono text-[10px] text-muted-foreground">
-                      Where this item can currently come from. Enemy / boss / quest drops: NOT IMPLEMENTED.
+                      Each map source is independent. Shop is listed separately and is not a loot roll.
                     </div>
-                    {sourceRows.length === 0 ? (
+                    {(() => {
+                      const earliest = earliestLootSummary(canonical.id, draft, true);
+                      return (
+                        <div className="mt-2 font-mono text-[11px] text-primary">
+                          {earliest.available
+                            ? `EARLIEST LOOT: ${earliest.label} · Wave ${earliest.wave}`
+                            : "NOT AVAILABLE AS LOOT"}
+                        </div>
+                      );
+                    })()}
+                    {sourceRows.filter((r) => r.type !== "shop").length === 0 && sourceRows.every((r) => r.type !== "shop") ? (
                       <div className="mt-3 font-mono text-sm text-muted-foreground">No canonical loot or shop source.</div>
                     ) : (
                       <div className="mt-3 space-y-2">
-                        {sourceRows.map((row) => (
-                          <div
-                            key={`${row.sourceId}:${row.label}`}
-                            className="border border-border bg-secondary/30 px-3 py-2.5 font-mono text-sm"
-                          >
-                            <div className="flex flex-wrap items-baseline justify-between gap-2">
-                              <span className="text-foreground">{row.label}</span>
-                              {row.shared && (
-                                <span className="text-[10px] uppercase text-muted-foreground">
-                                  Shared{row.mapNames.length ? ` · ${row.mapNames.join(", ")}` : ""}
-                                </span>
-                              )}
-                            </div>
-                            {row.type === "shop" ? (
-                              <div className="mt-1 text-[11px] text-muted-foreground">Buyable when unlocked</div>
-                            ) : (
-                              <div className="mt-1 text-[11px] text-muted-foreground">
-                                Weight {row.weight} · pool share {pct(row.poolShare)} · first-slot {pct(row.firstSlotChance)}
+                        {sourceRows
+                          .filter((row) => row.type !== "shop")
+                          .map((row) => (
+                            <div
+                              key={row.sourceId}
+                              className="border border-border bg-secondary/30 px-3 py-2.5 font-mono text-sm"
+                            >
+                              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                <span className="text-foreground">{row.label}</span>
+                                {row.shared && (
+                                  <span className="text-[10px] uppercase text-muted-foreground">Shared profile</span>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        ))}
+                              <div className="mt-1 text-[11px] text-muted-foreground">
+                                {row.enabled ? "Enabled" : "Disabled"} · Min wave {row.minWave}
+                                {row.maxWave != null ? ` · Max wave ${row.maxWave}` : ""} · Weight {row.weight}
+                                {row.eligible
+                                  ? ` · Wave ${wave} first-slot ${pct(row.firstSlotChance)}`
+                                  : " · INELIGIBLE at this wave"}
+                                {row.expectedAppearances?.supported
+                                  ? ` · expected / 10 opens ${row.expectedAppearances.perTenOpens.toFixed(2)}`
+                                  : ""}
+                              </div>
+                            </div>
+                          ))}
+                        {sourceRows
+                          .filter((row) => row.type === "shop")
+                          .map((row) => (
+                            <div
+                              key={row.sourceId}
+                              className="border border-border bg-secondary/30 px-3 py-2.5 font-mono text-sm"
+                            >
+                              <div className="text-foreground">{row.label}</div>
+                              <div className="mt-1 text-[11px] text-muted-foreground">
+                                Shop price {liveItem.price != null ? roubles(liveItem.price) : "—"} · not a loot source
+                              </div>
+                            </div>
+                          ))}
                       </div>
                     )}
                   </div>
@@ -347,20 +397,31 @@ export default function EconomyLab({
         ) : (
           <div className="mt-3 grid min-h-0 flex-1 gap-3 overflow-hidden md:grid-cols-[minmax(240px,0.28fr)_minmax(0,0.72fr)]">
             <div className="pixel-scrollbar min-h-0 overflow-auto border-2 border-border bg-background/50">
-              {visibleSources.map((source) => {
-                const active = selectedSourceId === source.id;
+              {sourceGroups.map((group) => {
+                const children = group.children.filter((s) => visibleSourceIds.has(s.id));
+                if (children.length === 0) return null;
                 return (
-                  <button
-                    key={source.id}
-                    type="button"
-                    className={`flex w-full items-center justify-between gap-2 border-b border-border/70 px-3 py-2.5 text-left font-mono text-xs ${
-                      active ? "bg-secondary text-primary" : "text-foreground hover:bg-secondary/60"
-                    }`}
-                    onClick={() => setSelectedSourceId(source.id)}
-                  >
-                    <span className="min-w-0 truncate">{source.label}</span>
-                    <span className="shrink-0 uppercase text-muted-foreground">{source.type}</span>
-                  </button>
+                  <div key={group.id}>
+                    <div className="border-b border-border/70 bg-secondary/40 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {group.label}
+                    </div>
+                    {children.map((source) => {
+                      const active = selectedSourceId === source.id;
+                      return (
+                        <button
+                          key={source.id}
+                          type="button"
+                          className={`flex w-full items-center justify-between gap-2 border-b border-border/70 px-3 py-2.5 pl-5 text-left font-mono text-xs ${
+                            active ? "bg-secondary text-primary" : "text-foreground hover:bg-secondary/60"
+                          }`}
+                          onClick={() => setSelectedSourceId(source.id)}
+                        >
+                          <span className="min-w-0 truncate">{source.label}</span>
+                          <span className="shrink-0 uppercase text-muted-foreground">{source.roll ? source.type : "shop"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 );
               })}
             </div>
@@ -372,12 +433,20 @@ export default function EconomyLab({
               ) : (
                 <TablePanel
                   source={selectedSource}
-                  entries={tableEntries}
+                  entries={tableEntries.filter((row) => {
+                    if (category === "ALL") return true;
+                    if (category === "WEAPONS") return row.kind === "weapon";
+                    if (category === "ARMOR") return row.kind === "armor";
+                    if (category === "ATTACHMENTS") return row.kind === "attachment";
+                    return row.kind === "valuable" || row.kind === "meds";
+                  })}
                   draft={draft}
                   liveRules={liveRules}
                   crateEv={crateEv}
                   rewardEv={rewardEv}
                   wave={wave}
+                  focusItemId={focusItemId}
+                  onFocusItem={setFocusItemId}
                   onDraft={setDraft}
                 />
               )}
@@ -392,7 +461,7 @@ export default function EconomyLab({
               : appliedCount > 0
                 ? "Live test overrides active"
                 : "No draft changes"}
-            {view === "tables" ? " · ADD/REMOVE deferred (shared procedural pool)" : ""}
+            {view === "sources" ? " · source profiles constrain the procedural generator" : ""}
           </span>
           {view === "items" ? (
             <button
@@ -413,10 +482,10 @@ export default function EconomyLab({
               disabled={!selectedSourceId}
               onClick={() => {
                 if (!selectedSourceId) return;
-                applyDraft(resetEconomyTable(getEconomyOverrides(), selectedSourceId));
+                applyDraft(resetEconomySource(getEconomyOverrides(), selectedSourceId));
               }}
             >
-              RESET TABLE
+              RESET SOURCE
             </button>
           )}
           <button
@@ -450,6 +519,8 @@ function TablePanel({
   crateEv,
   rewardEv,
   wave,
+  focusItemId,
+  onFocusItem,
   onDraft,
 }: {
   source: LootSource;
@@ -459,19 +530,23 @@ function TablePanel({
   crateEv: ReturnType<typeof crateEvForSource>;
   rewardEv: ReturnType<typeof rewardEvForSource>;
   wave: number;
+  focusItemId: string | null;
+  onFocusItem: (id: string) => void;
   onDraft: (next: EconomyOverrides) => void;
 }) {
-  const map = source.type === "map" ? MAP_DEFS.find((m) => m.id === source.mapIds[0]) : undefined;
-  const showWeights = source.type === "crate" || source.type === "reward" || source.type === "map";
-  const showRules = source.type === "crate" || source.type === "reward";
+  const map = source.mapId ? MAP_DEFS.find((m) => m.id === source.mapId) : undefined;
+  const showProfile = source.roll;
+  const warnings = showProfile ? sourcePoolWarnings(source.id, draft, true, wave) : [];
+  const progression = focusItemId && showProfile ? itemProgression(focusItemId, source.id, draft, true) : [];
+  const focusRow = entries.find((r) => r.itemId === focusItemId);
 
   return (
     <>
-      <div className="font-display text-sm text-primary">{source.label}</div>
+      <div className="font-display text-sm text-primary">{sourceTitle(source)}</div>
       <div className="mt-1 font-mono text-[11px] text-muted-foreground">{sourceMapsLabel(source)}</div>
       <div className="mt-2 font-mono text-[11px] text-muted-foreground">
-        Mechanic: kind roll (weapon chance + rest bands) → rarity from U(0,1)+wave×factor×lootMult → weight inside
-        kind+rarity pool. Canonical weights are 1 (uniform). Effective % is first-slot chance at wave {wave}.
+        Profile eligibility → kind roll → rarity (wave × lootMult) → relative weight. Empty rarity tiers fall back
+        inside this source only. Effective % is first-slot chance at wave {wave}.
       </div>
 
       {map && (
@@ -492,14 +567,14 @@ function TablePanel({
             }}
           />
           <span className="text-[11px] text-muted-foreground">
-            Canonical {map.lootMult} · crates {map.crates.length} · wave rewards always
+            Canonical {map.lootMult} · shared by this map's crate and wave reward
           </span>
         </div>
       )}
 
       {crateEv?.supported && (
         <div className="mt-4 font-display text-[12px] text-primary">
-          EXPECTED SELL VALUE (crate): {roubles(crateEv.value)} / roll
+          EXPECTED SELL VALUE (crate): {roubles(crateEv.value)} / open
         </div>
       )}
       {rewardEv?.supported && (
@@ -509,16 +584,23 @@ function TablePanel({
       )}
       {source.type === "shop" && (
         <div className="mt-4 font-mono text-[11px] text-muted-foreground">
-          Hideout shop stock. Not a loot roll — EV unsupported.
+          Hideout shop stock. Not a loot roll — EV unsupported. Quest unlocks stay in Quest Editor.
         </div>
       )}
-      {crateEv && !crateEv.supported && source.type === "crate" && (
-        <div className="mt-4 font-mono text-[11px] text-muted-foreground">{crateEv.reason}</div>
+      {warnings.length > 0 && (
+        <div className="mt-3 font-mono text-[11px] text-muted-foreground">
+          {warnings.map((w) => (
+            <div key={`${w.code}:${w.message}`}>{w.level.toUpperCase()}: {w.message}</div>
+          ))}
+        </div>
       )}
 
-      {showRules && (
+      {showProfile && (
         <div className="mt-5">
-          <div className="font-display text-[11px] text-primary">GENERATOR RULES</div>
+          <div className="font-display text-[11px] text-primary">SHARED GENERATOR RULES</div>
+          <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+            Kind/rarity scalars apply to every raid loot source. Profile enabled/weight/waves do not.
+          </div>
           <div className="mt-2 space-y-1">
             {RULE_FIELDS.filter((f) => source.type === "crate" || f.key !== "crateExtraChance").map((field) => {
               const base = CANONICAL_LOOT_RULES[field.key];
@@ -550,49 +632,107 @@ function TablePanel({
         </div>
       )}
 
-      {showWeights && (
+      {showProfile && (
         <div className="mt-5">
-          <div className="font-display text-[11px] text-primary">RAID LOOT POOL</div>
+          <div className="font-display text-[11px] text-primary">SOURCE PROFILE</div>
           <div className="mt-1 font-mono text-[10px] text-muted-foreground">
-            Crate opens and wave rewards share this pool. Weight edits apply to both. ADD/REMOVE is deferred — set
-            weight 0 to exclude.
+            Independent of other maps and of crate vs wave reward unless they share a profile id.
           </div>
-          <div className={`mt-3 grid items-center gap-x-3 font-mono text-[10px] uppercase tracking-wide text-muted-foreground ${TABLE_COLS}`}>
+          <div className={`mt-3 grid items-center gap-x-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground ${TABLE_COLS}`}>
             <span>Item</span>
+            <span>On</span>
             <span>Weight</span>
-            <span>Test</span>
-            <span>Pool</span>
-            <span>First slot</span>
+            <span>Min</span>
+            <span>Max</span>
+            <span>First-slot %</span>
+            <span>Ã—10 opens</span>
           </div>
           {entries.map((row) => {
-            const changed = row.testWeight !== row.baseWeight;
+            const changed =
+              row.testWeight !== row.baseWeight || !row.enabled || row.minWave !== 1 || row.maxWave != null;
             return (
               <div
                 key={row.itemId}
-                className={`grid items-center gap-x-3 border-b border-border/60 py-2 font-mono text-sm ${TABLE_COLS}`}
+                className={`grid items-center gap-x-2 border-b border-border/60 py-2 font-mono text-sm ${TABLE_COLS} ${
+                  focusItemId === row.itemId ? "bg-secondary/40" : ""
+                }`}
               >
-                <span className={changed ? "text-foreground" : "text-muted-foreground"}>
+                <button
+                  type="button"
+                  className={`truncate text-left ${changed ? "text-foreground" : "text-muted-foreground"}`}
+                  onClick={() => onFocusItem(row.itemId)}
+                >
                   {row.name}
                   <span className="ml-2 text-[10px] uppercase text-muted-foreground">{row.kind}</span>
-                </span>
-                <span className="text-muted-foreground">{row.baseWeight}</span>
+                </button>
+                <input
+                  type="checkbox"
+                  checked={row.enabled}
+                  onChange={(e) => {
+                    const result = setSourceProfileField(draft, source.id, row.itemId, { enabled: e.target.checked });
+                    if (result.ok) onDraft(result.overrides);
+                  }}
+                />
                 <input
                   type="number"
                   step={1}
                   min={0}
                   value={row.testWeight}
-                  className={`w-full border-2 bg-background px-2 py-1 ${changedClass(changed)}`}
+                  className={`w-full border-2 bg-background px-1 py-1 ${changedClass(row.testWeight !== row.baseWeight)}`}
                   onChange={(e) => {
                     const n = Number(e.target.value);
-                    const result = setItemWeight(draft, row.itemId, n);
+                    const result = setSourceProfileField(draft, source.id, row.itemId, { weight: n });
                     if (result.ok) onDraft(result.overrides);
                   }}
                 />
-                <span>{pct(row.poolShare)}</span>
-                <span>{pct(row.firstSlotChance)}</span>
+                <input
+                  type="number"
+                  step={1}
+                  min={1}
+                  value={row.minWave}
+                  className={`w-full border-2 bg-background px-1 py-1 ${changedClass(row.minWave !== 1)}`}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    const result = setSourceProfileField(draft, source.id, row.itemId, { minWave: n });
+                    if (result.ok) onDraft(result.overrides);
+                  }}
+                />
+                <input
+                  type="number"
+                  step={1}
+                  min={1}
+                  value={row.maxWave ?? ""}
+                  placeholder="—"
+                  className={`w-full border-2 bg-background px-1 py-1 ${changedClass(row.maxWave != null)}`}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const result = setSourceProfileField(draft, source.id, row.itemId, {
+                      maxWave: raw === "" ? null : Number(raw),
+                    });
+                    if (result.ok) onDraft(result.overrides);
+                  }}
+                />
+                <span>{row.eligible ? pct(row.firstSlotChance) : "INELIGIBLE"}</span>
+                <span>
+                  {row.expectedAppearances?.supported ? row.expectedAppearances.perTenOpens.toFixed(2) : "—"}
+                </span>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {focusRow && progression.length > 0 && (
+        <div className="mt-5 border border-border bg-secondary/20 px-3 py-2.5">
+          <div className="font-display text-[11px] text-primary">PROGRESSION · {focusRow.name}</div>
+          <div className="mt-2 grid grid-cols-4 gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
+            {progression.map((row) => (
+              <div key={row.wave}>
+                Wave {row.wave}{" "}
+                {row.eligible ? pct(row.firstSlotChance) : "INELIGIBLE"}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

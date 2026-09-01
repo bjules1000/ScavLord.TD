@@ -12,6 +12,7 @@ import {
   ECONOMY_STORAGE_KEY,
   applyEconomyOverrides,
   canonicalItem,
+  earliestLootSummary,
   economyLabCatalog,
   economyPatchLines,
   effectiveItemDef,
@@ -27,19 +28,27 @@ import {
   itemSourceRows,
   loadEconomyOverrides,
   lootSourceCatalog,
+  lootSourceGroups,
   lootTableEntries,
   modifiedEconomyCount,
+  parseStoredEconomy,
   resetEconomyItem,
-  resetEconomyTable,
+  resetEconomySource,
   rollEffectiveCrate,
   saleValueOf,
   setItemEconomyField,
   setItemWeight,
   setLootRule,
   setMapLootMult,
+  setSourceProfileField,
   sourceExpectedValue,
   type StorageLike,
 } from "./economy";
+
+const WOODS_CRATE = "woods:crate";
+const WOODS_REWARD = "woods:reward";
+const FACTORY_CRATE = "factory:crate";
+const KOLKHOZ_REWARD = "kolkhoz:reward";
 
 function memStore(initial: Record<string, string> = {}): StorageLike & { data: Record<string, string> } {
   const data = { ...initial };
@@ -168,20 +177,23 @@ describe("item economy overrides", () => {
   });
 });
 
-describe("loot tables", () => {
-  it("canonical loot sources populate LOOT TABLES", () => {
+describe("loot sources", () => {
+  it("canonical loot sources follow map hierarchy without inventing Grain Gate crates", () => {
     const sources = lootSourceCatalog();
-    expect(sources.some((s) => s.id === "crate" && s.type === "crate" && s.shared)).toBe(true);
-    expect(sources.some((s) => s.id === "reward" && s.type === "reward")).toBe(true);
-    expect(sources.some((s) => s.label === "PINE CUT" && s.type === "map")).toBe(true);
-    expect(sources.some((s) => s.label === "GRAIN GATE")).toBe(true);
-    expect(sources.some((s) => s.label === "THE WORKS")).toBe(true);
+    expect(sources.some((s) => s.id === WOODS_CRATE && s.type === "crate" && !s.shared)).toBe(true);
+    expect(sources.some((s) => s.id === WOODS_REWARD && s.type === "reward")).toBe(true);
+    expect(sources.some((s) => s.id === FACTORY_CRATE)).toBe(true);
+    expect(sources.some((s) => s.id === KOLKHOZ_REWARD)).toBe(true);
+    expect(sources.some((s) => s.id === "kolkhoz:crate")).toBe(false);
     expect(sources.some((s) => s.id === "shop")).toBe(true);
     expect(sources.every((s) => s.implemented)).toBe(true);
+    const groups = lootSourceGroups();
+    expect(groups.map((g) => g.label)).toEqual(["PINE CUT", "GRAIN GATE", "THE WORKS", "SHOP"]);
+    expect(groups.find((g) => g.mapId === "kolkhoz")?.children.map((c) => c.type)).toEqual(["reward"]);
   });
 
   it("source entries map to canonical item IDs", () => {
-    const rows = lootTableEntries("crate", emptyEconomyOverrides(), true, 1);
+    const rows = lootTableEntries(WOODS_CRATE, emptyEconomyOverrides(), true, 1);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => ITEM_BY_ID[r.itemId])).toBe(true);
     expect(rows.every((r) => r.kind !== "backpack")).toBe(true);
@@ -189,14 +201,14 @@ describe("loot tables", () => {
   });
 
   it("changing one weight recalculates effective percentages", () => {
-    const base = lootTableEntries("crate", emptyEconomyOverrides(), true, 1);
+    const base = lootTableEntries(WOODS_CRATE, emptyEconomyOverrides(), true, 1);
     const optic = base.find((r) => r.itemId === "a_optic")!;
     const mag = base.find((r) => r.itemId === "a_mag")!;
     expect(optic.poolShare).toBeCloseTo(mag.poolShare);
-    const bumped = setItemWeight(emptyEconomyOverrides(), "a_optic", 3);
+    const bumped = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "a_optic", { weight: 3 });
     expect(bumped.ok).toBe(true);
     if (!bumped.ok) return;
-    const next = lootTableEntries("crate", bumped.overrides, true, 1);
+    const next = lootTableEntries(WOODS_CRATE, bumped.overrides, true, 1);
     const optic2 = next.find((r) => r.itemId === "a_optic")!;
     const mag2 = next.find((r) => r.itemId === "a_mag")!;
     expect(optic2.poolShare).toBeGreaterThan(optic.poolShare);
@@ -204,14 +216,27 @@ describe("loot tables", () => {
     expect(mag2.poolShare).toBeLessThan(mag.poolShare);
   });
 
+  it("Pine Cut weight change does not alter The Works", () => {
+    const bumped = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "w_ak74", { weight: 9 });
+    expect(bumped.ok).toBe(true);
+    if (!bumped.ok) return;
+    const pine = lootTableEntries(WOODS_CRATE, bumped.overrides, true, 1).find((r) => r.itemId === "w_ak74")!;
+    const works = lootTableEntries(FACTORY_CRATE, bumped.overrides, true, 1).find((r) => r.itemId === "w_ak74")!;
+    const pineReward = lootTableEntries(WOODS_REWARD, bumped.overrides, true, 1).find((r) => r.itemId === "w_ak74")!;
+    expect(pine.testWeight).toBe(9);
+    expect(works.testWeight).toBe(CANONICAL_ITEM_WEIGHT);
+    expect(pineReward.testWeight).toBe(CANONICAL_ITEM_WEIGHT);
+  });
+
   it("zero-weight behavior handled safely", () => {
-    const zero = setItemWeight(emptyEconomyOverrides(), "a_optic", 0);
+    const zero = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "a_optic", { weight: 0 });
     expect(zero.ok).toBe(true);
     if (!zero.ok) return;
-    const row = lootTableEntries("crate", zero.overrides, true, 1).find((r) => r.itemId === "a_optic")!;
+    const row = lootTableEntries(WOODS_CRATE, zero.overrides, true, 1).find((r) => r.itemId === "a_optic")!;
     expect(row.poolShare).toBe(0);
     expect(row.firstSlotChance).toBe(0);
     expect(row.testWeight).toBe(0);
+    expect(row.eligible).toBe(false);
   });
 
   it("invalid negative weight rejected", () => {
@@ -221,39 +246,42 @@ describe("loot tables", () => {
     expect(emptyEconomyOverrides().weights["a_optic"]).toBeUndefined();
   });
 
-  it("RESET TABLE restores canonical table", () => {
+  it("RESET SOURCE clears only that source profile", () => {
     let over = emptyEconomyOverrides();
-    const w = setItemWeight(over, "v_gpu", 8);
+    const w = setSourceProfileField(over, WOODS_CRATE, "v_gpu", { weight: 8 });
     expect(w.ok).toBe(true);
     if (w.ok) over = w.overrides;
+    const other = setSourceProfileField(over, FACTORY_CRATE, "v_gpu", { weight: 5 });
+    expect(other.ok).toBe(true);
+    if (other.ok) over = other.overrides;
     const rule = setLootRule(over, "crateExtraChance", 0.9);
     expect(rule.ok).toBe(true);
     if (rule.ok) over = rule.overrides;
-    const reset = resetEconomyTable(over, "crate");
-    expect(reset.weights).toEqual({});
-    expect(reset.rules).toEqual({});
-    expect(effectiveLootRules(reset, true)).toEqual(CANONICAL_LOOT_RULES);
+    const reset = resetEconomySource(over, WOODS_CRATE);
+    expect(reset.profiles[WOODS_CRATE]).toBeUndefined();
+    expect(reset.profiles[FACTORY_CRATE]?.["v_gpu"]?.weight).toBe(5);
+    expect(reset.rules.crateExtraChance).toBe(0.9);
   });
 
-  it("RESET TABLE on a map only clears that map's lootMult", () => {
+  it("RESET SOURCE does not clear map lootMult", () => {
     const set = setMapLootMult(emptyEconomyOverrides(), "woods", 2);
     expect(set.ok).toBe(true);
     if (!set.ok) return;
-    const w = setItemWeight(set.overrides, "v_gpu", 4);
+    const w = setSourceProfileField(set.overrides, WOODS_CRATE, "v_gpu", { weight: 4 });
     expect(w.ok).toBe(true);
     if (!w.ok) return;
-    const reset = resetEconomyTable(w.overrides, "map:woods");
-    expect(reset.maps["woods"]).toBeUndefined();
-    expect(reset.weights["v_gpu"]).toBe(4);
+    const reset = resetEconomySource(w.overrides, WOODS_CRATE);
+    expect(reset.maps["woods"]?.lootMult).toBe(2);
+    expect(reset.profiles[WOODS_CRATE]).toBeUndefined();
   });
 
   it("draft table affects derived percentages before APPLY", () => {
     applyEconomyOverrides(emptyEconomyOverrides(), true, memStore());
-    const draft = setItemWeight(emptyEconomyOverrides(), "a_optic", 9);
+    const draft = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "a_optic", { weight: 9 });
     expect(draft.ok).toBe(true);
     if (!draft.ok) return;
-    const live = lootTableEntries("crate", getEconomyOverrides(), true, 1).find((r) => r.itemId === "a_optic")!;
-    const pending = lootTableEntries("crate", draft.overrides, true, 1).find((r) => r.itemId === "a_optic")!;
+    const live = lootTableEntries(WOODS_CRATE, getEconomyOverrides(), true, 1).find((r) => r.itemId === "a_optic")!;
+    const pending = lootTableEntries(WOODS_CRATE, draft.overrides, true, 1).find((r) => r.itemId === "a_optic")!;
     expect(live.testWeight).toBe(CANONICAL_ITEM_WEIGHT);
     expect(pending.testWeight).toBe(9);
     expect(pending.firstSlotChance).toBeGreaterThan(live.firstSlotChance);
@@ -265,7 +293,7 @@ describe("loot tables", () => {
     const target = rareAtt[1]!;
     let over = emptyEconomyOverrides();
     for (const item of rareAtt) {
-      const r = setItemWeight(over, item.id, item.id === target.id ? 10 : 0);
+      const r = setSourceProfileField(over, WOODS_CRATE, item.id, { weight: item.id === target.id ? 10 : 0 });
       expect(r.ok).toBe(true);
       if (r.ok) over = r.overrides;
     }
@@ -274,9 +302,9 @@ describe("loot tables", () => {
       let i = 0;
       return () => values[i++] ?? 0.5;
     };
-    const before = rollEffectiveCrate(1, 1, 1, emptyEconomyOverrides(), true, seq());
+    const before = rollEffectiveCrate(1, 1, 1, emptyEconomyOverrides(), true, seq(), WOODS_CRATE);
     applyEconomyOverrides(over, true, store);
-    const after = rollEffectiveCrate(1, 50, 1, getEconomyOverrides(), true, seq());
+    const after = rollEffectiveCrate(1, 50, 1, getEconomyOverrides(), true, seq(), WOODS_CRATE);
     expect(before[0]?.kind).toBe("attachment");
     expect(before[0]?.id).not.toBe(target.id);
     expect(after[0]?.id).toBe(target.id);
@@ -298,16 +326,15 @@ describe("loot tables", () => {
     const sources = lootSourceCatalog();
     expect(filterLootSources(sources, "CRATE", "").every((s) => s.type === "crate")).toBe(true);
     expect(filterLootSources(sources, "REWARD", "").every((s) => s.type === "reward")).toBe(true);
-    expect(filterLootSources(sources, "MAP", "").every((s) => s.type === "map")).toBe(true);
-    expect(filterLootSources(sources, "ALL", "pine").some((s) => s.label === "PINE CUT")).toBe(true);
+    expect(filterLootSources(sources, "SHOP", "").every((s) => s.type === "shop")).toBe(true);
+    expect(filterLootSources(sources, "ALL", "pine").some((s) => s.groupLabel === "PINE CUT")).toBe(true);
   });
 });
-
 describe("item/source cross-reference", () => {
   it("selected item lists every canonical source containing it", () => {
     const rows = itemSourceRows("v_gpu", emptyEconomyOverrides(), true, 1);
-    expect(rows.some((r) => r.sourceId === "crate" && r.shared)).toBe(true);
-    expect(rows.some((r) => r.sourceId === "reward")).toBe(true);
+    expect(rows.some((r) => r.sourceId === WOODS_CRATE && !r.shared)).toBe(true);
+    expect(rows.some((r) => r.sourceId === WOODS_REWARD)).toBe(true);
     expect(rows.some((r) => r.label === "PINE CUT / SUPPLY CRATE")).toBe(true);
     expect(rows.some((r) => r.label === "THE WORKS / SUPPLY CRATE")).toBe(true);
     expect(rows.some((r) => r.label.includes("GRAIN GATE") && r.label.includes("CRATE"))).toBe(false);
@@ -322,33 +349,58 @@ describe("item/source cross-reference", () => {
   });
 
   it("source summary updates when draft weight changes", () => {
-    const before = itemSourceRows("a_optic", emptyEconomyOverrides(), true, 1).find((r) => r.sourceId === "crate")!;
-    const bumped = setItemWeight(emptyEconomyOverrides(), "a_optic", 6);
+    const before = itemSourceRows("a_optic", emptyEconomyOverrides(), true, 1).find((r) => r.sourceId === WOODS_CRATE)!;
+    const bumped = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "a_optic", { weight: 6 });
     expect(bumped.ok).toBe(true);
     if (!bumped.ok) return;
-    const after = itemSourceRows("a_optic", bumped.overrides, true, 1).find((r) => r.sourceId === "crate")!;
+    const after = itemSourceRows("a_optic", bumped.overrides, true, 1).find((r) => r.sourceId === WOODS_CRATE)!;
     expect(after.weight).toBe(6);
     expect(after.firstSlotChance).toBeGreaterThan(before.firstSlotChance);
     expect(after.poolShare).toBeGreaterThan(before.poolShare);
   });
 
-  it("shared source/map representation is deterministic", () => {
+  it("map/source representation is deterministic and independent", () => {
     const a = itemSourceRows("v_gpu", emptyEconomyOverrides(), true, 1).map((r) => r.label);
     const b = itemSourceRows("v_gpu", emptyEconomyOverrides(), true, 1).map((r) => r.label);
     expect(a).toEqual(b);
-    const crate = lootSourceCatalog().find((s) => s.id === "crate")!;
-    expect(crate.shared).toBe(true);
-    expect(crate.mapIds).toEqual(["woods", "factory"]);
+    const crate = lootSourceCatalog().find((s) => s.id === WOODS_CRATE)!;
+    expect(crate.shared).toBe(false);
+    expect(crate.mapIds).toEqual(["woods"]);
   });
 
   it("add/remove loot entries are deferred (no list mutation helpers)", () => {
     expect("addLootEntry" in globalThis).toBe(false);
-    const rows = lootTableEntries("crate", emptyEconomyOverrides(), true, 1);
+    const rows = lootTableEntries(WOODS_CRATE, emptyEconomyOverrides(), true, 1);
     expect(rows.map((r) => r.itemId).sort()).toEqual(
       ITEMS.filter((i) => i.kind !== "backpack")
         .map((i) => i.id)
         .sort(),
     );
+  });
+
+  it("earliest loot ignores shop and uses first positive chance wave", () => {
+    const base = earliestLootSummary("w_ak74", emptyEconomyOverrides(), true);
+    expect(base.available).toBe(true);
+    const gated = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "w_ak74", { minWave: 5 });
+    expect(gated.ok).toBe(true);
+    if (!gated.ok) return;
+    const next = earliestLootSummary("w_ak74", gated.overrides, true);
+    expect(next.available).toBe(true);
+    if (next.available && base.available) {
+      expect(next.wave).toBeGreaterThanOrEqual(base.wave);
+    }
+    const disabled = ITEMS.filter((i) => i.kind !== "backpack").reduce((over, item) => {
+      const r = setSourceProfileField(over, WOODS_CRATE, item.id, { enabled: false });
+      return r.ok ? r.overrides : over;
+    }, emptyEconomyOverrides());
+    let allOff = disabled;
+    for (const source of lootSourceCatalog().filter((s) => s.roll)) {
+      for (const item of ITEMS.filter((i) => i.kind !== "backpack")) {
+        const r = setSourceProfileField(allOff, source.id, item.id, { enabled: false });
+        if (r.ok) allOff = r.overrides;
+      }
+    }
+    expect(earliestLootSummary("w_ak74", allOff, true).available).toBe(false);
   });
 });
 
@@ -363,18 +415,18 @@ describe("expected value", () => {
   });
 
   it("EV updates with item value draft", () => {
-    const base = sourceExpectedValue("crate", emptyEconomyOverrides(), true, 1);
+    const base = sourceExpectedValue(WOODS_CRATE, emptyEconomyOverrides(), true, 1);
     expect(base.supported).toBe(true);
     const value = setItemEconomyField(emptyEconomyOverrides(), "v_gpu", "value", 5000, 520);
     expect(value.ok).toBe(true);
     if (!value.ok || !base.supported) return;
-    const next = sourceExpectedValue("crate", value.overrides, true, 1);
+    const next = sourceExpectedValue(WOODS_CRATE, value.overrides, true, 1);
     expect(next.supported).toBe(true);
     if (next.supported) expect(next.value).toBeGreaterThan(base.value);
   });
 
   it("EV updates with loot-weight draft", () => {
-    const base = sourceExpectedValue("crate", emptyEconomyOverrides(), true, 1);
+    const base = sourceExpectedValue(WOODS_CRATE, emptyEconomyOverrides(), true, 1);
     expect(base.supported).toBe(true);
     let over = emptyEconomyOverrides();
     for (const item of ITEMS.filter((i) => i.kind !== "backpack")) {
@@ -382,13 +434,13 @@ describe("expected value", () => {
       expect(r.ok).toBe(true);
       if (r.ok) over = r.overrides;
     }
-    const next = sourceExpectedValue("crate", over, true, 1);
+    const next = sourceExpectedValue(WOODS_CRATE, over, true, 1);
     expect(next.supported).toBe(true);
     if (next.supported && base.supported) expect(next.value).toBeGreaterThan(base.value);
   });
 
   it("EV uses the documented canonical sale/value basis", () => {
-    const ev = sourceExpectedValue("crate", emptyEconomyOverrides(), true, 1);
+    const ev = sourceExpectedValue(WOODS_CRATE, emptyEconomyOverrides(), true, 1);
     expect(ev.supported).toBe(true);
     if (ev.supported) expect(ev.formula).toContain("item value (sell/stash)");
   });
@@ -423,8 +475,10 @@ describe("patch/export", () => {
     expect(w.ok).toBe(true);
     if (!w.ok) return;
     const text = formatEconomyPatch(w.overrides);
-    expect(text).toContain("v_gpu.weight: 1 -> 2");
-    expect(text).not.toContain("a_optic.weight");
+    expect(text).toContain("PINE CUT / SUPPLY CRATE");
+    expect(text).toContain("GRAPHICS CARD");
+    expect(text).toContain("weight: 1 -> 2");
+    expect(text).not.toContain("4x SCOPE");
   });
 
   it("Reset removes corresponding patch entries", () => {
@@ -438,8 +492,9 @@ describe("patch/export", () => {
     over = resetEconomyItem(over, "v_gpu");
     const text = formatEconomyPatch(over);
     expect(text).not.toContain("GRAPHICS CARD");
-    expect(text).toContain("a_optic.weight");
-    over = resetEconomyTable(over, "crate");
+    expect(text).toContain("4x SCOPE");
+    expect(text).toContain("weight: 1 -> 4");
+    over = resetEconomySource(over, WOODS_CRATE);
     expect(formatEconomyPatch(over)).toContain("(no changes)");
   });
 
@@ -488,3 +543,60 @@ describe("first-slot chance helper still works under economy catalog", () => {
     expect(firstSlotChance("v_gpu", 1, 1, ITEMS, CANONICAL_LOOT_RULES, {})).toBeGreaterThan(0);
   });
 });
+
+describe("profile persistence and DEV gate", () => {
+  it("localStorage restores applied profile overrides", () => {
+    const store = memStore();
+    const set = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "w_ak74", { minWave: 4, weight: 3 });
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    applyEconomyOverrides(set.overrides, true, store);
+    applyEconomyOverrides(emptyEconomyOverrides(), false, null);
+    const loaded = parseStoredEconomy(store.data[ECONOMY_STORAGE_KEY]!);
+    expect(loaded.profiles[WOODS_CRATE]?.["w_ak74"]?.minWave).toBe(4);
+    expect(loaded.profiles[WOODS_CRATE]?.["w_ak74"]?.weight).toBe(3);
+    hydrateEconomyOverrides(true, store);
+    expect(getEconomyOverrides().profiles[WOODS_CRATE]?.["w_ak74"]?.minWave).toBe(4);
+  });
+
+  it("DEV-off ignores profile overrides", () => {
+    const set = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "w_ak74", { enabled: false });
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    const live = lootTableEntries(WOODS_CRATE, set.overrides, true, 1).find((r) => r.itemId === "w_ak74")!;
+    const off = lootTableEntries(WOODS_CRATE, set.overrides, false, 1).find((r) => r.itemId === "w_ak74")!;
+    expect(live.enabled).toBe(false);
+    expect(off.enabled).toBe(true);
+  });
+
+  it("RESET ITEM clears the item across sources", () => {
+    let over = emptyEconomyOverrides();
+    const a = setSourceProfileField(over, WOODS_CRATE, "w_ak74", { minWave: 6 });
+    if (a.ok) over = a.overrides;
+    const b = setSourceProfileField(over, FACTORY_CRATE, "w_ak74", { weight: 9 });
+    if (b.ok) over = b.overrides;
+    const c = setItemEconomyField(over, "v_gpu", "value", 1, 520);
+    if (c.ok) over = c.overrides;
+    const reset = resetEconomyItem(over, "w_ak74");
+    expect(reset.profiles[WOODS_CRATE]?.["w_ak74"]).toBeUndefined();
+    expect(reset.profiles[FACTORY_CRATE]?.["w_ak74"]).toBeUndefined();
+    expect(reset.items["v_gpu"]?.value).toBe(1);
+  });
+
+  it("migrates legacy global weights onto every canonical source", () => {
+    const loaded = parseStoredEconomy(JSON.stringify({ weights: { v_gpu: 4 } }));
+    expect(loaded.profiles[WOODS_CRATE]?.["v_gpu"]?.weight).toBe(4);
+    expect(loaded.profiles[FACTORY_CRATE]?.["v_gpu"]?.weight).toBe(4);
+    expect(loaded.weights).toEqual({});
+  });
+});
+
+describe("fitted weapons", () => {
+  it("procedural loot does not attach installed mods to generated weapons", () => {
+    const crate = rollEffectiveCrate(10, 1, 1.35, emptyEconomyOverrides(), true, () => 0.01, WOODS_CRATE);
+    for (const item of crate) {
+      if (item.kind === "weapon") expect(item.installed).toBeUndefined();
+    }
+  });
+});
+
