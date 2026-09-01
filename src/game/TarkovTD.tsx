@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { BOARD_GUTTER, COLS, ENEMIES, ROWS, SCALE, TILE, buildWave, waveScale } from "./data";
+import { BOARD_GUTTER, COLS, ROWS, SCALE, TILE, waveScale } from "./data";
 import {
   MAP_DEFS,
   MAP_BY_ID,
@@ -16,7 +16,8 @@ import {
   type CoverPiece,
   type GameMap,
 } from "./map";
-import { assignSpawnLane, lanePathProgress } from "./lanes";
+import { lanePathProgress } from "./lanes";
+import { scheduleWave, spawnedEnemyHp, type WaveSpawnEvent } from "./waves";
 import {
   canPlaceOperator,
   enemyLaneSurface,
@@ -176,6 +177,7 @@ import {
 import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
+import { RAID_SCRAP_MULT } from "./loot";
 import { DEV_TOOLS_ENABLED } from "./dev/tools";
 import { confirmLeaveRaidForMapBuilder, type DevToolId } from "./dev/menu";
 import DevToolsMenu from "./dev/DevToolsMenu";
@@ -184,6 +186,26 @@ import {
   getBalanceOverrides,
 } from "./dev/balance";
 import BalanceLab from "./dev/BalanceLab";
+import EconomyLab from "./dev/EconomyLab";
+import WaveLab from "./dev/WaveLab";
+import QuestEditor from "./dev/QuestEditor";
+import {
+  effectiveEnemy,
+  effectiveWave,
+  requestTestWave,
+} from "./dev/waveLabCore";
+import {
+  isQuestTestActive,
+  noteQuestTestEvent,
+  requestTestQuest,
+  resetQuestTestProgress,
+} from "./dev/questLab";
+import {
+  effectiveItemDef,
+  effectiveLootMult,
+  lootRuntimeForSource,
+  saleValueOf,
+} from "./dev/economy";
 import { clearRaidBackpack, devAddToBackpack } from "./dev/inventory";
 import DevItemPicker from "./dev/DevItemPicker";
 
@@ -207,19 +229,13 @@ const STASH_KIND_ORDER: Record<string, number> = {
 };
 const RARITY_ORDER: Record<string, number> = { epic: 0, rare: 1, common: 2 };
 
-/** in-raid scrapping pays far better than selling in the hideout, but into raid funds */
-const RAID_SCRAP_MULT = 1.8;
 const RECRUIT_BASE = 160;
 const CRATE_TIME = 10; // seconds an operator must hold the crate
 
 
 type Phase = "hideout" | "prep" | "combat" | "loot" | "dead" | "extracted";
 
-interface SpawnEvent {
-  at: number;
-  kind: EnemyKind;
-  lane: number;
-}
+type SpawnEvent = WaveSpawnEvent;
 interface Drop {
   id: number;
   tx: number;
@@ -450,6 +466,9 @@ export default function TarkovTD() {
   const [questFilter, setQuestFilter] = useState<"all" | "open" | "done">("all");
   const [devPickerOpen, setDevPickerOpen] = useState(false);
   const [balanceLabOpen, setBalanceLabOpen] = useState(false);
+  const [economyLabOpen, setEconomyLabOpen] = useState(false);
+  const [waveLabOpen, setWaveLabOpen] = useState(false);
+  const [questLabOpen, setQuestLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
@@ -578,7 +597,7 @@ export default function TarkovTD() {
       let next = [...stash];
       if (keepBackpack) {
         const haul = [...s.backpack, ...s.recovered];
-        const settled = settleHaul(stash, haul, sellValuableUids, stashSlots, leaveUids);
+        const settled = settleHaul(stash, haul, sellValuableUids, stashSlots, leaveUids, saleValueOf);
         if (!settled.ok) {
           pushLog(
             `STASH FULL — ${settled.keptCount} recovered item(s), ${settled.room} free slot(s). Sell or leave items first.`,
@@ -589,9 +608,11 @@ export default function TarkovTD() {
         m.bank += settled.soldValue;
         next = settled.next;
       }
-      m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
-      m.quests.scavKills += s.scavKills;
-      m.quests.bossKills += s.bossKills;
+      if (!isQuestTestActive()) {
+        m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
+        m.quests.scavKills += s.scavKills;
+        m.quests.bossKills += s.bossKills;
+      }
       // Operator bookkeeping: they keep kit on extract, lose it on death / wipe
       const pmc = s.towers.find((t) => t.pmc);
       if (s.pmcDown) {
@@ -624,7 +645,7 @@ export default function TarkovTD() {
 
   const buy = useCallback(
     (defId: string) => {
-      const def = ITEM_BY_ID[defId];
+      const def = effectiveItemDef(defId) ?? ITEM_BY_ID[defId];
       const m = metaRef.current;
       if (!def?.price) return;
       const price = Math.round(def.price * skillMods(m.skills).buyMult);
@@ -658,7 +679,7 @@ export default function TarkovTD() {
       const m = metaRef.current;
       const item = stash.find((i) => i.uid === uid);
       if (!item) return;
-      const paid = Math.round(item.value * skillMods(m.skills).sellMult);
+      const paid = Math.round(saleValueOf(item) * skillMods(m.skills).sellMult);
       const next = stash.filter((i) => i.uid !== uid);
       setStash(next);
       m.bank += paid;
@@ -677,7 +698,7 @@ export default function TarkovTD() {
       const item = s2.backpack.find((i) => i.uid === uid);
       if (!item) return;
       const sm = skillMods(metaRef.current.skills);
-      const paid = Math.round(item.value * RAID_SCRAP_MULT * sm.scrapMult * sm.sellMult);
+      const paid = Math.round(saleValueOf(item) * RAID_SCRAP_MULT * sm.scrapMult * sm.sellMult);
       s2.backpack = s2.backpack.filter((i) => i.uid !== uid);
       s2.roubles += paid;
       pushLog(`Scrapped ${item.name} on site for ${paid}₽ raid funds.`);
@@ -865,9 +886,16 @@ export default function TarkovTD() {
     rerender();
   }, [pushLog, rerender]);
 
-  const setLabOpen = useCallback((open: boolean) => {
-    labOpenRef.current = open;
-    setBalanceLabOpen(open);
+  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "none") => {
+    const balance = which === "balance";
+    const economy = which === "economy";
+    const wave = which === "wave";
+    const quest = which === "quest";
+    setBalanceLabOpen(balance);
+    setEconomyLabOpen(economy);
+    setWaveLabOpen(wave);
+    setQuestLabOpen(quest);
+    labOpenRef.current = balance || economy || wave || quest;
   }, []);
 
   const onDevTool = useCallback(
@@ -881,9 +909,21 @@ export default function TarkovTD() {
         window.location.assign(`/dev/map-editor?map=${encodeURIComponent(mapId)}`);
         return;
       }
-      setLabOpen(true);
+      if (id === "economy-lab") {
+        setLabs("economy");
+        return;
+      }
+      if (id === "wave-lab") {
+        setLabs("wave");
+        return;
+      }
+      if (id === "quest-editor") {
+        setLabs("quest");
+        return;
+      }
+      setLabs("balance");
     },
-    [mapId, setLabOpen],
+    [mapId, setLabs],
   );
 
   const onBalanceApplied = useCallback(
@@ -1024,16 +1064,17 @@ export default function TarkovTD() {
     };
 
     const hurtEnemy = (e: Enemy, amount: number, pen: number) => {
-      const def = ENEMIES[e.kind];
+      const def = effectiveEnemy(e.kind);
       const dealt = applyHit(e, amount, def.armor, pen);
       e.hitFlash = 0.07;
       return dealt;
     };
 
     const killEnemy = (e: Enemy, s: GameState) => {
-      const def = ENEMIES[e.kind];
+      const def = effectiveEnemy(e.kind);
       const book: KillBook = s;
       const xp = creditKillBook(e.kind, def.bounty, book);
+      noteQuestTestEvent({ type: "KILL", kind: e.kind, mapId: mapRef.current.def.id });
       const money = def.bounty;
       const pmc = s.towers.find((t) => t.pmc);
       if (pmc) {
@@ -1089,9 +1130,9 @@ export default function TarkovTD() {
 
       while (s.queue.length && s.queue[0]!.at <= s.clock) {
         const ev = s.queue.shift()!;
-        const def = ENEMIES[ev.kind];
-        const sc = waveScale(s.wave);
-        const hp = Math.round(def.hp * sc.hp * mapRef.current.def.hpMult * mods.enemyHp);
+        const def = effectiveEnemy(ev.kind);
+        // HP is snapshotted here. Later Wave Lab HP APPLY does not rewrite live hp/maxHp.
+        const hp = spawnedEnemyHp(def.hp, s.wave, mapRef.current.def.hpMult, mods.enemyHp);
 
         s.enemies.push({
           id: s.nextId++,
@@ -1118,7 +1159,7 @@ export default function TarkovTD() {
 
       // enemies — corpses do not walk, leak, or fight
       for (const e of s.enemies) {
-        const def = ENEMIES[e.kind];
+        const def = effectiveEnemy(e.kind);
         e.hitFlash = Math.max(0, e.hitFlash - dt);
         e.slow = Math.max(0, e.slow - dt);
         if (isSettledOut(e)) continue;
@@ -1244,7 +1285,12 @@ export default function TarkovTD() {
           c.progress += dt / CRATE_TIME;
           if (c.progress >= 1) {
             c.opened = true;
-            const loot = rollCrate(s.wave, s.nextId, mapRef.current.def.lootMult);
+            const loot = rollCrate(
+              s.wave,
+              s.nextId,
+              effectiveLootMult(mapRef.current.def),
+              lootRuntimeForSource(`${mapRef.current.def.id}:crate`),
+            );
             s.nextId += loot.length;
             addToBackpack(loot.map((l) => ({ ...l, uid: newUid() })));
             s.floats.push({ x: ccx, y: ccy - 18, life: 1.4, text: "CRATE OPENED", color: "#f0b400" });
@@ -1324,7 +1370,7 @@ export default function TarkovTD() {
                 secondaryMult: shotgunSecondaryMult(st.weapon),
                 maxHits: shotgunMaxHits(st.weapon),
                 enemies: s.enemies,
-                armorOf: (e) => ENEMIES[e.kind].armor,
+                armorOf: (e) => effectiveEnemy(e.kind).armor,
                 pen: st.pen,
                 maxAlongOf: (angle) =>
                   wallAlongLimit(
@@ -1564,8 +1610,14 @@ export default function TarkovTD() {
 
       if (s.phase === "combat" && s.queue.length === 0 && s.enemies.length === 0) {
         s.phase = "loot";
-        s.roubles += Math.round((120 + s.wave * 30) * mapRef.current.def.lootMult);
-        const found = rollChoices(s.wave, s.nextId, mapRef.current.def.lootMult);
+        noteQuestTestEvent({ type: "WAVE_COMPLETE", wave: s.wave, mapId: mapRef.current.def.id });
+        s.roubles += Math.round((120 + s.wave * 30) * effectiveLootMult(mapRef.current.def));
+        const found = rollChoices(
+          s.wave,
+          s.nextId,
+          effectiveLootMult(mapRef.current.def),
+          lootRuntimeForSource(`${mapRef.current.def.id}:reward`),
+        );
         s.nextId += 3;
         setChoices(found.map((f) => ({ ...f, uid: newUid() })));
         setPendingLoot(null);
@@ -1897,23 +1949,43 @@ export default function TarkovTD() {
     if (s.phase !== "prep") return;
     if (!s.towers.length) return pushLog("Hire at least one operator first.");
     s.wave += 1;
-    const wave = buildWave(s.wave, mapRef.current.def.waveMods);
-    let at = 400;
-    const q: SpawnEvent[] = [];
-    let spawnIndex = 0;
-    const laneCount = mapRef.current.lanes.length;
-    for (const g of wave.groups) {
-      for (let i = 0; i < g.count; i++) {
-        q.push({ at, kind: g.kind, lane: assignSpawnLane(spawnIndex, laneCount) });
-        spawnIndex += 1;
-        at += g.gap;
-      }
-      at += 700;
-    }
-    s.queue = q;
+    const wave = effectiveWave(mapRef.current.def, s.wave);
+    s.queue = scheduleWave(wave.groups, mapRef.current.lanes.length);
     s.clock = 0;
     s.phase = "combat";
+    noteQuestTestEvent({ type: "WAVE_START", wave: s.wave, mapId: mapRef.current.def.id });
     pushLog(`WAVE ${s.wave} — ${wave.name}`);
+    rerender();
+  }, [pushLog, rerender]);
+
+  /** TEST WAVE: replace spawn queue for the selected wave. Does not increment past it, does not clear live enemies, does not touch meta/stash. */
+  const onTestWave = useCallback(
+    (waveN: number) => {
+      const s = gs.current;
+      const inRaid = s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted";
+      const r = requestTestWave(DEV_TOOLS_ENABLED, inRaid, mapId, waveN);
+      if (!r.ok) return r;
+      s.wave = r.wave;
+      s.queue = r.events;
+      s.clock = 0;
+      s.phase = "combat";
+      noteQuestTestEvent({ type: "WAVE_START", wave: r.wave, mapId: mapId });
+      pushLog(`TEST WAVE ${r.wave} — ${r.name}`);
+      rerender();
+      return { ok: true as const };
+    },
+    [mapId, pushLog, rerender],
+  );
+
+  const onResetTest = useCallback(() => {
+    if (!DEV_TOOLS_ENABLED) return;
+    const s = gs.current;
+    if (s.phase === "hideout" || s.phase === "dead" || s.phase === "extracted") return;
+    s.queue = [];
+    s.enemies = [];
+    s.clock = 0;
+    s.phase = "prep";
+    pushLog("TEST WAVE reset — back to prep");
     rerender();
   }, [pushLog, rerender]);
 
@@ -1937,9 +2009,12 @@ export default function TarkovTD() {
   const s = gs.current;
   const selected = s.towers.find((t) => t.id === s.selectedId) ?? null;
   const selBarricade = s.obstacles.find((o) => o.id === s.selectedObstacle) ?? null;
-  const nextWaveName = useMemo(() => buildWave(s.wave + 1, mapRef.current.def.waveMods).name, [s.wave]);
+  const nextWaveName = useMemo(
+    () => effectiveWave(mapRef.current.def, s.wave + 1).name,
+    [s.wave],
+  );
   const meta = metaRef.current;
-  const shopIds = unlockedIds(meta.claimed).filter((id) => ITEM_BY_ID[id]?.price);
+  const shopIds = unlockedIds(meta.claimed).filter((id) => (effectiveItemDef(id) ?? ITEM_BY_ID[id])?.price);
 
   const upgradeBarricade = () => {
     if (!selBarricade) return;
@@ -2033,13 +2108,19 @@ export default function TarkovTD() {
     s.recovered = carried;
     s.backpack = s.backpack.flatMap((item) => expandPackedWeapon(item, newUid));
     const value = [...s.backpack, ...carried].reduce(
-      (a, i) => a + (i.kind === "valuable" ? i.value : 0),
+      (a, i) => a + (i.kind === "valuable" ? saleValueOf(i) : 0),
       0,
     );
     s.payout = value;
     setSellValuableUids(new Set());
     setLeaveUids(new Set());
-    metaRef.current.quests.extracts += 1;
+    const haul = [...s.backpack, ...carried];
+    const items: { itemId: string; count: number }[] = [];
+    const counts = new Map<string, number>();
+    for (const it of haul) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
+    for (const [itemId, count] of counts) items.push({ itemId, count });
+    noteQuestTestEvent({ type: "EXTRACT", mapId, items });
+    if (!isQuestTestActive()) metaRef.current.quests.extracts += 1;
     s.phase = "extracted";
     pushLog(`Extracted with ${s.backpack.length + carried.length} item(s). Decide what to keep.`);
     rerender();
@@ -2072,10 +2153,10 @@ export default function TarkovTD() {
   const extractHaul = [...s.backpack, ...s.recovered];
   const extractValuables = extractHaul.filter((i) => i.kind === "valuable");
   const extractGear = extractHaul.filter((i) => i.kind !== "valuable");
-  const extractPreview = settleHaul(stash, extractHaul, sellValuableUids, stashSlots, leaveUids);
+  const extractPreview = settleHaul(stash, extractHaul, sellValuableUids, stashSlots, leaveUids, saleValueOf);
   const extractSoldPreview = extractValuables
     .filter((i) => sellValuableUids.has(i.uid) && !leaveUids.has(i.uid))
-    .reduce((a, i) => a + i.value, 0);
+    .reduce((a, i) => a + saleValueOf(i), 0);
 
   const campScar = meta.pmc.debuffs[0] ? DEBUFF_BY_ID[meta.pmc.debuffs[0]] : null;
   const kitActions = {
@@ -2660,7 +2741,7 @@ export default function TarkovTD() {
                                 className="flex items-center justify-between gap-2 border-b border-border/40 pb-1"
                               >
                                 <span className="font-display text-[10px]" style={{ color: RARITY_COLOR[i.rarity] }}>
-                                  {i.name} · {i.value.toLocaleString()}₽
+                                  {i.name} · {saleValueOf(i).toLocaleString()}₽
                                 </span>
                                 <div className="flex gap-1">
                                   <button
@@ -3124,7 +3205,43 @@ export default function TarkovTD() {
         </div>
       </div>
       {DEV_TOOLS_ENABLED && balanceLabOpen && (
-        <BalanceLab enabled={DEV_TOOLS_ENABLED} onClose={() => setLabOpen(false)} onApplied={onBalanceApplied} />
+        <BalanceLab enabled={DEV_TOOLS_ENABLED} onClose={() => setLabs("none")} onApplied={onBalanceApplied} />
+      )}
+      {DEV_TOOLS_ENABLED && economyLabOpen && (
+        <EconomyLab enabled={DEV_TOOLS_ENABLED} onClose={() => setLabs("none")} onApplied={() => rerender()} />
+      )}
+      {DEV_TOOLS_ENABLED && waveLabOpen && (
+        <WaveLab
+          enabled={DEV_TOOLS_ENABLED}
+          inRaid={s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted"}
+          mapId={mapId}
+          onClose={() => setLabs("none")}
+          onApplied={() => rerender()}
+          onTestWave={onTestWave}
+          onResetTest={onResetTest}
+        />
+      )}
+      {DEV_TOOLS_ENABLED && questLabOpen && (
+        <QuestEditor
+          enabled={DEV_TOOLS_ENABLED}
+          inRaid={s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted"}
+          onClose={() => setLabs("none")}
+          onApplied={() => rerender()}
+          onTestQuest={(questId) => {
+            const inRaidNow = s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted";
+            const r = requestTestQuest(DEV_TOOLS_ENABLED, inRaidNow, questId);
+            if (r.ok) {
+              pushLog(`TEST QUEST ${questId} — progress isolated from save`);
+              rerender();
+            }
+            return r;
+          }}
+          onResetTestProgress={(questId) => {
+            resetQuestTestProgress(questId);
+            pushLog(`TEST QUEST progress reset (${questId})`);
+            rerender();
+          }}
+        />
       )}
     </div>
   );
@@ -3404,7 +3521,7 @@ function MarketPanel({
       <div className="pixel-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto">
         <div className="space-y-1">
           {rows.map((id) => {
-            const def = ITEM_BY_ID[id]!;
+            const def = effectiveItemDef(id) ?? ITEM_BY_ID[id]!;
             const price = Math.round(def.price! * buyMult);
             const owned =
               def.kind === "backpack" && (BACKPACKS[def.ref!]?.bonus ?? 0) <= (BACKPACKS[backpack]?.bonus ?? 0);
@@ -3458,7 +3575,7 @@ function ItemCell({
             }
           : undefined
       }
-      title={`${item.name} — ${item.desc} · ${item.value}₽${onContext ? " · hold / right-click to sell" : ""}`}
+      title={`${item.name} — ${item.desc} · ${saleValueOf(item)}₽${onContext ? " · hold / right-click to sell" : ""}`}
       className="h-[42px] touch-none select-none overflow-hidden border-2 bg-background/70 p-1 text-left font-mono text-[8px] leading-tight hover:-translate-y-[2px]"
       style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}
     >
