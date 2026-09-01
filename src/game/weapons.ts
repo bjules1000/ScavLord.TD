@@ -1,4 +1,5 @@
-import { WEAPONS, type ReloadType, type WeaponDef } from "./gear";
+import { ATTACHMENTS, WEAPONS, type AttachmentDef, type ReloadType, type WeaponDef } from "./gear";
+import { effectiveAttachment, effectiveWeapon } from "./dev/balance";
 import type { TargetMode } from "./targeting";
 
 export type { ReloadType };
@@ -7,7 +8,11 @@ export const STARTER_WEAPON_ID = "pm";
 export const HIRED_WEAPON_ID = "toz";
 
 export function weaponDef(weaponId: string): WeaponDef {
-  return WEAPONS[weaponId] ?? WEAPONS[HIRED_WEAPON_ID] ?? WEAPONS[STARTER_WEAPON_ID]!;
+  return effectiveWeapon(weaponId) ?? WEAPONS[weaponId] ?? WEAPONS[HIRED_WEAPON_ID] ?? WEAPONS[STARTER_WEAPON_ID]!;
+}
+
+export function attachmentDef(attachId: string): AttachmentDef | undefined {
+  return effectiveAttachment(attachId) ?? ATTACHMENTS[attachId];
 }
 
 export function magSizeOf(weaponId: string): number {

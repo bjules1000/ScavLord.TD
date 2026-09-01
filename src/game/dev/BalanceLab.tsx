@@ -1,0 +1,489 @@
+import { useMemo, useState } from "react";
+import {
+  attachmentLabFields,
+  armorLabFields,
+  applyBalanceOverrides,
+  balanceFieldTone,
+  balanceLabCatalog,
+  balanceToneBorderClass,
+  balanceToneTextClass,
+  canonicalArmor,
+  canonicalAttachment,
+  canonicalWeapon,
+  emptyBalanceOverrides,
+  filterLabCatalog,
+  formatBalancePatch,
+  formatLabDelta,
+  formatLabValue,
+  getBalanceOverrides,
+  itemOverrideCount,
+  itemOverrideRecord,
+  labDisplayName,
+  modifiedItemCount,
+  overridesEqual,
+  resetOverrideItem,
+  setOverrideField,
+  weaponDerivedRows,
+  weaponLabFields,
+  type BalanceOverrides,
+  type LabCategory,
+  type LabEntry,
+  type LabField,
+} from "./balance";
+import StatBenchmark from "./StatBenchmark";
+import WeaponCompare from "./WeaponCompare";
+import {
+  allCanonicalWeapons,
+  compareClassOf,
+  compareMetricFromEditorKey,
+  derivedKeyToBenchmarkKey,
+  editorFieldBenchmark,
+  editorFieldToBenchmarkKey,
+  mergeWeaponDef,
+  type BenchmarkScope,
+  type CompareCategory,
+  type CompareSortDir,
+  type EditorBenchmark,
+  type LabView,
+  type ScalarMetric,
+} from "./compareMetrics";
+
+const CATS: LabCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS"];
+const EDITOR_COLS =
+  "grid-cols-[minmax(6rem,0.9fr)_minmax(3.5rem,0.5fr)_minmax(5rem,0.7fr)_minmax(6rem,0.8fr)]";
+const WEAPON_EDITOR_COLS =
+  "grid-cols-[minmax(6rem,0.85fr)_minmax(3.5rem,0.45fr)_minmax(5rem,0.65fr)_minmax(6rem,0.75fr)_minmax(8.5rem,1.4fr)]";
+const DERIVED_COLS =
+  "grid-cols-[minmax(7.5rem,0.9fr)_minmax(4.5rem,0.55fr)_minmax(6.5rem,0.8fr)_minmax(8.5rem,1.4fr)]";
+
+function fieldValue(obj: object, key: string): number | undefined {
+  const v = (obj as Record<string, unknown>)[key];
+  return typeof v === "number" ? v : undefined;
+}
+
+function stringField(obj: object | undefined, key: string): string | undefined {
+  const v = obj ? (obj as Record<string, unknown>)[key] : undefined;
+  return typeof v === "string" ? v : undefined;
+}
+
+export default function BalanceLab({
+  enabled,
+  onClose,
+  onApplied,
+}: {
+  enabled: boolean;
+  onClose: () => void;
+  onApplied: (overrides: BalanceOverrides) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<LabCategory>("ALL");
+  const [selected, setSelected] = useState<LabEntry | null>(null);
+  const [draft, setDraft] = useState<BalanceOverrides>(() => getBalanceOverrides());
+  const [copied, setCopied] = useState(false);
+  const [labView, setLabView] = useState<LabView>("editor");
+  const [compareCategory, setCompareCategory] = useState<CompareCategory>("ALL");
+  const [compareMetric, setCompareMetric] = useState<ScalarMetric>("sustainedDps");
+  const [compareSortDir, setCompareSortDir] = useState<CompareSortDir>("desc");
+  const [benchmarkScope, setBenchmarkScope] = useState<BenchmarkScope>("category");
+  const allWeapons = useMemo(() => allCanonicalWeapons(), []);
+  const catalog = useMemo(() => balanceLabCatalog(), []);
+  const visible = useMemo(
+    () => filterLabCatalog(catalog, category, query, draft),
+    [catalog, category, query, draft],
+  );
+
+  if (!enabled) return null;
+
+  const applied = getBalanceOverrides();
+  const appliedCount = modifiedItemCount(applied);
+  const draftCount = modifiedItemCount(draft);
+  const draftDirty = !overridesEqual(draft, applied);
+
+  const canonical =
+    selected?.kind === "weapon"
+      ? canonicalWeapon(selected.id)
+      : selected?.kind === "armor"
+        ? canonicalArmor(selected.id)
+        : selected
+          ? canonicalAttachment(selected.id)
+          : undefined;
+  const fields: LabField[] =
+    !selected || !canonical
+      ? []
+      : selected.kind === "weapon"
+        ? weaponLabFields(canonical as ReturnType<typeof canonicalWeapon> & object)
+        : selected.kind === "armor"
+          ? armorLabFields()
+          : attachmentLabFields(canonical as NonNullable<ReturnType<typeof canonicalAttachment>>);
+
+  const overBag = selected ? itemOverrideRecord(draft, selected.kind, selected.id) : undefined;
+  const selectedChanged = selected ? itemOverrideCount(draft, selected.kind, selected.id) : 0;
+  const draftName = selected ? (stringField(overBag, "name") ?? canonical?.name ?? "") : "";
+  const nameChanged = Boolean(selected && canonical && draftName !== canonical.name);
+
+  const selectedWeapon =
+    selected?.kind === "weapon" ? (canonical as NonNullable<ReturnType<typeof canonicalWeapon>> | undefined) : undefined;
+
+  const testWeapon = (w: NonNullable<typeof selectedWeapon>) => mergeWeaponDef(w, draft.weapons[w.id]);
+
+  const derived =
+    selectedWeapon
+      ? weaponDerivedRows(selectedWeapon, testWeapon(selectedWeapon))
+      : [];
+
+  const openCompareFromBench = (bench: EditorBenchmark) => {
+    const metric = compareMetricFromEditorKey(bench.key);
+    if (!metric) return;
+    setCompareCategory(bench.category);
+    setCompareMetric(metric);
+    setLabView("compare");
+  };
+
+  const applyDraft = (next: BalanceOverrides) => {
+    const live = applyBalanceOverrides(next, true);
+    setDraft(live);
+    onApplied(live);
+  };
+
+  const exportPatch = async () => {
+    const text = formatBalancePatch(getBalanceOverrides());
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      window.prompt("Copy balance patch", text);
+    }
+  };
+
+  return (
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/92 p-1 backdrop-blur-[2px] sm:p-2">
+      <div className="pixel-card flex h-[94vh] w-[96vw] max-h-[94vh] max-w-[96vw] flex-col overflow-hidden p-3 sm:p-4">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b-2 border-border pb-3">
+          <div>
+            <div className="font-display text-sm text-primary sm:text-base">BALANCE LAB</div>
+            <div className="mt-1 font-mono text-xs text-muted-foreground">
+              DEV DRAFT — runtime test values only
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span
+              className={`pixel-chip font-mono text-[11px] ${
+                draftCount > 0 || appliedCount > 0 ? "text-primary" : "text-muted-foreground"
+              }`}
+            >
+              MODIFIED {draftCount}
+              {draftDirty ? ` · UNAPPLIED` : appliedCount > 0 ? " · LIVE" : ""}
+            </span>
+            <button type="button" className="pixel-btn px-3 py-2 text-[10px]" onClick={onClose}>
+              CLOSE
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
+          {(["editor", "compare"] as const).map((view) => (
+            <button
+              key={view}
+              type="button"
+              className={`pixel-btn px-3 py-2 text-[10px] ${
+                labView === view ? "pixel-btn-primary" : "text-muted-foreground"
+              }`}
+              onClick={() => setLabView(view)}
+            >
+              {view === "editor" ? "ITEM EDITOR" : "WEAPON COMPARE"}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
+          {labView === "editor" &&
+            CATS.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                className={`pixel-btn px-3 py-2 text-[10px] ${
+                  category === cat ? "pixel-btn-primary" : "text-muted-foreground"
+                }`}
+                onClick={() => setCategory(cat)}
+              >
+                {cat}
+              </button>
+            ))}
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={labView === "compare" ? "SEARCH WEAPONS" : "SEARCH ITEMS"}
+            className="min-w-[14rem] flex-1 border-2 border-border bg-background px-3 py-2 font-mono text-sm"
+          />
+        </div>
+
+        {labView === "compare" ? (
+          <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
+            <WeaponCompare
+              allWeapons={allWeapons}
+              testOf={(w) => mergeWeaponDef(w, draft.weapons[w.id])}
+              displayName={(w) => labDisplayName({ kind: "weapon", id: w.id, name: w.name }, draft)}
+              category={compareCategory}
+              query={query}
+              metric={compareMetric}
+              sortDir={compareSortDir}
+              selectedId={selected?.kind === "weapon" ? selected.id : null}
+              onCategory={setCompareCategory}
+              onMetric={setCompareMetric}
+              onSortDir={setCompareSortDir}
+              onSelect={(id) => {
+                const w = canonicalWeapon(id);
+                if (!w) return;
+                setSelected({ kind: "weapon", id: w.id, name: w.name });
+                setLabView("editor");
+              }}
+            />
+          </div>
+        ) : (
+        <div className="mt-3 grid min-h-0 flex-1 gap-3 overflow-hidden md:grid-cols-[minmax(240px,0.28fr)_minmax(0,0.72fr)]">
+          <div className="pixel-scrollbar min-h-0 overflow-auto border-2 border-border bg-background/50">
+            {visible.map((entry) => {
+              const changed = itemOverrideCount(draft, entry.kind, entry.id);
+              const display = labDisplayName(entry, draft);
+              const active = selected?.id === entry.id && selected.kind === entry.kind;
+              return (
+                <button
+                  key={`${entry.kind}:${entry.id}`}
+                  type="button"
+                  className={`flex w-full items-center justify-between gap-2 border-b border-border/70 px-3 py-2.5 text-left font-mono text-xs ${
+                    active ? "bg-secondary text-primary" : "text-foreground hover:bg-secondary/60"
+                  }`}
+                  onClick={() => setSelected(entry)}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate">{display}</span>
+                    {display !== entry.name && (
+                      <span className="block truncate text-[10px] text-muted-foreground">{entry.name}</span>
+                    )}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2 uppercase text-muted-foreground">
+                    {changed > 0 && <span className="text-primary">● {changed}</span>}
+                    <span>{entry.kind}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="pixel-scrollbar min-h-0 overflow-auto border-2 border-border bg-background/40 p-3 sm:p-4">
+            {!selected || !canonical ? (
+              <div className="font-mono text-sm text-muted-foreground">Select an item to edit its draft stats.</div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+                      Display name
+                    </div>
+                    <input
+                      value={draftName}
+                      onChange={(e) => {
+                        setDraft((d) =>
+                          setOverrideField(d, selected.kind, selected.id, "name", e.target.value, canonical.name),
+                        );
+                      }}
+                      className={`mt-1 w-full border-2 bg-background px-3 py-2 font-display text-sm text-primary ${
+                        nameChanged ? "border-primary" : "border-border"
+                      }`}
+                    />
+                    {nameChanged && (
+                      <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                        Base: {canonical.name}
+                      </div>
+                    )}
+                  </div>
+                  <div className="font-mono text-[11px] uppercase text-muted-foreground">
+                    {selected.kind} · {selected.id}
+                    {selectedChanged > 0 ? ` · ${selectedChanged} changed` : ""}
+                  </div>
+                </div>
+
+                {selectedWeapon && (
+                  <div className="mt-5 flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Benchmark:
+                    </span>
+                    {(["category", "all"] as const).map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        className={`pixel-btn px-2 py-1 text-[9px] ${
+                          benchmarkScope === s ? "pixel-btn-primary" : "text-muted-foreground"
+                        }`}
+                        onClick={() => setBenchmarkScope(s)}
+                      >
+                        {s === "category" ? `CATEGORY [${compareClassOf(selectedWeapon)}]` : "ALL"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div
+                  className={`grid items-center gap-x-3 gap-y-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground ${
+                    selectedWeapon ? WEAPON_EDITOR_COLS : EDITOR_COLS
+                  } ${selectedWeapon ? "mt-3" : "mt-5"}`}
+                >
+                  <span>Stat</span>
+                  <span>Base</span>
+                  <span>Delta</span>
+                  <span>Test value</span>
+                  {selectedWeapon && <span>Benchmark</span>}
+                </div>
+                <div className="mt-1">
+                  {fields.map((field) => {
+                    const base = fieldValue(canonical, field.key) ?? 0;
+                    const test = fieldValue(overBag ?? {}, field.key);
+                    const current = test ?? base;
+                    const changed = test != null && !Object.is(test, base);
+                    const tone = balanceFieldTone(field.key, base, current);
+                    const delta = formatLabDelta(field.key, base, current);
+                    const benchKey = selectedWeapon
+                      ? editorFieldToBenchmarkKey(field.key, selectedWeapon)
+                      : null;
+                    const bench =
+                      selectedWeapon && benchKey
+                        ? editorFieldBenchmark(
+                            selectedWeapon,
+                            testWeapon,
+                            allWeapons,
+                            benchmarkScope,
+                            benchKey,
+                          )
+                        : null;
+                    return (
+                      <div
+                        key={field.key}
+                        className={`grid items-center gap-x-3 border-b border-border/60 py-2.5 font-mono text-sm ${
+                          selectedWeapon ? WEAPON_EDITOR_COLS : EDITOR_COLS
+                        }`}
+                      >
+                        <span className={changed ? "text-foreground" : "text-muted-foreground"}>{field.label}</span>
+                        <span className="text-muted-foreground">{formatLabValue(field.key, base)}</span>
+                        <span className={balanceToneTextClass(tone)}>
+                          {changed ? `→ ${formatLabValue(field.key, current)} (${delta})` : "—"}
+                        </span>
+                        <input
+                          type="number"
+                          step={field.step}
+                          value={current}
+                          className={`w-full min-w-[6.5rem] border-2 bg-background px-2 py-1.5 text-foreground ${balanceToneBorderClass(tone)}`}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (!Number.isFinite(n)) return;
+                            setDraft((d) => setOverrideField(d, selected.kind, selected.id, field.key, n, base));
+                          }}
+                        />
+                        {selectedWeapon &&
+                          (bench ? (
+                            <StatBenchmark
+                              bench={bench}
+                              onOpen={
+                                compareMetricFromEditorKey(bench.key)
+                                  ? () => openCompareFromBench(bench)
+                                  : undefined
+                              }
+                            />
+                          ) : (
+                            <span />
+                          ))}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {derived.length > 0 && (
+                  <div className="mt-6 border-t-2 border-border pt-4">
+                    <div className="font-display text-[11px] text-primary">DERIVED</div>
+                    <div className="mt-3 space-y-2">
+                      {derived.map((row) => {
+                        const changed = !Object.is(row.base, row.current);
+                        const tone = balanceFieldTone(row.key, row.base, row.current);
+                        const delta = formatLabDelta(row.key, row.base, row.current);
+                        const benchKey = selectedWeapon ? derivedKeyToBenchmarkKey(row.key) : null;
+                        const bench =
+                          selectedWeapon && benchKey
+                            ? editorFieldBenchmark(
+                                selectedWeapon,
+                                testWeapon,
+                                allWeapons,
+                                benchmarkScope,
+                                benchKey,
+                              )
+                            : null;
+                        return (
+                          <div
+                            key={row.key}
+                            className={`grid items-center gap-3 border border-border bg-secondary/30 px-3 py-2.5 font-mono text-sm ${
+                              bench ? DERIVED_COLS : "grid-cols-[minmax(8rem,1.2fr)_minmax(5rem,0.8fr)_minmax(7rem,1fr)]"
+                            }`}
+                          >
+                            <span className="text-foreground">{row.label}</span>
+                            <span className="text-muted-foreground">{row.display(row.base)}</span>
+                            <span className={changed ? balanceToneTextClass(tone) : "text-foreground"}>
+                              {changed ? `${row.display(row.current)} (${delta})` : row.display(row.current)}
+                            </span>
+                            {bench ? (
+                              <StatBenchmark
+                                bench={bench}
+                                onOpen={
+                                  compareMetricFromEditorKey(bench.key)
+                                    ? () => openCompareFromBench(bench)
+                                    : undefined
+                                }
+                              />
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        )}
+
+        <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2 border-t-2 border-border pt-3">
+          <span className="mr-auto font-mono text-xs text-muted-foreground">
+            {draftDirty ? "Unapplied draft edits" : appliedCount > 0 ? "Live test overrides active" : "No draft changes"}
+          </span>
+          <button
+            type="button"
+            className="pixel-btn px-3 py-2 text-[10px]"
+            disabled={!selected}
+            onClick={() => {
+              if (!selected) return;
+              applyDraft(resetOverrideItem(getBalanceOverrides(), selected.kind, selected.id));
+            }}
+          >
+            RESET ITEM
+          </button>
+          <button
+            type="button"
+            className="pixel-btn px-3 py-2 text-[10px]"
+            onClick={() => applyDraft(emptyBalanceOverrides())}
+          >
+            RESET ALL
+          </button>
+          <button type="button" className="pixel-btn px-3 py-2 text-[10px]" onClick={() => void exportPatch()}>
+            {copied ? "COPIED" : "EXPORT PATCH"}
+          </button>
+          <button
+            type="button"
+            className="pixel-btn pixel-btn-primary px-3 py-2 text-[10px]"
+            onClick={() => applyDraft(draft)}
+          >
+            APPLY
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

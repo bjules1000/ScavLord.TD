@@ -1,7 +1,8 @@
 import { ARMORS, ATTACHMENTS, WEAPONS, type ArmorDef } from "./gear";
+import { effectiveArmor, effectiveAttachment, effectiveWeapon } from "./dev/balance";
 
 export function armorDef(id: string | null | undefined): ArmorDef | undefined {
-  return id ? ARMORS[id] : undefined;
+  return id ? (effectiveArmor(id) ?? ARMORS[id]) : undefined;
 }
 
 /**
@@ -39,11 +40,11 @@ export type EquippedKit = {
  * Raid backpack contents, loose attachments, loot, ammo, and currency are ignored.
  */
 export function getEquippedWeight(kit: EquippedKit): number {
-  const weaponW = kit.weapon ? (WEAPONS[kit.weapon]?.weight ?? 0) : 0;
+  const weaponW = kit.weapon ? (effectiveWeapon(kit.weapon)?.weight ?? WEAPONS[kit.weapon]?.weight ?? 0) : 0;
   const armorW = armorDef(kit.armor)?.weight ?? 0;
   let attachW = 0;
   for (const id of kit.attachments ?? []) {
-    attachW += ATTACHMENTS[id]?.weight ?? 0;
+    attachW += effectiveAttachment(id)?.weight ?? ATTACHMENTS[id]?.weight ?? 0;
   }
   return weaponW + armorW + attachW;
 }
