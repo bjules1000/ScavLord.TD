@@ -15,12 +15,13 @@ export type EditorTool =
   | { id: "crate" }
   | { id: "checkpoint"; type: CheckpointPart["type"] }
   | { id: "edge"; type: "fence" | "wall" }
-  | { id: "collision-wall" }
+  | { id: "collision-wall"; kind?: "MOVEMENT" | "SOLID" }
   | { id: "erase-wall" }
   | { id: "bridge" }
   | { id: "erase-bridge" }
   | { id: "erase-prop" }
-  | { id: "erase-gameplay" };
+  | { id: "erase-gameplay" }
+  | { id: "los-probe" };
 
 export const TERRAIN_PAINT_KINDS = ["GROUND", "ROAD", "WATER", "MOUNTAIN", "HIGH_GROUND"] as const;
 export const DRAG_PLACE_PROPS: PropType[] = ["tree", "rock", "barrel"];
@@ -35,6 +36,10 @@ export function selectEraserTool(): EditorTool {
 
 export function selectInspectTool(): EditorTool {
   return { id: "select" };
+}
+
+export function selectLosProbeTool(): EditorTool {
+  return { id: "los-probe" };
 }
 
 export function selectPropTool(type: PropType): EditorTool {
@@ -65,6 +70,10 @@ export function isInspectMode(tool: EditorTool): boolean {
   return tool.id === "select";
 }
 
+export function isLosProbeMode(tool: EditorTool): boolean {
+  return tool.id === "los-probe";
+}
+
 export function isPropPlaceMode(tool: EditorTool): boolean {
   return tool.id === "prop" || tool.id === "cover" || tool.id === "crate" || tool.id === "checkpoint" || tool.id === "edge";
 }
@@ -85,6 +94,14 @@ export function isCollisionWallMode(tool: EditorTool): boolean {
   return tool.id === "collision-wall";
 }
 
+export function isMovementWallMode(tool: EditorTool): boolean {
+  return tool.id === "collision-wall" && (tool.kind ?? "MOVEMENT") !== "SOLID";
+}
+
+export function isSolidWallMode(tool: EditorTool): boolean {
+  return tool.id === "collision-wall" && tool.kind === "SOLID";
+}
+
 export function isEraseWallMode(tool: EditorTool): boolean {
   return tool.id === "erase-wall";
 }
@@ -98,7 +115,11 @@ export function isEraseBridgeMode(tool: EditorTool): boolean {
 }
 
 export function selectCollisionWallTool(): EditorTool {
-  return { id: "collision-wall" };
+  return { id: "collision-wall", kind: "MOVEMENT" };
+}
+
+export function selectSolidWallTool(): EditorTool {
+  return { id: "collision-wall", kind: "SOLID" };
 }
 
 export function selectEraseWallTool(): EditorTool {
@@ -114,7 +135,7 @@ export function selectEraseBridgeTool(): EditorTool {
 }
 
 export function isAuthoringTool(tool: EditorTool): boolean {
-  return tool.id !== "select";
+  return tool.id !== "select" && tool.id !== "los-probe";
 }
 
 export function isDragPlaceProp(type: PropType): boolean {

@@ -3,6 +3,7 @@ import { isOrthogonalPair, pathCells } from "./pathing";
 import { isLegalPort, portConnectedToPath } from "./ports";
 import {
   GATE_IDS,
+  isCollisionWallKind,
   isTerrainKind,
   type EditorMapDoc,
   type ValidationIssue,
@@ -61,18 +62,21 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
   for (const wall of doc.collisionWalls) {
     const canonical = canonicalCollisionWall(wall.tx, wall.ty, wall.edge, doc.width, doc.height);
     if (!canonical) {
-      errors.push(issue("error", "WALL", `Invisible wall is out of bounds at (${wall.tx}, ${wall.ty} ${wall.edge}).`));
+      errors.push(issue("error", "WALL", `Wall is out of bounds at (${wall.tx}, ${wall.ty} ${wall.edge}).`));
       continue;
+    }
+    if (!isCollisionWallKind(wall.kind)) {
+      errors.push(issue("error", "WALL", `Wall at (${canonical.tx}, ${canonical.ty} ${canonical.edge}) has invalid type.`));
     }
     const key = collisionWallKey(canonical);
     if (wallKeys.has(key)) {
-      errors.push(issue("error", "WALL", `Duplicate invisible wall at (${canonical.tx}, ${canonical.ty} ${canonical.edge}).`));
+      errors.push(issue("error", "WALL", `Duplicate wall at (${canonical.tx}, ${canonical.ty} ${canonical.edge}).`));
       continue;
     }
     wallKeys.add(key);
     if (wall.tx !== canonical.tx || wall.ty !== canonical.ty || wall.edge !== canonical.edge) {
       errors.push(
-        issue("error", "WALL", `Invisible wall at (${wall.tx}, ${wall.ty} ${wall.edge}) is not in canonical shared-edge form.`),
+        issue("error", "WALL", `Wall at (${wall.tx}, ${wall.ty} ${wall.edge}) is not in canonical shared-edge form.`),
       );
     }
   }

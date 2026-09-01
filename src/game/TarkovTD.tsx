@@ -7,7 +7,6 @@ import {
   adjacentCover,
   bestCoverAt,
   buildMap,
-  coverProtectionFrom,
   isBuildable,
   isMountain,
   isRoad,
@@ -45,6 +44,7 @@ import {
   BARRICADE_BUILD_COST,
   BARRICADE_HP,
   BARRICADE_COST,
+  COVER_MISS_FACTOR,
   EDGE_LABEL,
   MAX_BARRICADE_LEVEL,
   WIRE_BUILD_COST,
@@ -55,13 +55,15 @@ import {
   WIRE_TICK_DAMAGE,
   applyWireCrossing,
   barricadeCoverCell,
+  barricadeEdgeMidpoint,
   barricadeOnEdge,
   canPlaceBarricade,
   canPlaceWire,
   canRepairDefense,
   clearWireContact,
+  coveredDamage,
   edgeFromCursor,
-  interceptingBarricade,
+  incomingCoverProtection,
   liveWireAt,
   payDefense,
   repairCost,
@@ -126,6 +128,8 @@ import { settleHaul } from "./extract";
 import {
   TARGET_MODES,
   hitTestEnemy,
+  inRange,
+  pickManualTarget,
   selectTarget,
 } from "./targeting";
 import {
@@ -149,6 +153,12 @@ import {
   shotgunPelletCount,
   shotgunSecondaryMult,
 } from "./shotgun";
+import {
+  bridgeDeckSeparates,
+  clipWorldSegment,
+  hasLineOfSight,
+  wallAlongLimit,
+} from "./los";
 import {
   SLOT_LABEL,
   armorItemId,
@@ -1160,17 +1170,28 @@ export default function TarkovTD() {
         }
         if (isSettledOut(e)) continue;
 
+        // All current enemy attacks are ranged (fireRange + hostile bullet).
+        // Melee/contact damage does not exist; leak/wire stay LOS-free.
         e.muzzle = Math.max(0, e.muzzle - dt);
         e.fireCd -= dt * 1000;
         let tgt: Tower | null = null;
         let tgtD = Infinity;
+        const mapNow = mapRef.current;
         for (const t of s.towers) {
           const pos = towerPos(t);
           const d = Math.hypot(pos.x - e.x, pos.y - e.y);
-          if (d < def.fireRange * SCALE && d < tgtD) {
-            tgtD = d;
-            tgt = t;
+          if (d >= def.fireRange * SCALE || d >= tgtD) continue;
+          if (
+            !hasLineOfSight(
+              mapNow,
+              { x: e.x, y: e.y, surface: e.surface ?? "GROUND" },
+              { x: pos.x, y: pos.y, surface: t.surface ?? "GROUND" },
+            )
+          ) {
+            continue;
           }
+          tgtD = d;
+          tgt = t;
         }
         if (tgt) {
           const pos = towerPos(tgt);
@@ -1252,9 +1273,19 @@ export default function TarkovTD() {
             ...e,
             pathProgress: lanePathProgress(e.seg, e.t, laneRoute(mapRef.current, e.lane).SEG_LEN.length),
           }));
-        const best = selectTarget(t.targetMode, { x: cx, y: cy }, st.range, live, t.manualTargetId);
+        const origin = { x: cx, y: cy };
+        const shooter = { x: cx, y: cy, surface: t.surface ?? "GROUND" };
+        const visible = (e: (typeof live)[number]) =>
+          hasLineOfSight(mapRef.current, shooter, {
+            x: e.x,
+            y: e.y,
+            surface: e.surface ?? "GROUND",
+          });
+        const locked =
+          t.targetMode === "MANUAL" ? pickManualTarget(t.manualTargetId, origin, st.range, live) : null;
+        const best = selectTarget(t.targetMode, origin, st.range, live, t.manualTargetId, visible);
         const hasTarget = !!best;
-        if (!moving && t.targetMode === "MANUAL" && t.manualTargetId != null && !hasTarget) {
+        if (!moving && t.targetMode === "MANUAL" && t.manualTargetId != null && !locked) {
           t.manualTargetId = null;
         }
         const reloaded = tickReload(
@@ -1268,8 +1299,10 @@ export default function TarkovTD() {
         );
         t.ammo = reloaded.ammo;
         t.reloadLeft = reloaded.reloadLeft;
-        t.engageTargetId = best?.id ?? null;
-        if (best) {
+        t.engageTargetId = t.targetMode === "MANUAL" ? (locked?.id ?? null) : (best?.id ?? null);
+        if (t.targetMode === "MANUAL" && locked) {
+          t.angle = Math.atan2(locked.y - cy - 4, locked.x - cx);
+        } else if (best) {
           t.angle = Math.atan2(best.y - cy - 4, best.x - cx);
         }
         if (best && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft) && operatorCanFire(t)) {
@@ -1279,7 +1312,8 @@ export default function TarkovTD() {
             const ox = cx + Math.cos(t.angle) * 12;
             const oy = cy - 4 + Math.sin(t.angle) * 12;
             if (isShotgunWeapon(st.weapon)) {
-              const { strikes, angles } = resolveShotgunBlast({
+              const pelletOrigin = { x: ox, y: oy, surface: t.surface ?? "GROUND" };
+              const { strikes, angles, clipAlong } = resolveShotgunBlast({
                 origin: { x: ox, y: oy },
                 aim: t.angle,
                 range: st.range,
@@ -1292,6 +1326,19 @@ export default function TarkovTD() {
                 enemies: s.enemies,
                 armorOf: (e) => ENEMIES[e.kind].armor,
                 pen: st.pen,
+                maxAlongOf: (angle) =>
+                  wallAlongLimit(
+                    mapRef.current,
+                    pelletOrigin,
+                    ox + Math.cos(angle) * st.range,
+                    oy + Math.sin(angle) * st.range,
+                  ),
+                ignoreEnemy: (e) =>
+                  bridgeDeckSeparates(mapRef.current, pelletOrigin, {
+                    x: e.x,
+                    y: e.y,
+                    surface: e.surface ?? "GROUND",
+                  }),
               });
               for (const strike of strikes) {
                 const e = s.enemies.find((en) => en.id === strike.enemyId);
@@ -1299,13 +1346,15 @@ export default function TarkovTD() {
                 e.hitFlash = 0.07;
                 spawnParticles(e.x, e.y, "#c94b3a", 2, 36);
               }
-              for (const ang of angles) {
+              for (let i = 0; i < angles.length; i++) {
+                const ang = angles[i]!;
+                const along = clipAlong[i] ?? st.range;
                 s.bullets.push({
                   id: s.nextId++,
                   x: ox,
                   y: oy,
-                  tx: ox + Math.cos(ang) * st.range,
-                  ty: oy + Math.sin(ang) * st.range,
+                  tx: ox + Math.cos(ang) * along,
+                  ty: oy + Math.sin(ang) * along,
                   targetId: 0,
                   speed: 540 * SCALE,
                   damage: 0,
@@ -1321,12 +1370,13 @@ export default function TarkovTD() {
               const scatter = miss ? (Math.random() - 0.5) * TILE * 1.6 : 0;
               const aimX = best.x + scatter;
               const aimY = best.y + (miss ? (Math.random() - 0.5) * TILE * 1.6 : 0);
+              const clipped = clipWorldSegment(mapRef.current, { x: ox, y: oy }, aimX, aimY);
               s.bullets.push({
                 id: s.nextId++,
                 x: ox,
                 y: oy,
-                tx: aimX,
-                ty: aimY,
+                tx: clipped.x,
+                ty: clipped.y,
                 targetId: miss ? 0 : best.id,
                 speed:
                   (st.weapon.cls === "sniper"
@@ -1365,16 +1415,24 @@ export default function TarkovTD() {
           const steph = b.speed * dt;
           if (!tw || dh <= steph || dh < 4) {
             if (tw) {
-              const cover = coverList(mapRef.current, s);
-              // Cover uses the settled logical tile, not the interpolated world pos.
-              const prot = coverProtectionFrom(cover, tw.tx, tw.ty, b.sx ?? b.x, b.sy ?? b.y);
-              if (prot > 0) {
-                const shield = interceptingBarricade(s.obstacles, tw.tx, tw.ty, b.sx ?? b.x, b.sy ?? b.y, TILE);
-                if (shield) shield.hp -= b.damage * prot;
+              const srcX = b.sx ?? b.x;
+              const srcY = b.sy ?? b.y;
+              const coverHit = incomingCoverProtection(
+                mapRef.current.COVER,
+                s.obstacles,
+                tw.tx,
+                tw.ty,
+                srcX,
+                srcY,
+                TILE,
+              );
+              const prot = coverHit.prot;
+              if (prot > 0 && coverHit.shield) {
+                coverHit.shield.hp -= b.damage * prot;
               }
-              const missed = Math.random() < prot * 0.55;
+              const missed = Math.random() < prot * COVER_MISS_FACTOR;
               if (!missed) {
-                let dmg = b.damage * (1 - prot);
+                let dmg = coveredDamage(b.damage, prot);
                 const soaked = absorbWithArmor(dmg, tw.armor, tw.armorHp ?? 0);
                 tw.armorHp = soaked.armorHp;
                 dmg = soaked.damage;
@@ -1407,7 +1465,16 @@ export default function TarkovTD() {
                   rerender();
                 }
               } else {
-                spawnParticles(b.tx, b.ty, "#c9c2a6", 3, 40);
+                const edgePt =
+                  coverHit.shield && coverHit.shield.edge
+                    ? barricadeEdgeMidpoint(
+                        coverHit.shield.tx,
+                        coverHit.shield.ty,
+                        coverHit.shield.edge,
+                        TILE,
+                      )
+                    : { x: b.tx, y: b.ty };
+                spawnParticles(edgePt.x, edgePt.y, "#c9c2a6", 3, 40);
               }
 
             }
@@ -2752,9 +2819,23 @@ export default function TarkovTD() {
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
                   {(() => {
                     const st = towerStats(selected, undefined, mapRef.current);
+                    const selPos = towerPos(selected);
+                    const lock =
+                      selected.manualTargetId != null
+                        ? s.enemies.find((e) => e.id === selected.manualTargetId && !isSettledOut(e))
+                        : undefined;
+                    const losBlocked =
+                      selected.targetMode === "MANUAL" &&
+                      !!lock &&
+                      inRange(selPos, st.range, lock) &&
+                      !hasLineOfSight(
+                        mapRef.current,
+                        { x: selPos.x, y: selPos.y, surface: selected.surface ?? "GROUND" },
+                        { x: lock.x, y: lock.y, surface: lock.surface ?? "GROUND" },
+                      );
                     const status = combatStatus(
                       selected.reloadLeft,
-                      selected.engageTargetId != null,
+                      selected.engageTargetId != null && !losBlocked,
                       selected.targetMode === "MANUAL" && selected.manualTargetId == null,
                       isOperatorMoving(selected),
                     );
@@ -2800,6 +2881,7 @@ export default function TarkovTD() {
                           : "NONE"
                     }
                   />
+                  {losBlocked && <StatRow label="LOS" value="BLOCKED" />}
                   <StatRow label="DMG" value={st.damage.toFixed(1)} />
                   <StatRow label="RANGE" value={st.range.toFixed(0)} />
                   <StatRow label="ACC" value={`${Math.round(st.accuracy * 100)}%`} />

@@ -61,8 +61,11 @@ export interface MapDef {
   mountain?: Array<[number, number]>;
   /** Elevated walkable tiles (LOW/HIGH surface). Independent of the ROAD path. */
   highGround?: Array<[number, number]>;
-  /** Canonical invisible collision/LOS edges. Not drawn in raids. */
-  collisionWalls?: Array<{ tx: number; ty: number; edge: "N" | "E" | "S" | "W" }>;
+  /**
+   * Canonical tile-edge barriers. Not drawn in raids.
+   * Omitted/`MOVEMENT` = walk only. `SOLID` = walk + LOS.
+   */
+  collisionWalls?: Array<{ tx: number; ty: number; edge: "N" | "E" | "S" | "W"; kind?: "MOVEMENT" | "SOLID" }>;
   /** Suspended-bridge overlay cells. Base terrain/path underneath is unchanged. */
   bridges?: Array<{ tx: number; ty: number; orientation: "H" | "V" }>;
   zones?: Array<{ type: "RESOURCE_SITE"; name: string; cells: Array<[number, number]> }>;

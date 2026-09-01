@@ -47,8 +47,9 @@ export function pickAutoTarget<T extends Targetable>(
   origin: AimOrigin,
   range: number,
   enemies: readonly T[],
+  visible: (unit: T) => boolean = () => true,
 ): T | null {
-  const candidates = enemiesInRange(origin, range, enemies);
+  const candidates = enemiesInRange(origin, range, enemies).filter(visible);
   if (!candidates.length) return null;
   if (mode === "FIRST") {
     return candidates.reduce((best, e) => (e.pathProgress > best.pathProgress ? e : best));
@@ -86,9 +87,14 @@ export function selectTarget<T extends Targetable>(
   range: number,
   enemies: readonly T[],
   manualId: number | null = null,
+  visible: (unit: T) => boolean = () => true,
 ): T | null {
-  if (mode === "MANUAL") return pickManualTarget(manualId, origin, range, enemies);
-  return pickAutoTarget(mode, origin, range, enemies);
+  if (mode === "MANUAL") {
+    const locked = pickManualTarget(manualId, origin, range, enemies);
+    if (!locked || !visible(locked)) return null;
+    return locked;
+  }
+  return pickAutoTarget(mode, origin, range, enemies, visible);
 }
 
 export function hitTestEnemy<T extends { id: number; x: number; y: number }>(

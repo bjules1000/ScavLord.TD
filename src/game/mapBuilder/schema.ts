@@ -98,11 +98,21 @@ export interface EditorZone {
   cells: Array<[number, number]>;
 }
 
+/** Authored tile-edge barrier. MOVEMENT = cliff (walk only). SOLID = building (walk + LOS). */
+export const COLLISION_WALL_KINDS = ["MOVEMENT", "SOLID"] as const;
+export type CollisionWallKind = (typeof COLLISION_WALL_KINDS)[number];
+export const DEFAULT_COLLISION_WALL_KIND: CollisionWallKind = "MOVEMENT";
+
+export function isCollisionWallKind(value: unknown): value is CollisionWallKind {
+  return value === "MOVEMENT" || value === "SOLID";
+}
+
 /** Canonical tile-edge collision/LOS blocker. See walls.ts for shared-edge identity. */
 export interface CollisionWall {
   tx: number;
   ty: number;
   edge: TileEdge;
+  kind: CollisionWallKind;
 }
 
 export const BRIDGE_ORIENTATIONS = ["H", "V"] as const;
@@ -144,7 +154,7 @@ export interface EditorMapDoc {
   edges: EditorEdgeObject[];
   gates: EditorGate[];
   zones: EditorZone[];
-  /** Invisible cliff/LOS blockers on canonical tile edges. Empty until authored. */
+  /** Authored tile-edge barriers (MOVEMENT and/or SOLID). Empty until authored. */
   collisionWalls: CollisionWall[];
   /** Suspended-bridge overlay tiles. Empty until authored. Independent of base terrain. */
   bridges: BridgeTile[];

@@ -1,11 +1,11 @@
 import { MAP_BUILDER_SCHEMA_VERSION, isTerrainKind, type EditorMapDoc, type TerrainKind, type TileEdge } from "./schema";
 import { validateNewMapInput } from "./document";
-import { GATE_IDS, SPECIAL_ZONE_TYPES, TILE_EDGES, BRIDGE_ORIENTATIONS } from "./schema";
+import { GATE_IDS, SPECIAL_ZONE_TYPES, TILE_EDGES, BRIDGE_ORIENTATIONS, isCollisionWallKind } from "./schema";
 import type { PropType } from "../map";
 import { PROP_TYPES } from "./schema";
 import { emptyLane, exportPort, importPort, peelLaneFromWaypoints } from "./ports";
 import { sortBridges } from "./bridges";
-import { normalizeCollisionWalls, sortCollisionWalls } from "./walls";
+import { collisionWallKind, normalizeCollisionWalls, sortCollisionWalls, withCollisionWallKind } from "./walls";
 
 export interface ExportedMap {
   schemaVersion: 1;
@@ -39,7 +39,7 @@ export interface ExportedMap {
   edges: Array<{ type: EditorMapDoc["edges"][number]["type"]; tx: number; ty: number; edge: EditorMapDoc["edges"][number]["edge"] }>;
   gates: Array<{ id: EditorMapDoc["gates"][number]["id"]; laneId: string; tx: number; ty: number; edge: EditorMapDoc["gates"][number]["edge"] }>;
   zones: Array<{ type: EditorMapDoc["zones"][number]["type"]; name: string; cells: Array<[number, number]> }>;
-  collisionWalls: Array<{ tx: number; ty: number; edge: TileEdge }>;
+  collisionWalls: Array<{ tx: number; ty: number; edge: TileEdge; kind: "MOVEMENT" | "SOLID" }>;
   bridges: Array<{ tx: number; ty: number; orientation: "H" | "V" }>;
 }
 
@@ -97,7 +97,12 @@ export function toExport(doc: EditorMapDoc): ExportedMap {
     zones: [...doc.zones]
       .sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name))
       .map((z) => ({ type: z.type, name: z.name, cells: sortCells(z.cells) })),
-    collisionWalls: sortCollisionWalls(doc.collisionWalls).map((w) => ({ tx: w.tx, ty: w.ty, edge: w.edge })),
+    collisionWalls: sortCollisionWalls(doc.collisionWalls.map((w) => withCollisionWallKind(w))).map((w) => ({
+      tx: w.tx,
+      ty: w.ty,
+      edge: w.edge,
+      kind: collisionWallKind(w),
+    })),
     bridges: sortBridges(doc.bridges).map((b) => ({ tx: b.tx, ty: b.ty, orientation: b.orientation })),
   };
 }
@@ -220,7 +225,12 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
     collisionWalls: normalizeCollisionWalls(
       (payload.collisionWalls ?? [])
         .filter((w) => w && (TILE_EDGES as readonly string[]).includes(w.edge))
-        .map((w) => ({ tx: Number(w.tx), ty: Number(w.ty), edge: w.edge })),
+        .map((w) => ({
+          tx: Number(w.tx),
+          ty: Number(w.ty),
+          edge: w.edge,
+          kind: isCollisionWallKind((w as { kind?: unknown }).kind) ? (w as { kind: "MOVEMENT" | "SOLID" }).kind : "MOVEMENT",
+        })),
       width,
       height,
     ),

@@ -109,6 +109,14 @@ export function strikesForPellet(
   return out;
 }
 
+export function intersectionsBefore(
+  intersections: readonly { id: number; along: number }[],
+  maxAlong: number | null,
+): { id: number; along: number }[] {
+  if (maxAlong == null) return [...intersections];
+  return intersections.filter((h) => h.along < maxAlong - 1e-9);
+}
+
 /** Resolve one shotgun blast. Damage is applied through applyHit. */
 export function resolveShotgunBlast<T extends PelletBody>(args: {
   origin: { x: number; y: number };
@@ -123,17 +131,34 @@ export function resolveShotgunBlast<T extends PelletBody>(args: {
   enemies: T[];
   armorOf: (e: T) => number;
   pen: number;
-}): { strikes: PelletStrike[]; angles: number[] } {
+  /** First wall along this pellet, or null if unobstructed. */
+  maxAlongOf?: (angle: number) => number | null;
+  /** Skip an enemy without stopping the pellet (bridge deck). */
+  ignoreEnemy?: (e: T, along: number, angle: number) => boolean;
+  /** Existing barricade prot 0..1; applied per pellet via (1 - prot). */
+  coverProtOf?: (e: T, along: number, angle: number) => number;
+}): { strikes: PelletStrike[]; angles: number[]; clipAlong: number[] } {
   const angles = pelletAngles(args.aim, args.pelletCount, args.spread);
   const strikes: PelletStrike[] = [];
+  const clipAlong: number[] = [];
   for (const angle of angles) {
-    const intersections = pelletIntersections(
-      args.origin.x,
-      args.origin.y,
-      angle,
-      args.range,
-      args.hitRadius,
-      args.enemies,
+    const wallAlong = args.maxAlongOf?.(angle) ?? null;
+    clipAlong.push(wallAlong ?? args.range);
+    const reachable = args.enemies.filter((e) => {
+      if (isSettledOut(e)) return false;
+      if (args.ignoreEnemy?.(e, 0, angle)) return false;
+      return true;
+    });
+    const intersections = intersectionsBefore(
+      pelletIntersections(
+        args.origin.x,
+        args.origin.y,
+        angle,
+        args.range,
+        args.hitRadius,
+        reachable,
+      ),
+      wallAlong,
     );
     const pelletStrikes = strikesForPellet(
       intersections,
@@ -144,9 +169,11 @@ export function resolveShotgunBlast<T extends PelletBody>(args: {
     for (const s of pelletStrikes) {
       const enemy = args.enemies.find((e) => e.id === s.enemyId);
       if (!enemy || isSettledOut(enemy)) continue;
-      applyHit(enemy, s.damage, args.armorOf(enemy), args.pen);
-      strikes.push(s);
+      const prot = args.coverProtOf?.(enemy, s.along, angle) ?? 0;
+      const damage = s.damage * (1 - Math.max(0, Math.min(1, prot)));
+      applyHit(enemy, damage, args.armorOf(enemy), args.pen);
+      strikes.push({ ...s, damage });
     }
   }
-  return { strikes, angles };
+  return { strikes, angles, clipAlong };
 }
