@@ -422,6 +422,8 @@ function lootRuntime(runtime?: Partial<LootRuntime>): Partial<LootRuntime> & { c
   };
   if (runtime?.rules) next.rules = runtime.rules;
   if (runtime?.weights) next.weights = runtime.weights;
+  if (runtime?.profile) next.profile = runtime.profile;
+  if (runtime?.sourceId) next.sourceId = runtime.sourceId;
   if (runtime?.rng) next.rng = runtime.rng;
   return next;
 }

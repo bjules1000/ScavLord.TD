@@ -203,7 +203,7 @@ import {
 import {
   effectiveItemDef,
   effectiveLootMult,
-  lootRuntime,
+  lootRuntimeForSource,
   saleValueOf,
 } from "./dev/economy";
 import { clearRaidBackpack, devAddToBackpack } from "./dev/inventory";
@@ -1289,7 +1289,7 @@ export default function TarkovTD() {
               s.wave,
               s.nextId,
               effectiveLootMult(mapRef.current.def),
-              lootRuntime(),
+              lootRuntimeForSource(`${mapRef.current.def.id}:crate`),
             );
             s.nextId += loot.length;
             addToBackpack(loot.map((l) => ({ ...l, uid: newUid() })));
@@ -1616,7 +1616,7 @@ export default function TarkovTD() {
           s.wave,
           s.nextId,
           effectiveLootMult(mapRef.current.def),
-          lootRuntime(),
+          lootRuntimeForSource(`${mapRef.current.def.id}:reward`),
         );
         s.nextId += 3;
         setChoices(found.map((f) => ({ ...f, uid: newUid() })));
