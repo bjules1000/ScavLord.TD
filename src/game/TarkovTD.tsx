@@ -190,6 +190,7 @@ import {
   unequipOperatorSlot,
 } from "./operators/equipment";
 import { PERKS, STAT_LABELS, type PersistentOperator } from "./operators";
+import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import {
   operatorAccuracyBonus,
   operatorEffectiveWeight,
@@ -2677,64 +2678,14 @@ export default function TarkovTD() {
               )}
 
               {s.phase === "hideout" && screen === "radio" && (
-                <Overlay title="RADIO — RECRUITMENT" subtitle="Incoming transmissions. Hire carefully — kit value is in the cost.">
-                  <div className="text-left font-mono text-[10px]">
-                    <div className="text-muted-foreground">AVAILABLE OPERATORS</div>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                      {meta.crew.recruitment.candidates.map((c) => (
-                        <button
-                          key={c.candidateId}
-                          onClick={() => setSelectedRecruitId(c.candidateId)}
-                          className={`pixel-card text-left ${
-                            selectedRecruitId === c.candidateId ? "border-primary" : ""
-                          }`}
-                        >
-                          <div className="font-display text-[10px] text-primary">{c.name}</div>
-                          <div className="text-[9px] text-muted-foreground">{c.roleLabel}</div>
-                          <div className="mt-1 text-[9px]">{c.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ")}</div>
-                          <div className="mt-1 text-accent">{c.cost} ₽</div>
-                        </button>
-                      ))}
-                    </div>
-                    {(() => {
-                      const c =
-                        meta.crew.recruitment.candidates.find((x) => x.candidateId === selectedRecruitId) ??
-                        meta.crew.recruitment.candidates[0];
-                      if (!c) return <div className="mt-3 text-muted-foreground">No transmissions on this frequency.</div>;
-                      return (
-                        <div className="pixel-card mt-3">
-                          <div className="font-display text-[10px] text-primary">
-                            {c.name} · {c.roleLabel}
-                          </div>
-                          <div className="mt-2 grid grid-cols-2 gap-1 text-[9px]">
-                            {(Object.keys(STAT_LABELS) as (keyof typeof STAT_LABELS)[]).map((k) => (
-                              <div key={k}>
-                                {STAT_LABELS[k]} {c.stats[k]}
-                              </div>
-                            ))}
-                          </div>
-                          <div className="mt-2 text-[9px] text-muted-foreground">
-                            PERKS: {c.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ")}
-                          </div>
-                          <div className="mt-2 text-[9px]">
-                            KIT: {WEAPONS[c.equipment.weapon]?.name ?? c.equipment.weapon}
-                            {c.equipment.attachments.length
-                              ? ` + ${c.equipment.attachments.map((a) => ATTACHMENTS[a]?.name ?? a).join(", ")}`
-                              : ""}
-                            {c.equipment.armor ? ` · ${ARMORS[c.equipment.armor]?.name ?? c.equipment.armor}` : ""}
-                          </div>
-                          <div className="mt-2 font-display text-[10px]">COST: {c.cost} ₽</div>
-                          <button
-                            onClick={() => hireRecruit(c.candidateId)}
-                            disabled={meta.bank < c.cost}
-                            className="pixel-btn pixel-btn-primary mt-2 w-full disabled:opacity-50"
-                          >
-                            {meta.bank < c.cost ? "INSUFFICIENT FUNDS" : "HIRE"}
-                          </button>
-                        </div>
-                      );
-                    })()}
-                  </div>
+                <Overlay title="RADIO — RECRUITMENT" subtitle={RECRUITMENT_SUBTITLE}>
+                  <RecruitmentPanel
+                    candidates={meta.crew.recruitment.candidates}
+                    bank={meta.bank}
+                    selectedId={selectedRecruitId}
+                    onSelect={setSelectedRecruitId}
+                    onHire={hireRecruit}
+                  />
                   <button onClick={() => setScreen("hideout")} className="pixel-btn mt-3 w-full">
                     BACK TO CAMP
                   </button>
