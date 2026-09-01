@@ -13,6 +13,7 @@ export const BALANCE_STORAGE_KEY = "scavlord.dev.balanceLab.v1";
 export type WeaponOverride = Partial<
   Pick<
     WeaponDef,
+    | "name"
     | "weight"
     | "damage"
     | "range"
@@ -28,11 +29,13 @@ export type WeaponOverride = Partial<
   >
 >;
 
-export type ArmorOverride = Partial<Pick<ArmorDef, "weight" | "reduction" | "durability">>;
+export type ArmorOverride = Partial<Pick<ArmorDef, "name" | "weight" | "reduction" | "durability">>;
 
 export type AttachmentOverride = Partial<
-  Pick<AttachmentDef, "weight" | "damageMult" | "rangeMult" | "rofMult" | "accuracy" | "pen" | "magSizeAdd">
+  Pick<AttachmentDef, "name" | "weight" | "damageMult" | "rangeMult" | "rofMult" | "accuracy" | "pen" | "magSizeAdd">
 >;
+
+export type OverrideScalar = number | string;
 
 export type BalanceOverrides = {
   weapons: Record<string, WeaponOverride>;
@@ -97,15 +100,139 @@ export function balanceLabCatalog(): LabEntry[] {
   ];
 }
 
-export function filterLabCatalog(entries: readonly LabEntry[], category: LabCategory, query: string): LabEntry[] {
+export function filterLabCatalog(
+  entries: readonly LabEntry[],
+  category: LabCategory,
+  query: string,
+  overrides: BalanceOverrides = emptyBalanceOverrides(),
+): LabEntry[] {
   const q = query.trim().toLowerCase();
   return entries.filter((e) => {
     if (category === "WEAPONS" && e.kind !== "weapon") return false;
     if (category === "ARMOR" && e.kind !== "armor") return false;
     if (category === "ATTACHMENTS" && e.kind !== "attachment") return false;
     if (!q) return true;
-    return e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q) || e.kind.includes(q);
+    const display = labDisplayName(e, overrides);
+    return (
+      e.name.toLowerCase().includes(q) ||
+      display.toLowerCase().includes(q) ||
+      e.id.toLowerCase().includes(q) ||
+      e.kind.includes(q)
+    );
   });
+}
+
+export const LOWER_IS_BETTER_FIELDS = new Set(["weight", "cooldown", "reloadMs", "spread"]);
+
+export type BalanceTone = "buff" | "nerf" | "neutral";
+
+export function nearlyEqualNum(a: number, b: number): boolean {
+  return Math.abs(a - b) < 1e-9;
+}
+
+export function balanceFieldTone(key: string, base: number, current: number): BalanceTone {
+  if (nearlyEqualNum(base, current)) return "neutral";
+  const increased = current > base;
+  if (LOWER_IS_BETTER_FIELDS.has(key)) return increased ? "nerf" : "buff";
+  return increased ? "buff" : "nerf";
+}
+
+export function balanceToneTextClass(tone: BalanceTone): string {
+  if (tone === "buff") return "text-accent";
+  if (tone === "nerf") return "text-destructive";
+  return "text-muted-foreground";
+}
+
+export function balanceToneBorderClass(tone: BalanceTone): string {
+  if (tone === "buff") return "border-accent";
+  if (tone === "nerf") return "border-destructive";
+  return "border-border";
+}
+
+export function formatLabValue(key: string, n: number): string {
+  if (key === "reduction") return `${Math.round(n * 100)}%`;
+  if (nearlyEqualNum(n, Math.round(n))) return String(Math.round(n));
+  return String(Math.round(n * 1000) / 1000);
+}
+
+export function formatLabDelta(key: string, base: number, current: number): string {
+  const d = current - base;
+  if (nearlyEqualNum(d, 0)) return "";
+  const sign = d > 0 ? "+" : "";
+  return `${sign}${formatLabValue(key, d)}`;
+}
+
+export function itemOverrideRecord(
+  overrides: BalanceOverrides,
+  kind: LabKind,
+  id: string,
+): Record<string, unknown> | undefined {
+  const bag =
+    kind === "weapon" ? overrides.weapons[id] : kind === "armor" ? overrides.armors[id] : overrides.attachments[id];
+  return bag as Record<string, unknown> | undefined;
+}
+
+export function overrideName(overrides: BalanceOverrides, kind: LabKind, id: string): string | undefined {
+  const n = itemOverrideRecord(overrides, kind, id)?.["name"];
+  return typeof n === "string" ? n : undefined;
+}
+
+export function labDisplayName(entry: LabEntry, overrides: BalanceOverrides): string {
+  return overrideName(overrides, entry.kind, entry.id) ?? entry.name;
+}
+
+export function itemOverrideCount(overrides: BalanceOverrides, kind: LabKind, id: string): number {
+  const bag = itemOverrideRecord(overrides, kind, id);
+  return bag ? Object.keys(bag).length : 0;
+}
+
+export function overridesEqual(a: BalanceOverrides, b: BalanceOverrides): boolean {
+  return JSON.stringify(pruneBalanceOverrides(a)) === JSON.stringify(pruneBalanceOverrides(b));
+}
+
+export type LabDerivedRow = {
+  key: string;
+  label: string;
+  base: number;
+  current: number;
+  display: (n: number) => string;
+};
+
+export function weaponDerivedRows(base: WeaponDef, current: WeaponDef): LabDerivedRow[] {
+  const rows: LabDerivedRow[] = [];
+  if (base.pellets != null || current.pellets != null) {
+    rows.push({
+      key: "blast",
+      label: "Max raw blast",
+      base: (base.pellets ?? 1) * base.damage,
+      current: (current.pellets ?? 1) * current.damage,
+      display: (n) => formatLabValue("blast", n),
+    });
+  }
+  rows.push(
+    {
+      key: "rpm",
+      label: "Fire rate",
+      base: 60000 / base.cooldown,
+      current: 60000 / current.cooldown,
+      display: (n) => `${n.toFixed(0)} RPM`,
+    },
+    {
+      key: "magSize",
+      label: "Magazine",
+      base: base.magSize,
+      current: current.magSize,
+      display: (n) => formatLabValue("magSize", n),
+    },
+    {
+      key: "weight",
+      label: "Weight",
+      base: base.weight,
+      current: current.weight,
+      display: (n) => formatLabValue("weight", n),
+    },
+  );
+  return rows;
 }
 
 export function weaponLabFields(def: WeaponDef): LabField[] {
@@ -206,17 +333,23 @@ export function setOverrideField(
   kind: LabKind,
   id: string,
   key: string,
-  value: number | undefined,
-  canonical: number | undefined,
+  value: OverrideScalar | undefined,
+  canonical: OverrideScalar | undefined,
 ): BalanceOverrides {
   const next = cloneOverrides(src);
   const bag =
     kind === "weapon" ? next.weapons : kind === "armor" ? next.armors : next.attachments;
-  const cur = { ...(bag[id] ?? {}) } as Record<string, number>;
-  if (value === undefined || value === canonical) delete cur[key];
-  else cur[key] = value;
+  const cur = { ...(bag[id] ?? {}) } as Record<string, OverrideScalar>;
+  const normalized = typeof value === "string" ? value.trim() : value;
+  const same =
+    normalized === undefined ||
+    normalized === "" ||
+    normalized === canonical ||
+    (typeof normalized === "number" && typeof canonical === "number" && nearlyEqualNum(normalized, canonical));
+  if (same) delete cur[key];
+  else cur[key] = normalized as OverrideScalar;
   if (Object.keys(cur).length === 0) delete bag[id];
-  else (bag as Record<string, Record<string, number>>)[id] = cur;
+  else (bag as Record<string, Record<string, OverrideScalar>>)[id] = cur;
   return pruneBalanceOverrides(next);
 }
 
@@ -233,39 +366,46 @@ export function modifiedItemCount(overrides: BalanceOverrides): number {
   return Object.keys(clean.weapons).length + Object.keys(clean.armors).length + Object.keys(clean.attachments).length;
 }
 
-export type PatchLine = { id: string; name: string; kind: LabKind; field: string; from: number; to: number };
+export type PatchLine = { id: string; name: string; kind: LabKind; field: string; from: OverrideScalar; to: OverrideScalar };
+
+function appendPatchLines(
+  lines: PatchLine[],
+  kind: LabKind,
+  id: string,
+  displayName: string,
+  base: object,
+  fields: object,
+): void {
+  for (const [field, to] of Object.entries(fields)) {
+    const from = (base as Record<string, unknown>)[field];
+    if (typeof to === "string") {
+      if (typeof from !== "string" || from === to) continue;
+      lines.push({ id, name: displayName, kind, field, from, to });
+      continue;
+    }
+    if (typeof to !== "number") continue;
+    const fromNum = typeof from === "number" ? from : kind === "attachment" ? 0 : undefined;
+    if (typeof fromNum !== "number" || nearlyEqualNum(fromNum, to)) continue;
+    lines.push({ id, name: displayName, kind, field, from: fromNum, to });
+  }
+}
 
 export function balancePatchLines(overrides: BalanceOverrides): PatchLine[] {
   const lines: PatchLine[] = [];
   for (const [id, fields] of Object.entries(overrides.weapons)) {
     const base = WEAPONS[id];
     if (!base) continue;
-    for (const [field, to] of Object.entries(fields)) {
-      if (typeof to !== "number") continue;
-      const from = (base as unknown as Record<string, number | undefined>)[field];
-      if (typeof from !== "number" || from === to) continue;
-      lines.push({ id, name: base.name, kind: "weapon", field, from, to });
-    }
+    appendPatchLines(lines, "weapon", id, base.name, base, fields);
   }
   for (const [id, fields] of Object.entries(overrides.armors)) {
     const base = ARMORS[id];
     if (!base) continue;
-    for (const [field, to] of Object.entries(fields)) {
-      if (typeof to !== "number") continue;
-      const from = (base as unknown as Record<string, number | undefined>)[field];
-      if (typeof from !== "number" || from === to) continue;
-      lines.push({ id, name: base.name, kind: "armor", field, from, to });
-    }
+    appendPatchLines(lines, "armor", id, base.name, base, fields);
   }
   for (const [id, fields] of Object.entries(overrides.attachments)) {
     const base = ATTACHMENTS[id];
     if (!base) continue;
-    for (const [field, to] of Object.entries(fields)) {
-      if (typeof to !== "number") continue;
-      const from = (base as unknown as Record<string, number | undefined>)[field];
-      if (from === to) continue;
-      lines.push({ id, name: base.name, kind: "attachment", field, from: from ?? 0, to });
-    }
+    appendPatchLines(lines, "attachment", id, base.name, base, fields);
   }
   return lines;
 }

@@ -3,24 +3,33 @@ import {
   attachmentLabFields,
   armorLabFields,
   applyBalanceOverrides,
+  balanceFieldTone,
   balanceLabCatalog,
+  balanceToneBorderClass,
+  balanceToneTextClass,
   canonicalArmor,
   canonicalAttachment,
   canonicalWeapon,
   emptyBalanceOverrides,
   filterLabCatalog,
   formatBalancePatch,
+  formatLabDelta,
+  formatLabValue,
   getBalanceOverrides,
+  itemOverrideCount,
+  itemOverrideRecord,
+  labDisplayName,
   modifiedItemCount,
+  overridesEqual,
   resetOverrideItem,
   setOverrideField,
+  weaponDerivedRows,
   weaponLabFields,
   type BalanceOverrides,
   type LabCategory,
   type LabEntry,
   type LabField,
 } from "./balance";
-import { DEV_TOOLS_ENABLED } from "./tools";
 
 const CATS: LabCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS"];
 
@@ -29,10 +38,9 @@ function fieldValue(obj: object, key: string): number | undefined {
   return typeof v === "number" ? v : undefined;
 }
 
-function formatValue(key: string, n: number): string {
-  if (key === "reduction") return `${Math.round(n * 100)}%`;
-  if (Number.isInteger(n)) return String(n);
-  return String(Math.round(n * 1000) / 1000);
+function stringField(obj: object | undefined, key: string): string | undefined {
+  const v = obj ? (obj as Record<string, unknown>)[key] : undefined;
+  return typeof v === "string" ? v : undefined;
 }
 
 export default function BalanceLab({
@@ -50,9 +58,17 @@ export default function BalanceLab({
   const [draft, setDraft] = useState<BalanceOverrides>(() => getBalanceOverrides());
   const [copied, setCopied] = useState(false);
   const catalog = useMemo(() => balanceLabCatalog(), []);
-  const visible = useMemo(() => filterLabCatalog(catalog, category, query), [catalog, category, query]);
+  const visible = useMemo(
+    () => filterLabCatalog(catalog, category, query, draft),
+    [catalog, category, query, draft],
+  );
 
   if (!enabled) return null;
+
+  const applied = getBalanceOverrides();
+  const appliedCount = modifiedItemCount(applied);
+  const draftCount = modifiedItemCount(draft);
+  const draftDirty = !overridesEqual(draft, applied);
 
   const canonical =
     selected?.kind === "weapon"
@@ -62,35 +78,30 @@ export default function BalanceLab({
         : selected
           ? canonicalAttachment(selected.id)
           : undefined;
-  const fields: LabField[] = !selected || !canonical
-    ? []
-    : selected.kind === "weapon"
-      ? weaponLabFields(canonical as ReturnType<typeof canonicalWeapon> & object)
-      : selected.kind === "armor"
-        ? armorLabFields()
-        : attachmentLabFields(canonical as NonNullable<ReturnType<typeof canonicalAttachment>>);
+  const fields: LabField[] =
+    !selected || !canonical
+      ? []
+      : selected.kind === "weapon"
+        ? weaponLabFields(canonical as ReturnType<typeof canonicalWeapon> & object)
+        : selected.kind === "armor"
+          ? armorLabFields()
+          : attachmentLabFields(canonical as NonNullable<ReturnType<typeof canonicalAttachment>>);
 
-  const overBag =
-    selected?.kind === "weapon"
-      ? draft.weapons[selected.id]
-      : selected?.kind === "armor"
-        ? draft.armors[selected.id]
-        : selected
-          ? draft.attachments[selected.id]
-          : undefined;
+  const overBag = selected ? itemOverrideRecord(draft, selected.kind, selected.id) : undefined;
+  const selectedChanged = selected ? itemOverrideCount(draft, selected.kind, selected.id) : 0;
+  const draftName = selected ? (stringField(overBag, "name") ?? canonical?.name ?? "") : "";
+  const nameChanged = Boolean(selected && canonical && draftName !== canonical.name);
 
-  const derived = selected?.kind === "weapon" && canonical
-    ? (() => {
-        const w = { ...(canonical as NonNullable<ReturnType<typeof canonicalWeapon>>), ...(overBag ?? {}) };
-        const pellets = w.pellets ?? 1;
-        return [
-          w.pellets != null ? { label: "Max raw blast", value: String(pellets * w.damage) } : null,
-          { label: "Fire rate", value: `${(60000 / w.cooldown).toFixed(0)} RPM` },
-          { label: "Magazine", value: String(w.magSize) },
-          { label: "Weight", value: String(w.weight) },
-        ].filter(Boolean) as { label: string; value: string }[];
-      })()
-    : [];
+  const derived =
+    selected?.kind === "weapon" && canonical
+      ? weaponDerivedRows(
+          canonical as NonNullable<ReturnType<typeof canonicalWeapon>>,
+          {
+            ...(canonical as NonNullable<ReturnType<typeof canonicalWeapon>>),
+            ...(overBag ?? {}),
+          } as NonNullable<ReturnType<typeof canonicalWeapon>>,
+        )
+      : [];
 
   const applyDraft = (next: BalanceOverrides) => {
     const live = applyBalanceOverrides(next, true);
@@ -110,20 +121,38 @@ export default function BalanceLab({
   };
 
   return (
-    <div className="absolute inset-0 z-40 flex items-stretch justify-center bg-background/90 p-2 backdrop-blur-[2px] sm:p-4">
-      <div className="pixel-card flex h-full max-h-[94dvh] w-full max-w-5xl flex-col overflow-hidden p-2 sm:p-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="font-display text-sm text-primary">BALANCE LAB</div>
-          <button type="button" className="pixel-btn px-2 py-1" onClick={onClose}>
-            CLOSE
-          </button>
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/92 p-1 backdrop-blur-[2px] sm:p-2">
+      <div className="pixel-card flex h-[94vh] w-[96vw] max-h-[94vh] max-w-[96vw] flex-col overflow-hidden p-3 sm:p-4">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b-2 border-border pb-3">
+          <div>
+            <div className="font-display text-sm text-primary sm:text-base">BALANCE LAB</div>
+            <div className="mt-1 font-mono text-xs text-muted-foreground">
+              DEV DRAFT — runtime test values only
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span
+              className={`pixel-chip font-mono text-[11px] ${
+                draftCount > 0 || appliedCount > 0 ? "text-primary" : "text-muted-foreground"
+              }`}
+            >
+              MODIFIED {draftCount}
+              {draftDirty ? ` · UNAPPLIED` : appliedCount > 0 ? " · LIVE" : ""}
+            </span>
+            <button type="button" className="pixel-btn px-3 py-2 text-[10px]" onClick={onClose}>
+              CLOSE
+            </button>
+          </div>
         </div>
-        <div className="mt-2 flex flex-wrap gap-1">
+
+        <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
           {CATS.map((cat) => (
             <button
               key={cat}
               type="button"
-              className={`pixel-btn px-1 py-0 text-[9px] ${category === cat ? "text-primary" : "text-muted-foreground"}`}
+              className={`pixel-btn px-3 py-2 text-[10px] ${
+                category === cat ? "pixel-btn-primary" : "text-muted-foreground"
+              }`}
               onClick={() => setCategory(cat)}
             >
               {cat}
@@ -132,87 +161,150 @@ export default function BalanceLab({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="SEARCH"
-            className="min-w-[8rem] flex-1 border border-border bg-background px-1 py-0.5 font-mono text-[10px]"
+            placeholder="SEARCH ITEMS"
+            className="min-w-[14rem] flex-1 border-2 border-border bg-background px-3 py-2 font-mono text-sm"
           />
         </div>
-        <div className="mt-2 grid min-h-0 flex-1 gap-2 overflow-hidden md:grid-cols-[minmax(140px,0.34fr)_minmax(0,1fr)]">
-          <div className="pixel-scrollbar min-h-0 overflow-auto border border-border">
-            {visible.map((entry) => (
-              <button
-                key={`${entry.kind}:${entry.id}`}
-                type="button"
-                className={`flex w-full items-center justify-between px-2 py-1 text-left font-mono text-[10px] ${
-                  selected?.id === entry.id && selected.kind === entry.kind
-                    ? "bg-secondary text-primary"
-                    : "text-foreground hover:bg-secondary/60"
-                }`}
-                onClick={() => setSelected(entry)}
-              >
-                <span>{entry.name}</span>
-                <span className="uppercase text-muted-foreground">{entry.kind}</span>
-              </button>
-            ))}
+
+        <div className="mt-3 grid min-h-0 flex-1 gap-3 overflow-hidden md:grid-cols-[minmax(240px,0.28fr)_minmax(0,0.72fr)]">
+          <div className="pixel-scrollbar min-h-0 overflow-auto border-2 border-border bg-background/50">
+            {visible.map((entry) => {
+              const changed = itemOverrideCount(draft, entry.kind, entry.id);
+              const display = labDisplayName(entry, draft);
+              const active = selected?.id === entry.id && selected.kind === entry.kind;
+              return (
+                <button
+                  key={`${entry.kind}:${entry.id}`}
+                  type="button"
+                  className={`flex w-full items-center justify-between gap-2 border-b border-border/70 px-3 py-2.5 text-left font-mono text-xs ${
+                    active ? "bg-secondary text-primary" : "text-foreground hover:bg-secondary/60"
+                  }`}
+                  onClick={() => setSelected(entry)}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate">{display}</span>
+                    {display !== entry.name && (
+                      <span className="block truncate text-[10px] text-muted-foreground">{entry.name}</span>
+                    )}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2 uppercase text-muted-foreground">
+                    {changed > 0 && <span className="text-primary">● {changed}</span>}
+                    <span>{entry.kind}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <div className="pixel-scrollbar min-h-0 overflow-auto border border-border p-2">
+
+          <div className="pixel-scrollbar min-h-0 overflow-auto border-2 border-border bg-background/40 p-3 sm:p-4">
             {!selected || !canonical ? (
-              <div className="font-mono text-[10px] text-muted-foreground">Select an item.</div>
+              <div className="font-mono text-sm text-muted-foreground">Select an item to edit its draft stats.</div>
             ) : (
               <>
-                <div className="font-display text-[11px] text-primary">{selected.name}</div>
-                <div className="mt-2 space-y-1">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
+                      Display name
+                    </div>
+                    <input
+                      value={draftName}
+                      onChange={(e) => {
+                        setDraft((d) =>
+                          setOverrideField(d, selected.kind, selected.id, "name", e.target.value, canonical.name),
+                        );
+                      }}
+                      className={`mt-1 w-full border-2 bg-background px-3 py-2 font-display text-sm text-primary ${
+                        nameChanged ? "border-primary" : "border-border"
+                      }`}
+                    />
+                    {nameChanged && (
+                      <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                        Base: {canonical.name}
+                      </div>
+                    )}
+                  </div>
+                  <div className="font-mono text-[11px] uppercase text-muted-foreground">
+                    {selected.kind} · {selected.id}
+                    {selectedChanged > 0 ? ` · ${selectedChanged} changed` : ""}
+                  </div>
+                </div>
+
+                <div className="mt-5 grid grid-cols-[minmax(7rem,1.1fr)_minmax(4.5rem,0.7fr)_minmax(6.5rem,0.9fr)_minmax(7rem,1fr)] items-center gap-x-3 gap-y-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <span>Stat</span>
+                  <span>Base</span>
+                  <span>Delta</span>
+                  <span>Test value</span>
+                </div>
+                <div className="mt-1">
                   {fields.map((field) => {
                     const base = fieldValue(canonical, field.key) ?? 0;
                     const test = fieldValue(overBag ?? {}, field.key);
                     const current = test ?? base;
-                    const changed = test != null && test !== base;
+                    const changed = test != null && !Object.is(test, base);
+                    const tone = balanceFieldTone(field.key, base, current);
+                    const delta = formatLabDelta(field.key, base, current);
                     return (
-                      <label key={field.key} className="flex items-center justify-between gap-2 font-mono text-[10px]">
-                        <span className={changed ? "text-primary" : "text-muted-foreground"}>{field.label}</span>
-                        <span className="flex items-center gap-1">
-                          <span className="text-muted-foreground">{formatValue(field.key, base)}</span>
-                          {changed && <span className="text-primary">→ {formatValue(field.key, current)}</span>}
-                          <input
-                            type="number"
-                            step={field.step}
-                            value={current}
-                            className="w-16 border border-border bg-background px-1 py-0.5 text-foreground"
-                            onChange={(e) => {
-                              const n = Number(e.target.value);
-                              if (!Number.isFinite(n)) return;
-                              setDraft((d) => setOverrideField(d, selected.kind, selected.id, field.key, n, base));
-                            }}
-                          />
+                      <label
+                        key={field.key}
+                        className="grid grid-cols-[minmax(7rem,1.1fr)_minmax(4.5rem,0.7fr)_minmax(6.5rem,0.9fr)_minmax(7rem,1fr)] items-center gap-x-3 border-b border-border/60 py-2.5 font-mono text-sm"
+                      >
+                        <span className={changed ? "text-foreground" : "text-muted-foreground"}>{field.label}</span>
+                        <span className="text-muted-foreground">{formatLabValue(field.key, base)}</span>
+                        <span className={balanceToneTextClass(tone)}>
+                          {changed ? `→ ${formatLabValue(field.key, current)} (${delta})` : "—"}
                         </span>
+                        <input
+                          type="number"
+                          step={field.step}
+                          value={current}
+                          className={`w-full min-w-[6.5rem] border-2 bg-background px-2 py-1.5 text-foreground ${balanceToneBorderClass(tone)}`}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (!Number.isFinite(n)) return;
+                            setDraft((d) => setOverrideField(d, selected.kind, selected.id, field.key, n, base));
+                          }}
+                        />
                       </label>
                     );
                   })}
                 </div>
+
                 {derived.length > 0 && (
-                  <div className="mt-3">
-                    <div className="font-display text-[9px] text-muted-foreground">DERIVED</div>
-                    {derived.map((row) => (
-                      <div key={row.label} className="flex justify-between font-mono text-[10px] text-muted-foreground">
-                        <span>{row.label}</span>
-                        <span>{row.value}</span>
-                      </div>
-                    ))}
+                  <div className="mt-6 border-t-2 border-border pt-4">
+                    <div className="font-display text-[11px] text-primary">DERIVED</div>
+                    <div className="mt-3 space-y-2">
+                      {derived.map((row) => {
+                        const changed = !Object.is(row.base, row.current);
+                        const tone = balanceFieldTone(row.key, row.base, row.current);
+                        const delta = formatLabDelta(row.key, row.base, row.current);
+                        return (
+                          <div
+                            key={row.key}
+                            className="grid grid-cols-[minmax(8rem,1.2fr)_minmax(5rem,0.8fr)_minmax(7rem,1fr)] items-center gap-3 border border-border bg-secondary/30 px-3 py-2.5 font-mono text-sm"
+                          >
+                            <span className="text-foreground">{row.label}</span>
+                            <span className="text-muted-foreground">{row.display(row.base)}</span>
+                            <span className={changed ? balanceToneTextClass(tone) : "text-foreground"}>
+                              {changed ? `${row.display(row.current)} (${delta})` : row.display(row.current)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </>
             )}
           </div>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-1">
-          <span className="mr-auto font-mono text-[10px] text-muted-foreground">
-            MODIFIED: {modifiedItemCount(getBalanceOverrides())}
-            {modifiedItemCount(draft) !== modifiedItemCount(getBalanceOverrides())
-              ? ` · DRAFT ${modifiedItemCount(draft)}`
-              : ""}
+
+        <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2 border-t-2 border-border pt-3">
+          <span className="mr-auto font-mono text-xs text-muted-foreground">
+            {draftDirty ? "Unapplied draft edits" : appliedCount > 0 ? "Live test overrides active" : "No draft changes"}
           </span>
           <button
             type="button"
-            className="pixel-btn px-2 py-1 text-[9px]"
+            className="pixel-btn px-3 py-2 text-[10px]"
             disabled={!selected}
             onClick={() => {
               if (!selected) return;
@@ -221,13 +313,21 @@ export default function BalanceLab({
           >
             RESET ITEM
           </button>
-          <button type="button" className="pixel-btn px-2 py-1 text-[9px]" onClick={() => applyDraft(emptyBalanceOverrides())}>
+          <button
+            type="button"
+            className="pixel-btn px-3 py-2 text-[10px]"
+            onClick={() => applyDraft(emptyBalanceOverrides())}
+          >
             RESET ALL
           </button>
-          <button type="button" className="pixel-btn px-2 py-1 text-[9px]" onClick={() => void exportPatch()}>
+          <button type="button" className="pixel-btn px-3 py-2 text-[10px]" onClick={() => void exportPatch()}>
             {copied ? "COPIED" : "EXPORT PATCH"}
           </button>
-          <button type="button" className="pixel-btn pixel-btn-primary px-2 py-1 text-[9px]" onClick={() => applyDraft(draft)}>
+          <button
+            type="button"
+            className="pixel-btn pixel-btn-primary px-3 py-2 text-[10px]"
+            onClick={() => applyDraft(draft)}
+          >
             APPLY
           </button>
         </div>
