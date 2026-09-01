@@ -1,3 +1,5 @@
+import { generateChoices, generateCrate, type LootRuntime } from "./loot";
+
 export type Rarity = "common" | "rare" | "epic";
 
 export const RARITY_COLOR: Record<Rarity, string> = {
@@ -409,61 +411,28 @@ export const ITEMS: ItemDef[] = [
 
 export const ITEM_BY_ID: Record<string, ItemDef> = Object.fromEntries(ITEMS.map((i) => [i.id, i]));
 
-export function makeItem(id: string, uid: number): Item | null {
-  const def = ITEM_BY_ID[id];
+export function makeItem(id: string, uid: number, catalog: Record<string, ItemDef> = ITEM_BY_ID): Item | null {
+  const def = catalog[id];
   return def ? { ...def, uid } : null;
 }
 
-/** Guns are rare and precious — most finds are mods, meds or valuables. */
-function pickKind(weaponAllowed: boolean, wave: number): ItemKind {
-  const weaponChance = weaponAllowed ? 0.07 + Math.min(0.05, wave * 0.004) : 0;
-  const r = Math.random();
-  if (r < weaponChance) return "weapon";
-  const rest = (r - weaponChance) / (1 - weaponChance);
-  if (rest < 0.32) return "attachment";
-  if (rest < 0.42) return "armor";
-  if (rest < 0.68) return "meds";
-  return "valuable";
-}
-
-
-function pickOfKind(kind: ItemKind, wave: number, lootMult: number, used: Set<string>): ItemDef {
-  const roll = Math.random() + wave * 0.022 * lootMult;
-  const tier: Rarity = roll > 1.12 ? "epic" : roll > 0.68 ? "rare" : "common";
-  const ofKind = ITEMS.filter((i) => i.kind === kind && !used.has(i.id));
-  const tiered = ofKind.filter((i) => i.rarity === tier);
-  const list = tiered.length ? tiered : ofKind.length ? ofKind : ITEMS;
-  return list[Math.floor(Math.random() * list.length)]!;
+function lootRuntime(runtime?: Partial<LootRuntime>): Partial<LootRuntime> & { catalog: readonly ItemDef[] } {
+  const next: Partial<LootRuntime> & { catalog: readonly ItemDef[] } = {
+    catalog: runtime?.catalog ?? ITEMS,
+  };
+  if (runtime?.rules) next.rules = runtime.rules;
+  if (runtime?.weights) next.weights = runtime.weights;
+  if (runtime?.rng) next.rng = runtime.rng;
+  return next;
 }
 
 /** Three post-wave choices, biased by wave depth and map threat. */
-export function rollChoices(wave: number, uidStart: number, lootMult = 1): Item[] {
-  const out: Item[] = [];
-  const used = new Set<string>();
-  let weaponsLeft = 1;
-  for (let i = 0; i < 3; i++) {
-    const kind = pickKind(weaponsLeft > 0, wave);
-    if (kind === "weapon") weaponsLeft--;
-    const def = pickOfKind(kind, wave, lootMult, used);
-    used.add(def.id);
-    out.push({ ...def, uid: uidStart + i });
-  }
-  return out;
+export function rollChoices(wave: number, uidStart: number, lootMult = 1, runtime?: Partial<LootRuntime>): Item[] {
+  return generateChoices(wave, uidStart, lootMult, lootRuntime(runtime));
 }
 
 /** Loot found inside a map crate. */
-export function rollCrate(wave: number, uidStart: number, lootMult = 1): Item[] {
-  const n = 1 + (Math.random() < 0.4 * lootMult ? 1 : 0);
-  const out: Item[] = [];
-  const used = new Set<string>();
-  let weaponsLeft = 1;
-  for (let i = 0; i < n; i++) {
-    const kind = pickKind(weaponsLeft > 0, wave);
-    if (kind === "weapon") weaponsLeft--;
-    const def = pickOfKind(kind, wave, lootMult, used);
-    used.add(def.id);
-    out.push({ ...def, uid: uidStart + i });
-  }
-  return out;
+export function rollCrate(wave: number, uidStart: number, lootMult = 1, runtime?: Partial<LootRuntime>): Item[] {
+  return generateCrate(wave, uidStart, lootMult, lootRuntime(runtime));
 }
 
