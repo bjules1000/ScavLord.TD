@@ -88,7 +88,7 @@ export function applyAuthor(
     case "erase-gameplay":
       return eraseGameplayAt(doc, ctx.laneId, cell.tx, cell.ty);
     case "collision-wall":
-      return placeCollisionWall(doc, cell.tx, cell.ty, edgeOf(cell, tile));
+      return placeCollisionWall(doc, cell.tx, cell.ty, edgeOf(cell, tile), tool.kind ?? "MOVEMENT");
     case "erase-wall":
       return eraseCollisionWall(doc, cell.tx, cell.ty, edgeOf(cell, tile));
     case "bridge":

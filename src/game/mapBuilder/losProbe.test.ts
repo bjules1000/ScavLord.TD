@@ -9,6 +9,7 @@ import { addLane, paintTiles, setLaneWaypoints } from "./paint";
 import { paintBridgeTiles } from "./bridges";
 import { createBlankMap } from "./document";
 import { stringifyExport, toExport } from "./export";
+import { placeCollisionWall } from "./walls";
 import {
   LOS_PROBE_SAMPLE_TILES,
   applyLosProbeClick,
@@ -555,5 +556,61 @@ describe("LOS probe tool state", () => {
 
   it("path LOS summary is diagnostic counts only", () => {
     expect(formatPathLosSummary(83, 124)).toBe("PATH LOS: 83 / 124 VISIBLE");
+  });
+});
+
+describe("LOS probe vs authored walls", () => {
+  it("probe through MOVEMENT WALL remains clear", () => {
+    const map = testMap({ collisionWalls: [{ tx: 3, ty: 3, edge: "E" }] });
+    const origin = resolveProbePoint(map, 3, 3);
+    const samples = sampleLanePath([
+      [4, 3],
+      [5, 3],
+    ]);
+    const sweep = evaluatePathSweep(map, origin, samples);
+    expect(sweep.blocked).toBe(0);
+    expect(formatProbeBlocker(evaluateCustomProbe(map, origin, at(4, 3)))).toBe("CLEAR LOS");
+  });
+
+  it("probe through SOLID WALL is blocked with edge metadata", () => {
+    const map = testMap({ collisionWalls: [{ tx: 3, ty: 3, edge: "E", kind: "SOLID" }] });
+    const origin = resolveProbePoint(map, 3, 3);
+    const hit = evaluateCustomProbe(map, origin, at(4, 3));
+    expect(hit.clear).toBe(false);
+    expect(hit.blocker).toBe("SOLID_WALL");
+    expect(hit.edge).toEqual({ tx: 3, ty: 3, edge: "E" });
+    expect(hit.point).toBeTruthy();
+    expect(formatProbeBlocker(hit)).toBe("BLOCKED · SOLID WALL · EDGE (3,3,E)");
+    expect(probeHitMatchesGameplay(map, origin, at(4, 3), hit)).toBe(true);
+    expect(hasLineOfSight(map, origin, at(4, 3))).toBe(false);
+  });
+
+  it("custom mode matches gameplay LOS beside and across a solid wall", () => {
+    const map = testMap({
+      highGround: [[3, 3]],
+      collisionWalls: [{ tx: 3, ty: 3, edge: "E", kind: "SOLID" }],
+    });
+    const high = resolveProbePoint(map, 3, 3);
+    const across = resolveProbePoint(map, 4, 3);
+    const beside = resolveProbePoint(map, 4, 2);
+    expect(evaluateCustomProbe(map, high, across).clear).toBe(false);
+    expect(evaluateCustomProbe(map, high, beside).clear).toBe(hasLineOfSight(map, high, beside));
+    expect(evaluateCustomProbe(map, at(3, 3, "GROUND"), at(4, 3, "HIGH")).clear).toBe(false);
+  });
+
+  it("path sweep reacts to adding and removing a SOLID WALL", () => {
+    let doc = createBlankMap({ displayName: "P", id: "probe-solid-sweep", width: 20, height: 13 });
+    doc = setLaneWaypoints(doc, "MAIN", [
+      [0, 4],
+      [8, 4],
+    ]);
+    const open = gameMapFromEditorDoc(doc);
+    const origin = resolveProbePoint(open, 4, 2);
+    const before = evaluatePathSweep(open, origin, sampleActiveLane(open, "MAIN"));
+    doc = placeCollisionWall(doc, 4, 3, "S", "SOLID");
+    const blocked = gameMapFromEditorDoc(doc);
+    const after = evaluatePathSweep(blocked, origin, sampleActiveLane(blocked, "MAIN"));
+    expect(after.blocked).toBeGreaterThan(before.blocked);
+    expect(stringifyExport(doc).includes("los-probe")).toBe(false);
   });
 });

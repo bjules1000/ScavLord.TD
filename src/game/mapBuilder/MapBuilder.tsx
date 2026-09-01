@@ -19,6 +19,8 @@ import {
   isAuthoringTool,
   isBridgeMode,
   isCollisionWallMode,
+  isMovementWallMode,
+  isSolidWallMode,
   isEraseBridgeMode,
   isEraseWallMode,
   isGameplayEraseMode,
@@ -31,6 +33,7 @@ import {
   isTerrainPaintMode,
   selectBridgeTool,
   selectCollisionWallTool,
+  selectSolidWallTool,
   selectEraseBridgeTool,
   selectEraseWallTool,
   selectGameplayEraser,
@@ -66,7 +69,13 @@ import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
 import { lockDoc } from "./document";
 import { bridgeAt, hasBridge, inferBridgeOrientation, toggleBridgeOrientation } from "./bridges";
-import { canonicalCollisionWall, hitCollisionWall } from "./walls";
+import {
+  canonicalCollisionWall,
+  collisionWallKind,
+  hitCollisionWall,
+  MOVEMENT_WALL_COLOR,
+  SOLID_WALL_COLOR,
+} from "./walls";
 
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
 const GHOST: Record<TerrainKind, string> = {
@@ -211,14 +220,19 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     } else if (hover && (tool.id === "zone" || tool.id === "gate")) {
       ghost = "#f0b400";
     }
-    let wallPreview: { tx: number; ty: number; edge: "N" | "E" | "S" | "W" } | null = null;
+    let wallPreview: { tx: number; ty: number; edge: "N" | "E" | "S" | "W"; kind: "MOVEMENT" | "SOLID" } | null = null;
     if (hover && (isCollisionWallMode(tool) || isEraseWallMode(tool)) && edge) {
-      ghost = "#3ef0e0";
+      const canonical = canonicalCollisionWall(hover.tx, hover.ty, edge, doc.width, doc.height);
+      const existing = canonical ? hitCollisionWall(doc, hover.tx, hover.ty, edge) : null;
+      const kind = isEraseWallMode(tool)
+        ? collisionWallKind(existing ?? { kind: "MOVEMENT" })
+        : isSolidWallMode(tool)
+          ? "SOLID"
+          : "MOVEMENT";
+      ghost = isEraseWallMode(tool) ? "#c23b2c" : kind === "SOLID" ? SOLID_WALL_COLOR : MOVEMENT_WALL_COLOR;
       ghostItem = isEraseWallMode(tool) ? "erase-wall" : "wall";
-      wallPreview = canonicalCollisionWall(hover.tx, hover.ty, edge, doc.width, doc.height);
-      invalid = isEraseWallMode(tool)
-        ? !wallPreview || !hitCollisionWall(doc, hover.tx, hover.ty, edge)
-        : !wallPreview;
+      wallPreview = canonical ? { ...canonical, kind } : null;
+      invalid = isEraseWallMode(tool) ? !existing : !wallPreview;
     }
     let bridgePreview: { tx: number; ty: number; orientation: "H" | "V" } | null = null;
     if (hover && (isBridgeMode(tool) || isEraseBridgeMode(tool))) {
@@ -662,14 +676,17 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               </Chip>
             </Section>
             <Section title="COLLISION / BARRIERS">
-              <Chip active={isCollisionWallMode(tool)} onClick={() => setTool(selectCollisionWallTool())}>
-                INVISIBLE WALL
+              <Chip active={isMovementWallMode(tool)} onClick={() => setTool(selectCollisionWallTool())}>
+                MOVEMENT WALL
+              </Chip>
+              <Chip active={isSolidWallMode(tool)} onClick={() => setTool(selectSolidWallTool())}>
+                SOLID WALL
               </Chip>
               <Chip active={isEraseWallMode(tool)} onClick={() => setTool(selectEraseWallTool())}>
                 ERASE WALL
               </Chip>
               <div className="w-full text-muted-foreground">
-                Hover a tile edge (N/E/S/W) and click. Shared neighbor edges are one wall. Leave gaps at slopes.
+                Hover a tile edge (N/E/S/W) and click. Shared neighbor edges are one wall. Cyan MOVEMENT WALL = cliffs (blocks walking, not sight). Magenta SOLID WALL = buildings (blocks walking and LOS). ERASE WALL removes the exact physical edge regardless of type. Leave gaps at slopes.
               </div>
             </Section>
             <Section title="OVERLAYS / STRUCTURES">
@@ -909,15 +926,21 @@ function Inspector({
     const tx = Number(parts[0]);
     const ty = Number(parts[1]);
     const edge = parts[2] ?? "";
+    const authored =
+      edge === "N" || edge === "E" || edge === "S" || edge === "W"
+        ? hitCollisionWall(doc, tx, ty, edge)
+        : null;
+    const kind = collisionWallKind(authored ?? { kind: "MOVEMENT" });
+    const sight = kind === "SOLID";
     return (
       <div>
-        INVISIBLE WALL
+        {kind === "SOLID" ? "SOLID WALL" : "MOVEMENT WALL"}
         <div>EDGE {edge}</div>
         <div>
           TILE X{tx} Y{ty}
         </div>
         <div>MOVEMENT BLOCKED</div>
-        <div>LOS BLOCKED</div>
+        <div>{sight ? "LOS BLOCKED" : "LOS CLEAR"}</div>
       </div>
     );
   }

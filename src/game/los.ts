@@ -1,24 +1,25 @@
 /**
  * Canonical line of sight. Operates on world pixels, not tile ids.
  *
- * Authored invisible walls block movement only. Sight is blocked by:
+ * Authored MOVEMENT walls block walking only. Sight is blocked by:
  *   MOUNTAIN occupancy
  *   intervening HIGH_GROUND ridge mass (not just leaving/entering the
  *   source or target plateau)
  *   suspended-bridge deck separation
+ *   SOLID authored walls
  * Decorative props do not block. Range is not applied here.
  */
 import { COLS, ROWS, TILE } from "./data";
 import { isMountain, type GameMap } from "./map";
 import type { TileEdge } from "./mapBuilder/schema";
-import { isSightBlockedAcrossEdge } from "./mapBuilder/walls";
+import { isSightBlockedAcrossEdge, sharedCanonicalWall } from "./mapBuilder/walls";
 import { elevatedSurfaceAt, entitySurface, hasSuspendedBridge } from "./surfaces";
 import type { SurfaceLevel } from "./types";
 
 /** Centralized grid/corner tolerance. World units. */
 export const LOS_EPS = 1e-9;
 
-export type LosBlocker = "MOUNTAIN" | "RIDGE" | "BRIDGE_DECK" | "LOS_WALL";
+export type LosBlocker = "MOUNTAIN" | "RIDGE" | "BRIDGE_DECK" | "SOLID_WALL";
 
 export interface WorldPos {
   x: number;
@@ -32,7 +33,7 @@ export interface SightPos extends WorldPos {
 export interface LosHit {
   clear: boolean;
   blocker: LosBlocker | null;
-  edge: { tx: number; ty: number } | null;
+  edge: { tx: number; ty: number; edge?: TileEdge } | null;
   point: WorldPos | null;
   along: number;
 }
@@ -320,13 +321,15 @@ export function firstTerrainObstruction(
 
 function firstHardLosWall(map: GameMap, x0: number, y0: number, x1: number, y1: number): LosHit | null {
   const dist = Math.hypot(x1 - x0, y1 - y0);
+  const walls = raidSightWalls(map);
   const crosses = crossedTileEdges(x0, y0, x1, y1);
   for (const cross of crosses) {
     if (!isRaidSightBlockedAcrossEdge(map, cross.from, cross.to)) continue;
+    const wall = sharedCanonicalWall(cross.from, cross.to, walls.width, walls.height);
     return {
       clear: false,
-      blocker: "LOS_WALL",
-      edge: { tx: cross.to[0], ty: cross.to[1] },
+      blocker: "SOLID_WALL",
+      edge: wall ? { tx: wall.tx, ty: wall.ty, edge: wall.edge } : { tx: cross.to[0], ty: cross.to[1] },
       point: { x: cross.x, y: cross.y },
       along: dist * cross.t,
     };
@@ -334,7 +337,7 @@ function firstHardLosWall(map: GameMap, x0: number, y0: number, x1: number, y1: 
   return null;
 }
 
-/** Full LOS: bridge deck, then terrain mass, then optional future hard LOS walls. */
+/** Full LOS: bridge deck, then terrain mass, then SOLID authored walls. */
 export function traceLineOfSight(map: GameMap, from: SightPos, to: SightPos): LosHit {
   const dist = Math.hypot(to.x - from.x, to.y - from.y);
   if (bridgeDeckSeparates(map, from, to)) {

@@ -15,7 +15,7 @@ export type EditorTool =
   | { id: "crate" }
   | { id: "checkpoint"; type: CheckpointPart["type"] }
   | { id: "edge"; type: "fence" | "wall" }
-  | { id: "collision-wall" }
+  | { id: "collision-wall"; kind?: "MOVEMENT" | "SOLID" }
   | { id: "erase-wall" }
   | { id: "bridge" }
   | { id: "erase-bridge" }
@@ -94,6 +94,14 @@ export function isCollisionWallMode(tool: EditorTool): boolean {
   return tool.id === "collision-wall";
 }
 
+export function isMovementWallMode(tool: EditorTool): boolean {
+  return tool.id === "collision-wall" && (tool.kind ?? "MOVEMENT") !== "SOLID";
+}
+
+export function isSolidWallMode(tool: EditorTool): boolean {
+  return tool.id === "collision-wall" && tool.kind === "SOLID";
+}
+
 export function isEraseWallMode(tool: EditorTool): boolean {
   return tool.id === "erase-wall";
 }
@@ -107,7 +115,11 @@ export function isEraseBridgeMode(tool: EditorTool): boolean {
 }
 
 export function selectCollisionWallTool(): EditorTool {
-  return { id: "collision-wall" };
+  return { id: "collision-wall", kind: "MOVEMENT" };
+}
+
+export function selectSolidWallTool(): EditorTool {
+  return { id: "collision-wall", kind: "SOLID" };
 }
 
 export function selectEraseWallTool(): EditorTool {

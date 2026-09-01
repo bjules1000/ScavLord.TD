@@ -83,7 +83,12 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     ty: c.ty,
   }));
   if (def.collisionWalls?.length) {
-    doc.collisionWalls = def.collisionWalls.map((w) => ({ tx: w.tx, ty: w.ty, edge: w.edge }));
+    doc.collisionWalls = def.collisionWalls.map((w) => ({
+      tx: w.tx,
+      ty: w.ty,
+      edge: w.edge,
+      kind: w.kind === "SOLID" ? "SOLID" : "MOVEMENT",
+    }));
   }
   if (def.bridges?.length) {
     doc.bridges = def.bridges.map((b) => ({ tx: b.tx, ty: b.ty, orientation: b.orientation }));
@@ -146,9 +151,12 @@ export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
     notes.push({ code: "EDGES", message: "Authored edge objects exist; main cover is tile-centered." });
   }
   if (doc.collisionWalls.length) {
+    const solid = doc.collisionWalls.some((w) => w.kind === "SOLID");
     notes.push({
       code: "WALLS",
-      message: "Invisible collision walls exist; production movement/LOS does not consume them yet.",
+      message: solid
+        ? "Authored walls exist: MOVEMENT blocks walking only; SOLID blocks walking and LOS."
+        : "Invisible movement walls exist; they block walking, not LOS.",
     });
   }
   if (doc.bridges.length) {
@@ -209,7 +217,11 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
   if (doc.collisionWalls.length) {
     def.collisionWalls = [...doc.collisionWalls]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.edge.localeCompare(b.edge))
-      .map((w) => ({ tx: w.tx, ty: w.ty, edge: w.edge }));
+      .map((w) =>
+        w.kind === "SOLID"
+          ? { tx: w.tx, ty: w.ty, edge: w.edge, kind: "SOLID" as const }
+          : { tx: w.tx, ty: w.ty, edge: w.edge },
+      );
   }
   if (doc.bridges.length) {
     def.bridges = [...doc.bridges]

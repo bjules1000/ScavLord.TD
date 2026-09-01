@@ -313,7 +313,11 @@ export function formatProbeBlocker(hit: LosHit): string {
   if (hit.blocker === "MOUNTAIN") return `BLOCKED · MOUNTAIN${coord}`;
   if (hit.blocker === "RIDGE") return `BLOCKED · HIGH_GROUND MASS${coord}`;
   if (hit.blocker === "BRIDGE_DECK") return "BLOCKED · BRIDGE DECK";
-  if (hit.blocker === "LOS_WALL") return `BLOCKED · LOS WALL${coord}`;
+  if (hit.blocker === "SOLID_WALL") {
+    const e = hit.edge;
+    if (e?.edge) return `BLOCKED · SOLID WALL · EDGE (${e.tx},${e.ty},${e.edge})`;
+    return `BLOCKED · SOLID WALL${coord}`;
+  }
   return "BLOCKED";
 }
 

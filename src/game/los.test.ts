@@ -526,3 +526,114 @@ describe("combat integration with LOS", () => {
     expect(clip.x).toBeLessThan(to.x);
   });
 });
+
+describe("solid authored walls vs LOS", () => {
+  it("MOVEMENT WALL blocks movement and does not block LOS", () => {
+    const map = testMap({ collisionWalls: [{ tx: 3, ty: 3, edge: "E" }] });
+    expect(isRaidMovementBlockedAcrossEdge(map, [3, 3], [4, 3])).toBe(true);
+    expect(hasLineOfSight(map, at(3, 3), at(4, 3))).toBe(true);
+  });
+
+  it("SOLID WALL blocks movement and LOS both ways", () => {
+    const map = testMap({ collisionWalls: [{ tx: 3, ty: 3, edge: "E", kind: "SOLID" }] });
+    expect(isRaidMovementBlockedAcrossEdge(map, [3, 3], [4, 3])).toBe(true);
+    expect(hasLineOfSight(map, at(3, 3), at(4, 3))).toBe(false);
+    expect(hasLineOfSight(map, at(4, 3), at(3, 3))).toBe(false);
+    expect(traceLineOfSight(map, at(3, 3), at(4, 3)).blocker).toBe("SOLID_WALL");
+    expect(traceLineOfSight(map, at(3, 3), at(4, 3)).edge).toEqual({ tx: 3, ty: 3, edge: "E" });
+    expect(traceLineOfSight(map, at(3, 3), at(4, 3)).point).toBeTruthy();
+  });
+
+  it("ray beside a SOLID WALL remains clear", () => {
+    const map = testMap({ collisionWalls: [{ tx: 3, ty: 3, edge: "E", kind: "SOLID" }] });
+    expect(hasLineOfSight(map, at(3, 2), at(4, 2))).toBe(true);
+  });
+
+  it("HIGH→LOW, HIGH→HIGH, and LOW→HIGH across SOLID WALL are blocked", () => {
+    const map = testMap({
+      highGround: [
+        [3, 3],
+        [4, 3],
+      ],
+      collisionWalls: [{ tx: 3, ty: 3, edge: "E", kind: "SOLID" }],
+    });
+    expect(hasLineOfSight(map, at(3, 3, "HIGH"), at(4, 3, "GROUND"))).toBe(false);
+    expect(hasLineOfSight(map, at(3, 3, "HIGH"), at(4, 3, "HIGH"))).toBe(false);
+    expect(hasLineOfSight(map, at(3, 3, "GROUND"), at(4, 3, "HIGH"))).toBe(false);
+  });
+
+  it("exact-corner SOLID WALL interaction is deterministic", () => {
+    const map = testMap({
+      collisionWalls: [
+        { tx: 2, ty: 2, edge: "E", kind: "SOLID" },
+        { tx: 2, ty: 2, edge: "S", kind: "SOLID" },
+        { tx: 3, ty: 2, edge: "S", kind: "SOLID" },
+        { tx: 2, ty: 3, edge: "E", kind: "SOLID" },
+      ],
+    });
+    const a = at(2, 2);
+    const d = at(3, 3);
+    expect(hasLineOfSight(map, a, d)).toBe(false);
+    expect(hasLineOfSight(map, d, a)).toBe(false);
+    expect(traceLineOfSight(map, a, d).blocker).toBe("SOLID_WALL");
+    expect(traceLineOfSight(map, d, a).blocker).toBe("SOLID_WALL");
+  });
+
+  it("automatic target behind SOLID WALL is ignored", () => {
+    const map = testMap({ collisionWalls: [{ tx: 3, ty: 2, edge: "E", kind: "SOLID" }] });
+    const origin = tileCenterWorld(2, 2);
+    const enemies = [foe({ id: 1, x: tileCenterWorld(5, 2).x, y: tileCenterWorld(5, 2).y, pathProgress: 1 })];
+    const visible = (e: Targetable) =>
+      hasLineOfSight(map, { ...origin, surface: "GROUND" }, { x: e.x, y: e.y, surface: "GROUND" });
+    expect(selectTarget("FIRST", origin, 400, enemies, null, visible)).toBeNull();
+  });
+
+  it("MANUAL target behind SOLID WALL holds fire and keeps lock", () => {
+    const map = testMap({ collisionWalls: [{ tx: 3, ty: 2, edge: "E", kind: "SOLID" }] });
+    const origin = tileCenterWorld(2, 2);
+    const enemies = [foe({ id: 2, x: tileCenterWorld(5, 2).x, y: tileCenterWorld(5, 2).y, hp: 40, pathProgress: 1 })];
+    const blocked = (e: Targetable) =>
+      hasLineOfSight(map, { ...origin, surface: "GROUND" }, { x: e.x, y: e.y, surface: "GROUND" });
+    expect(pickManualTarget(2, origin, 400, enemies)?.id).toBe(2);
+    expect(selectTarget("MANUAL", origin, 400, enemies, 2, blocked)).toBeNull();
+    expect(pickManualTarget(2, origin, 400, enemies)?.id).toBe(2);
+    const open = testMap();
+    const clear = (e: Targetable) =>
+      hasLineOfSight(open, { ...origin, surface: "GROUND" }, { x: e.x, y: e.y, surface: "GROUND" });
+    expect(selectTarget("MANUAL", origin, 400, enemies, 2, clear)?.id).toBe(2);
+  });
+
+  it("kills still settle once with SOLID WALL maps", () => {
+    const e = { hp: 3, leaked: false, counted: false };
+    applyHit(e, coveredDamage(10, 0.7), 0, 0);
+    expect(e.hp).toBeLessThanOrEqual(0);
+  });
+
+  it("barricade cover is unchanged beside a SOLID WALL", () => {
+    const map = testMap({ collisionWalls: [{ tx: 6, ty: 4, edge: "E", kind: "SOLID" }] });
+    expect(hasLineOfSight(map, at(5, 3), at(5, 4))).toBe(true);
+    const prot = incomingCoverProtection([], [bag("N")], 5, 4, at(5, 3).x, at(5, 3).y, TILE).prot;
+    expect(prot).toBeGreaterThan(0);
+  });
+
+  it("pathfinding still honors SOLID and MOVEMENT walls", () => {
+    const map = testMap({
+      collisionWalls: [
+        { tx: 4, ty: 4, edge: "E" },
+        { tx: 6, ty: 4, edge: "E", kind: "SOLID" },
+      ],
+    });
+    expect(isRaidMovementBlockedAcrossEdge(map, [4, 4], [5, 4])).toBe(true);
+    expect(isRaidMovementBlockedAcrossEdge(map, [6, 4], [7, 4])).toBe(true);
+    const path = findOperatorPath(map, { tx: 4, ty: 3, surface: "GROUND" }, { tx: 7, ty: 3, surface: "GROUND" });
+    expect(path).not.toBeNull();
+  });
+
+  it("Pine Cut movement-wall LOS behavior is unchanged", () => {
+    const map = buildMap(MAP_BY_ID["woods"]!);
+    expect(MAP_BY_ID["woods"]!.collisionWalls).toHaveLength(91);
+    expect(hasLineOfSight(map, at(5, 4, "HIGH"), at(7, 4, "GROUND"))).toBe(true);
+    expect(isRaidMovementBlockedAcrossEdge(map, [5, 4], [6, 4])).toBe(true);
+    expect(isRaidSightBlockedAcrossEdge(map, [5, 4], [6, 4])).toBe(false);
+  });
+});

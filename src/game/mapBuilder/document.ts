@@ -152,9 +152,15 @@ export function unlockRevision(doc: EditorMapDoc): EditorMapDoc {
 
 /** Fill overlay fields missing from older persisted drafts. */
 export function normalizeEditorDoc(doc: EditorMapDoc): EditorMapDoc {
+  const walls = Array.isArray(doc.collisionWalls) ? doc.collisionWalls : [];
   return {
     ...doc,
-    collisionWalls: Array.isArray(doc.collisionWalls) ? doc.collisionWalls : [],
+    collisionWalls: walls.map((w) => ({
+      tx: w.tx,
+      ty: w.ty,
+      edge: w.edge,
+      kind: w.kind === "SOLID" ? "SOLID" : "MOVEMENT",
+    })),
     bridges: Array.isArray(doc.bridges) ? doc.bridges : [],
   };
 }

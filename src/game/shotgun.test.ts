@@ -252,6 +252,86 @@ describe("shotgun obstruction", () => {
     expect(behind.hp).toBe(100);
   });
 
+  it("a pellet crossing a SOLID WALL stops and cannot hit behind it", () => {
+    const solid = buildMap({
+      id: "sg-solid",
+      name: "SG",
+      threat: 1,
+      threatLabel: "T",
+      desc: "",
+      hpMult: 1,
+      lootMult: 1,
+      geo: { x: 0, y: 0 },
+      sector: "T",
+      path: [[0, 0], [1, 0]],
+      props: [],
+      checkpoint: [],
+      cover: [],
+      crates: [],
+      palette: pal,
+      collisionWalls: [{ tx: 3, ty: 2, edge: "E", kind: "SOLID" }],
+    });
+    const behind = body(1, 5.5 * TILE, 2.5 * TILE, 100);
+    const before = body(2, 3.2 * TILE, 2.5 * TILE, 100);
+    resolveShotgunBlast({
+      origin: { x: ox, y: oy },
+      aim: 0,
+      range: 200,
+      hitRadius: 12,
+      pelletCount: 1,
+      spread: 0,
+      primaryDamage: 7,
+      secondaryMult: 0.5,
+      maxHits: 2,
+      enemies: [behind, before],
+      armorOf: () => 0,
+      pen: 0,
+      maxAlongOf: (angle) =>
+        wallAlongLimit(solid, { x: ox, y: oy }, ox + Math.cos(angle) * 200, oy + Math.sin(angle) * 200),
+    });
+    expect(before.hp).toBeLessThan(100);
+    expect(behind.hp).toBe(100);
+  });
+
+  it("a pellet whose ray misses a SOLID WALL still proceeds", () => {
+    const solid = buildMap({
+      id: "sg-solid-miss",
+      name: "SG",
+      threat: 1,
+      threatLabel: "T",
+      desc: "",
+      hpMult: 1,
+      lootMult: 1,
+      geo: { x: 0, y: 0 },
+      sector: "T",
+      path: [[0, 0], [1, 0]],
+      props: [],
+      checkpoint: [],
+      cover: [],
+      crates: [],
+      palette: pal,
+      collisionWalls: [{ tx: 3, ty: 2, edge: "E", kind: "SOLID" }],
+    });
+    const side = body(1, ox, 0.5 * TILE, 100);
+    resolveShotgunBlast({
+      origin: { x: ox, y: oy },
+      aim: -Math.PI / 2,
+      range: 200,
+      hitRadius: 12,
+      pelletCount: 1,
+      spread: 0,
+      primaryDamage: 7,
+      secondaryMult: 0.5,
+      maxHits: 2,
+      enemies: [side],
+      armorOf: () => 0,
+      pen: 0,
+      maxAlongOf: (angle) =>
+        wallAlongLimit(solid, { x: ox, y: oy }, ox + Math.cos(angle) * 200, oy + Math.sin(angle) * 200),
+    });
+    expect(side.hp).toBeLessThan(100);
+  });
+
   it("a pellet whose ray misses the wall still proceeds", () => {
     const side = body(1, ox, 0.5 * TILE, 100);
     resolveShotgunBlast({

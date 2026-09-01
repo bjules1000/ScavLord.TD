@@ -1,5 +1,5 @@
 /**
- * Invisible collision / LOS walls (cliff blockers).
+ * Authored tile-edge barriers.
  *
  * Walls occupy a TILE EDGE, never a filled cell. Shared neighbors are one
  * physical boundary:
@@ -8,16 +8,46 @@
  * Outer map edges stay on the border tile (N of row 0, W of col 0, E of last
  * col, S of last row). No neighbor tile is required for those.
  *
- * Movement and sight use distinct helpers:
- *   isMovementBlockedAcrossEdge — authored cliff/invisible walls
- *   isSightBlockedAcrossEdge — reserved for future hard LOS walls
- * Cliff-edge collision walls are movement-only. They do not block sight.
+ * Two kinds share that identity:
+ *   MOVEMENT — cliff / drop-off. Blocks walking. Does not block sight.
+ *   SOLID    — building / hard wall. Blocks walking and sight.
+ *
  * Slopes stay open only where the author left a gap — walls are never
  * inferred from HIGH GROUND.
  *
  * Raid presentation never draws this overlay. Map Builder WALLS layer only.
  */
-import type { CollisionWall, EditorMapDoc, TileEdge } from "./schema";
+import {
+  DEFAULT_COLLISION_WALL_KIND,
+  isCollisionWallKind,
+  type CollisionWall,
+  type CollisionWallKind,
+  type EditorMapDoc,
+  type TileEdge,
+} from "./schema";
+
+export const MOVEMENT_WALL_COLOR = "#3ef0e0";
+export const SOLID_WALL_COLOR = "#e84ad0";
+
+export type AuthoredWallMap = {
+  width: number;
+  height: number;
+  collisionWalls: Array<{ tx: number; ty: number; edge: TileEdge; kind?: CollisionWallKind | null }>;
+};
+
+export type { CollisionWall, CollisionWallKind };
+
+export function collisionWallKind(wall: { kind?: CollisionWallKind | null }): CollisionWallKind {
+  return wall.kind === "SOLID" ? "SOLID" : DEFAULT_COLLISION_WALL_KIND;
+}
+
+export function withCollisionWallKind(
+  wall: { tx: number; ty: number; edge: TileEdge; kind?: CollisionWallKind | null },
+  kind?: CollisionWallKind | null,
+): CollisionWall {
+  const resolved = isCollisionWallKind(kind) ? kind : collisionWallKind(wall);
+  return { tx: wall.tx, ty: wall.ty, edge: wall.edge, kind: resolved };
+}
 
 export function oppositeEdge(edge: TileEdge): TileEdge {
   if (edge === "N") return "S";
@@ -26,15 +56,19 @@ export function oppositeEdge(edge: TileEdge): TileEdge {
   return "E";
 }
 
-export function collisionWallKey(wall: CollisionWall): string {
+export function collisionWallKey(wall: { tx: number; ty: number; edge: TileEdge }): string {
   return `${wall.tx},${wall.ty},${wall.edge}`;
 }
 
-export function collisionWallId(wall: CollisionWall): string {
+export function collisionWallId(wall: { tx: number; ty: number; edge: TileEdge }): string {
   return `wall:${collisionWallKey(wall)}`;
 }
 
-export function parseCollisionWallId(id: string): CollisionWall | null {
+export function collisionWallColor(wall: { kind?: CollisionWallKind | null }): string {
+  return collisionWallKind(wall) === "SOLID" ? SOLID_WALL_COLOR : MOVEMENT_WALL_COLOR;
+}
+
+export function parseCollisionWallId(id: string): { tx: number; ty: number; edge: TileEdge } | null {
   if (!id.startsWith("wall:")) return null;
   const parts = id.slice(5).split(",");
   const tx = Number(parts[0]);
@@ -55,7 +89,7 @@ export function canonicalCollisionWall(
   edge: TileEdge,
   width: number,
   height: number,
-): CollisionWall | null {
+): { tx: number; ty: number; edge: TileEdge } | null {
   if (tx < 0 || ty < 0 || tx >= width || ty >= height) return null;
   if (edge === "W") {
     if (tx === 0) return { tx: 0, ty, edge: "W" };
@@ -69,9 +103,20 @@ export function canonicalCollisionWall(
   return { tx, ty, edge: "S" };
 }
 
-export function hasCollisionWall(walls: CollisionWall[], wall: CollisionWall): boolean {
+export function findCollisionWall(
+  walls: Array<{ tx: number; ty: number; edge: TileEdge; kind?: CollisionWallKind | null }>,
+  wall: { tx: number; ty: number; edge: TileEdge },
+): CollisionWall | null {
   const key = collisionWallKey(wall);
-  return walls.some((w) => collisionWallKey(w) === key);
+  const hit = walls.find((w) => collisionWallKey(w) === key);
+  return hit ? withCollisionWallKind(hit) : null;
+}
+
+export function hasCollisionWall(
+  walls: Array<{ tx: number; ty: number; edge: TileEdge }>,
+  wall: { tx: number; ty: number; edge: TileEdge },
+): boolean {
+  return findCollisionWall(walls, wall) !== null;
 }
 
 export function sharedCanonicalWall(
@@ -79,7 +124,7 @@ export function sharedCanonicalWall(
   to: [number, number],
   width: number,
   height: number,
-): CollisionWall | null {
+): { tx: number; ty: number; edge: TileEdge } | null {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
   if (Math.abs(dx) + Math.abs(dy) !== 1) return null;
@@ -89,66 +134,78 @@ export function sharedCanonicalWall(
   return canonicalCollisionWall(to[0], to[1], oppositeEdge(edge), width, height);
 }
 
-/** Future movement: true when a wall occupies the shared edge between orthogonal neighbors. */
-export function isMovementBlockedAcrossEdge(
-  map: Pick<EditorMapDoc, "width" | "height" | "collisionWalls">,
-  from: [number, number],
-  to: [number, number],
-): boolean {
+function wallAcross(map: AuthoredWallMap, from: [number, number], to: [number, number]): CollisionWall | null {
   const wall = sharedCanonicalWall(from, to, map.width, map.height);
-  if (!wall) return false;
-  return hasCollisionWall(map.collisionWalls, wall);
+  if (!wall) return null;
+  return findCollisionWall(map.collisionWalls, wall);
 }
 
-/**
- * Sight across an authored cliff/movement wall is not blocked.
- * Future explicit LOS walls would be consulted here.
- */
-export function isSightBlockedAcrossEdge(
-  _map: Pick<EditorMapDoc, "width" | "height" | "collisionWalls">,
-  _from: [number, number],
-  _to: [number, number],
-): boolean {
-  return false;
+/** True when any authored wall occupies the shared edge between orthogonal neighbors. */
+export function isMovementBlockedAcrossEdge(map: AuthoredWallMap, from: [number, number], to: [number, number]): boolean {
+  return wallAcross(map, from, to) !== null;
+}
+
+/** True only for SOLID walls. MOVEMENT (cliff) walls do not block sight. */
+export function isSightBlockedAcrossEdge(map: AuthoredWallMap, from: [number, number], to: [number, number]): boolean {
+  const wall = wallAcross(map, from, to);
+  return wall ? collisionWallBlocksSight(wall) : false;
 }
 
 export function collisionWallBlocksMovement(_wall: CollisionWall): boolean {
   return true;
 }
 
-/** Authored cliff walls are movement-only. */
-export function collisionWallBlocksSight(_wall: CollisionWall): boolean {
-  return false;
+export function collisionWallBlocksSight(wall: CollisionWall): boolean {
+  return collisionWallKind(wall) === "SOLID";
 }
 
 export function sortCollisionWalls(walls: CollisionWall[]): CollisionWall[] {
-  return [...walls].sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.edge.localeCompare(b.edge));
+  return [...walls].sort(
+    (a, b) => a.ty - b.ty || a.tx - b.tx || a.edge.localeCompare(b.edge) || collisionWallKind(a).localeCompare(collisionWallKind(b)),
+  );
 }
 
 export function normalizeCollisionWalls(
-  walls: CollisionWall[],
+  walls: Array<{ tx: number; ty: number; edge: TileEdge; kind?: CollisionWallKind | null }>,
   width: number,
   height: number,
 ): CollisionWall[] {
   const seen = new Set<string>();
   const out: CollisionWall[] = [];
   for (const raw of walls) {
-    const wall = canonicalCollisionWall(raw.tx, raw.ty, raw.edge, width, height);
-    if (!wall) continue;
-    const key = collisionWallKey(wall);
+    const edge = canonicalCollisionWall(raw.tx, raw.ty, raw.edge, width, height);
+    if (!edge) continue;
+    const key = collisionWallKey(edge);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(wall);
+    out.push(withCollisionWallKind(edge, isCollisionWallKind(raw.kind) ? raw.kind : collisionWallKind(raw)));
   }
   return sortCollisionWalls(out);
 }
 
-export function placeCollisionWall(doc: EditorMapDoc, tx: number, ty: number, edge: TileEdge): EditorMapDoc {
+export function placeCollisionWall(
+  doc: EditorMapDoc,
+  tx: number,
+  ty: number,
+  edge: TileEdge,
+  kind: CollisionWallKind = DEFAULT_COLLISION_WALL_KIND,
+): EditorMapDoc {
   if (doc.status === "locked") return doc;
-  const wall = canonicalCollisionWall(tx, ty, edge, doc.width, doc.height);
-  if (!wall) return doc;
-  if (hasCollisionWall(doc.collisionWalls, wall)) return doc;
-  return { ...doc, collisionWalls: sortCollisionWalls([...doc.collisionWalls, wall]) };
+  const canonical = canonicalCollisionWall(tx, ty, edge, doc.width, doc.height);
+  if (!canonical) return doc;
+  const next = withCollisionWallKind(canonical, kind);
+  const existing = findCollisionWall(doc.collisionWalls, canonical);
+  if (existing) {
+    if (collisionWallKind(existing) === kind) return doc;
+    const key = collisionWallKey(canonical);
+    return {
+      ...doc,
+      collisionWalls: sortCollisionWalls(
+        doc.collisionWalls.map((w) => (collisionWallKey(w) === key ? next : withCollisionWallKind(w))),
+      ),
+    };
+  }
+  return { ...doc, collisionWalls: sortCollisionWalls([...doc.collisionWalls.map((w) => withCollisionWallKind(w)), next]) };
 }
 
 export function eraseCollisionWall(doc: EditorMapDoc, tx: number, ty: number, edge: TileEdge): EditorMapDoc {
@@ -165,15 +222,10 @@ export function eraseCollisionWallById(doc: EditorMapDoc, id: string): EditorMap
   return eraseCollisionWall(doc, wall.tx, wall.ty, wall.edge);
 }
 
-export function hitCollisionWall(
-  doc: Pick<EditorMapDoc, "width" | "height" | "collisionWalls">,
-  tx: number,
-  ty: number,
-  edge: TileEdge,
-): CollisionWall | null {
+export function hitCollisionWall(doc: AuthoredWallMap, tx: number, ty: number, edge: TileEdge): CollisionWall | null {
   const wall = canonicalCollisionWall(tx, ty, edge, doc.width, doc.height);
-  if (!wall || !hasCollisionWall(doc.collisionWalls, wall)) return null;
-  return wall;
+  if (!wall) return null;
+  return findCollisionWall(doc.collisionWalls, wall);
 }
 
 export function visibleCollisionWalls(
@@ -181,7 +233,7 @@ export function visibleCollisionWalls(
   layers: { walls: boolean },
 ): CollisionWall[] {
   if (!layers.walls) return [];
-  return doc.collisionWalls;
+  return doc.collisionWalls.map((w) => withCollisionWallKind(w));
 }
 
 /** Dev overlay only. Production raids never paint these lines. */

@@ -6,7 +6,7 @@ import { inBounds, terrainAt } from "./document";
 import { laneLabelShort, pathCells } from "./pathing";
 import { EDITOR_GUTTER, canvasPixelSize, hitLanePort, overlayPathCells, portOutsideCell } from "./ports";
 import type { BoundaryPort, BridgeOrientation, CollisionWall, EditorMapDoc, TerrainKind, TileEdge } from "./schema";
-import { collisionWallId, hitCollisionWall, wallEdgeNearCursor } from "./walls";
+import { collisionWallColor, collisionWallId, hitCollisionWall, wallEdgeNearCursor } from "./walls";
 
 export interface LayerFlags {
   terrain: boolean;
@@ -303,7 +303,7 @@ export function drawEditorMap(
   }
 
   if (layers.walls) {
-    for (const wall of doc.collisionWalls) drawCollisionWall(ctx, wall, "#3ef0e0", 1);
+    for (const wall of doc.collisionWalls) drawCollisionWall(ctx, wall, collisionWallColor(wall), 1);
   }
 
   if (hover) {
@@ -323,7 +323,12 @@ export function drawEditorMap(
     } else if (hover.ghostItem === "wall" || hover.ghostItem === "erase-wall") {
       const wall = hover.wallPreview;
       if (wall) {
-        drawCollisionWall(ctx, wall, hover.invalid ? "#c23b2c" : "#3ef0e0", hover.ghostItem === "erase-wall" ? 1 : 0.5);
+        drawCollisionWall(
+          ctx,
+          wall,
+          hover.ghostItem === "erase-wall" ? "#c23b2c" : collisionWallColor(wall),
+          hover.ghostItem === "erase-wall" ? 1 : 0.5,
+        );
       }
     } else if (hover.ghostItem === "bridge" || hover.ghostItem === "erase-bridge") {
       const preview = hover.bridgePreview ?? { tx: hover.tx, ty: hover.ty, orientation: "H" as const };
