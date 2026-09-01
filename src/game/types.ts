@@ -60,6 +60,8 @@ export interface Tower {
   hurt: number;
   /** true for the player's own operator — dies once, run over */
   pmc?: boolean;
+  /** Persistent crew operator deployed from hideout. */
+  operatorId?: string;
   level?: number;
   xp?: number;
   /** armor id from gear.ts ARMORS */
