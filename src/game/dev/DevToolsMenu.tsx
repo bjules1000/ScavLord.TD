@@ -34,7 +34,7 @@ export default function DevToolsMenu({
         <span className={open ? "text-primary" : "text-muted-foreground"}>☰</span>
       </button>
       {open && (
-        <div className="absolute right-0 z-30 mt-1 min-w-[140px] border-2 border-border bg-background p-1 shadow-[3px_3px_0_0_oklch(0_0_0_/_0.6)]">
+        <div className="absolute right-0 z-50 mt-1 max-h-[70vh] min-w-[160px] overflow-auto border-2 border-border bg-background p-1 shadow-[3px_3px_0_0_oklch(0_0_0_/_0.6)]">
           <div className="px-1 pb-1 font-display text-[9px] text-primary">DEV TOOLS</div>
           {DEV_TOOL_ENTRIES.map((entry) => (
             <button

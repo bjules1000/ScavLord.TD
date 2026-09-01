@@ -185,6 +185,14 @@ describe("TEST QUEST", () => {
     expect(requestTestQuest(false, true, "debut")).toEqual({ ok: false, reason: "DEV TOOLS DISABLED" });
     expect(requestTestQuest(true, false, "debut")).toEqual({ ok: false, reason: "NOT_IN_RAID" });
   });
+
+  it("test snapshot is referentially stable until progress changes", () => {
+    const a = getQuestTestState();
+    const b = getQuestTestState();
+    expect(a).toBe(b);
+    requestTestQuest(true, true, "debut");
+    expect(getQuestTestState()).not.toBe(a);
+  });
 });
 
 describe("export", () => {

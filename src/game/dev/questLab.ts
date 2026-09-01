@@ -387,10 +387,7 @@ function emitTest(): void {
 }
 
 export function getQuestTestState(): QuestTestState {
-  return {
-    activeId: testState.activeId,
-    events: Object.fromEntries(Object.entries(testState.events).map(([k, v]) => [k, [...v]])),
-  };
+  return testState;
 }
 
 export function subscribeQuestTest(fn: () => void): () => void {
