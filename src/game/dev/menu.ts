@@ -1,4 +1,4 @@
-export type DevToolId = "ui-editor" | "map-builder" | "balance-lab" | "economy-lab";
+export type DevToolId = "ui-editor" | "map-builder" | "balance-lab" | "economy-lab" | "wave-lab";
 
 export interface DevToolEntry {
   id: DevToolId;
@@ -10,6 +10,7 @@ export const DEV_TOOL_ENTRIES: readonly DevToolEntry[] = [
   { id: "map-builder", label: "Map Builder" },
   { id: "balance-lab", label: "Balance Lab" },
   { id: "economy-lab", label: "Economy Lab" },
+  { id: "wave-lab", label: "Wave Lab" },
 ];
 
 export function devToolEntries(enabled: boolean): readonly DevToolEntry[] {

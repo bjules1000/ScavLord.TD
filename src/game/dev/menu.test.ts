@@ -28,4 +28,8 @@ describe("DEV tools menu", () => {
   it("menu exposes Economy Lab", () => {
     expect(devToolEntries(true).some((e) => e.id === "economy-lab" && e.label === "Economy Lab")).toBe(true);
   });
+
+  it("menu exposes Wave Lab", () => {
+    expect(devToolEntries(true).some((e) => e.id === "wave-lab" && e.label === "Wave Lab")).toBe(true);
+  });
 });

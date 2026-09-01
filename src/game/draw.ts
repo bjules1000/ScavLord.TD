@@ -4,7 +4,7 @@ import { extractMarkerCenter, type GameMap } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
 import type { Enemy, Tower } from "./types";
 import { operatorWorldPos } from "./movement";
-import { ENEMIES } from "./data";
+import { effectiveEnemy } from "./dev/waveLabCore";
 import { drawGear, drawSprite, floorImage } from "./sprites";
 import type { GearFrameName } from "./sprites";
 import type { WeaponClass } from "./gear";
@@ -677,7 +677,7 @@ export function drawTower(ctx: CanvasRenderingContext2D, t: Tower, time: number)
 
 
 export function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy) {
-  const def = ENEMIES[e.kind];
+  const def = effectiveEnemy(e.kind);
   const x = Math.round(e.x);
   const y = Math.round(e.y);
   const s = def.size;

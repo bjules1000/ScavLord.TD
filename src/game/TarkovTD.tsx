@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { BOARD_GUTTER, COLS, ENEMIES, ROWS, SCALE, TILE, buildWave, waveScale } from "./data";
+import { BOARD_GUTTER, COLS, ROWS, SCALE, TILE, waveScale } from "./data";
 import {
   MAP_DEFS,
   MAP_BY_ID,
@@ -16,7 +16,8 @@ import {
   type CoverPiece,
   type GameMap,
 } from "./map";
-import { assignSpawnLane, lanePathProgress } from "./lanes";
+import { lanePathProgress } from "./lanes";
+import { scheduleWave, spawnedEnemyHp, type WaveSpawnEvent } from "./waves";
 import {
   canPlaceOperator,
   enemyLaneSurface,
@@ -186,6 +187,12 @@ import {
 } from "./dev/balance";
 import BalanceLab from "./dev/BalanceLab";
 import EconomyLab from "./dev/EconomyLab";
+import WaveLab from "./dev/WaveLab";
+import {
+  effectiveEnemy,
+  effectiveWave,
+  requestTestWave,
+} from "./dev/waveLabCore";
 import {
   effectiveItemDef,
   effectiveLootMult,
@@ -221,11 +228,7 @@ const CRATE_TIME = 10; // seconds an operator must hold the crate
 
 type Phase = "hideout" | "prep" | "combat" | "loot" | "dead" | "extracted";
 
-interface SpawnEvent {
-  at: number;
-  kind: EnemyKind;
-  lane: number;
-}
+type SpawnEvent = WaveSpawnEvent;
 interface Drop {
   id: number;
   tx: number;
@@ -457,6 +460,7 @@ export default function TarkovTD() {
   const [devPickerOpen, setDevPickerOpen] = useState(false);
   const [balanceLabOpen, setBalanceLabOpen] = useState(false);
   const [economyLabOpen, setEconomyLabOpen] = useState(false);
+  const [waveLabOpen, setWaveLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
@@ -872,12 +876,14 @@ export default function TarkovTD() {
     rerender();
   }, [pushLog, rerender]);
 
-  const setLabs = useCallback((which: "balance" | "economy" | "none") => {
+  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "none") => {
     const balance = which === "balance";
     const economy = which === "economy";
+    const wave = which === "wave";
     setBalanceLabOpen(balance);
     setEconomyLabOpen(economy);
-    labOpenRef.current = balance || economy;
+    setWaveLabOpen(wave);
+    labOpenRef.current = balance || economy || wave;
   }, []);
 
   const onDevTool = useCallback(
@@ -893,6 +899,10 @@ export default function TarkovTD() {
       }
       if (id === "economy-lab") {
         setLabs("economy");
+        return;
+      }
+      if (id === "wave-lab") {
+        setLabs("wave");
         return;
       }
       setLabs("balance");
@@ -1038,14 +1048,14 @@ export default function TarkovTD() {
     };
 
     const hurtEnemy = (e: Enemy, amount: number, pen: number) => {
-      const def = ENEMIES[e.kind];
+      const def = effectiveEnemy(e.kind);
       const dealt = applyHit(e, amount, def.armor, pen);
       e.hitFlash = 0.07;
       return dealt;
     };
 
     const killEnemy = (e: Enemy, s: GameState) => {
-      const def = ENEMIES[e.kind];
+      const def = effectiveEnemy(e.kind);
       const book: KillBook = s;
       const xp = creditKillBook(e.kind, def.bounty, book);
       const money = def.bounty;
@@ -1103,9 +1113,9 @@ export default function TarkovTD() {
 
       while (s.queue.length && s.queue[0]!.at <= s.clock) {
         const ev = s.queue.shift()!;
-        const def = ENEMIES[ev.kind];
-        const sc = waveScale(s.wave);
-        const hp = Math.round(def.hp * sc.hp * mapRef.current.def.hpMult * mods.enemyHp);
+        const def = effectiveEnemy(ev.kind);
+        // HP is snapshotted here. Later Wave Lab HP APPLY does not rewrite live hp/maxHp.
+        const hp = spawnedEnemyHp(def.hp, s.wave, mapRef.current.def.hpMult, mods.enemyHp);
 
         s.enemies.push({
           id: s.nextId++,
@@ -1132,7 +1142,7 @@ export default function TarkovTD() {
 
       // enemies — corpses do not walk, leak, or fight
       for (const e of s.enemies) {
-        const def = ENEMIES[e.kind];
+        const def = effectiveEnemy(e.kind);
         e.hitFlash = Math.max(0, e.hitFlash - dt);
         e.slow = Math.max(0, e.slow - dt);
         if (isSettledOut(e)) continue;
@@ -1343,7 +1353,7 @@ export default function TarkovTD() {
                 secondaryMult: shotgunSecondaryMult(st.weapon),
                 maxHits: shotgunMaxHits(st.weapon),
                 enemies: s.enemies,
-                armorOf: (e) => ENEMIES[e.kind].armor,
+                armorOf: (e) => effectiveEnemy(e.kind).armor,
                 pen: st.pen,
                 maxAlongOf: (angle) =>
                   wallAlongLimit(
@@ -1921,23 +1931,41 @@ export default function TarkovTD() {
     if (s.phase !== "prep") return;
     if (!s.towers.length) return pushLog("Hire at least one operator first.");
     s.wave += 1;
-    const wave = buildWave(s.wave, mapRef.current.def.waveMods);
-    let at = 400;
-    const q: SpawnEvent[] = [];
-    let spawnIndex = 0;
-    const laneCount = mapRef.current.lanes.length;
-    for (const g of wave.groups) {
-      for (let i = 0; i < g.count; i++) {
-        q.push({ at, kind: g.kind, lane: assignSpawnLane(spawnIndex, laneCount) });
-        spawnIndex += 1;
-        at += g.gap;
-      }
-      at += 700;
-    }
-    s.queue = q;
+    const wave = effectiveWave(mapRef.current.def, s.wave);
+    s.queue = scheduleWave(wave.groups, mapRef.current.lanes.length);
     s.clock = 0;
     s.phase = "combat";
     pushLog(`WAVE ${s.wave} — ${wave.name}`);
+    rerender();
+  }, [pushLog, rerender]);
+
+  /** TEST WAVE: replace spawn queue for the selected wave. Does not increment past it, does not clear live enemies, does not touch meta/stash. */
+  const onTestWave = useCallback(
+    (waveN: number) => {
+      const s = gs.current;
+      const inRaid = s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted";
+      const r = requestTestWave(DEV_TOOLS_ENABLED, inRaid, mapId, waveN);
+      if (!r.ok) return r;
+      s.wave = r.wave;
+      s.queue = r.events;
+      s.clock = 0;
+      s.phase = "combat";
+      pushLog(`TEST WAVE ${r.wave} — ${r.name}`);
+      rerender();
+      return { ok: true as const };
+    },
+    [mapId, pushLog, rerender],
+  );
+
+  const onResetTest = useCallback(() => {
+    if (!DEV_TOOLS_ENABLED) return;
+    const s = gs.current;
+    if (s.phase === "hideout" || s.phase === "dead" || s.phase === "extracted") return;
+    s.queue = [];
+    s.enemies = [];
+    s.clock = 0;
+    s.phase = "prep";
+    pushLog("TEST WAVE reset — back to prep");
     rerender();
   }, [pushLog, rerender]);
 
@@ -1961,7 +1989,10 @@ export default function TarkovTD() {
   const s = gs.current;
   const selected = s.towers.find((t) => t.id === s.selectedId) ?? null;
   const selBarricade = s.obstacles.find((o) => o.id === s.selectedObstacle) ?? null;
-  const nextWaveName = useMemo(() => buildWave(s.wave + 1, mapRef.current.def.waveMods).name, [s.wave]);
+  const nextWaveName = useMemo(
+    () => effectiveWave(mapRef.current.def, s.wave + 1).name,
+    [s.wave],
+  );
   const meta = metaRef.current;
   const shopIds = unlockedIds(meta.claimed).filter((id) => (effectiveItemDef(id) ?? ITEM_BY_ID[id])?.price);
 
@@ -3152,6 +3183,17 @@ export default function TarkovTD() {
       )}
       {DEV_TOOLS_ENABLED && economyLabOpen && (
         <EconomyLab enabled={DEV_TOOLS_ENABLED} onClose={() => setLabs("none")} onApplied={() => rerender()} />
+      )}
+      {DEV_TOOLS_ENABLED && waveLabOpen && (
+        <WaveLab
+          enabled={DEV_TOOLS_ENABLED}
+          inRaid={s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted"}
+          mapId={mapId}
+          onClose={() => setLabs("none")}
+          onApplied={() => rerender()}
+          onTestWave={onTestWave}
+          onResetTest={onResetTest}
+        />
       )}
     </div>
   );
