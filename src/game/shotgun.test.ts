@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { applyHit, creditKillBook, damageAfterArmor, settleRemovedEnemies, type KillBook } from "./combat";
+import { TILE } from "./data";
+import { incomingCoverProtection, type DefensePiece } from "./defenses";
 import { WEAPONS } from "./gear";
+import { wallAlongLimit } from "./los";
+import { MAP_BY_ID, buildMap } from "./map";
 import {
   isShotgunWeapon,
   pelletAngles,
@@ -191,5 +195,189 @@ describe("shotgun targeting", () => {
       { id: 2, x: beside.x, y: beside.y, hp: beside.hp, pathProgress: 2 },
     ];
     expect(selectTarget("MANUAL", { x: 0, y: 0 }, 80, live, 1)?.id).toBe(1);
+  });
+});
+
+describe("shotgun obstruction", () => {
+  const pal = MAP_BY_ID["woods"]!.palette;
+  const map = buildMap({
+    id: "sg-los",
+    name: "SG",
+    threat: 1,
+    threatLabel: "T",
+    desc: "",
+    hpMult: 1,
+    lootMult: 1,
+    geo: { x: 0, y: 0 },
+    sector: "T",
+    path: [[0, 0], [1, 0]],
+    props: [],
+    checkpoint: [],
+    cover: [],
+    crates: [],
+    palette: pal,
+    collisionWalls: [{ tx: 3, ty: 2, edge: "E" }],
+  });
+  const ox = 2.5 * TILE;
+  const oy = 2.5 * TILE;
+
+  it("a clear pellet behaves as before", () => {
+    const e = body(1, 40, 0, 100);
+    const { strikes } = tozBlast([e], 0, 80, 10);
+    expect(strikes.some((s) => s.enemyId === 1)).toBe(true);
+    expect(e.hp).toBeLessThan(100);
+  });
+
+  it("a pellet crossing a wall stops and cannot hit behind it", () => {
+    const behind = body(1, 4.5 * TILE, 2.5 * TILE, 100);
+    const before = body(2, 3.2 * TILE, 2.5 * TILE, 100);
+    resolveShotgunBlast({
+      origin: { x: ox, y: oy },
+      aim: 0,
+      range: 200,
+      hitRadius: 12,
+      pelletCount: 1,
+      spread: 0,
+      primaryDamage: 7,
+      secondaryMult: 0.5,
+      maxHits: 2,
+      enemies: [behind, before],
+      armorOf: () => 0,
+      pen: 0,
+      maxAlongOf: (angle) =>
+        wallAlongLimit(map, { x: ox, y: oy }, ox + Math.cos(angle) * 200, oy + Math.sin(angle) * 200),
+    });
+    expect(before.hp).toBeLessThan(100);
+    expect(behind.hp).toBe(100);
+  });
+
+  it("a pellet whose ray misses the wall still proceeds", () => {
+    const side = body(1, ox, 0.5 * TILE, 100);
+    resolveShotgunBlast({
+      origin: { x: ox, y: oy },
+      aim: -Math.PI / 2,
+      range: 200,
+      hitRadius: 12,
+      pelletCount: 1,
+      spread: 0,
+      primaryDamage: 7,
+      secondaryMult: 0.5,
+      maxHits: 2,
+      enemies: [side],
+      armorOf: () => 0,
+      pen: 0,
+      maxAlongOf: (angle) =>
+        wallAlongLimit(map, { x: ox, y: oy }, ox + Math.cos(angle) * 200, oy + Math.sin(angle) * 200),
+    });
+    expect(side.hp).toBeLessThan(100);
+  });
+
+  it("different pellets in one blast can be blocked or clear independently", () => {
+    const east = body(1, 80, 0, 100);
+    const north = body(2, 0, -80, 100);
+    resolveShotgunBlast({
+      origin: { x: 0, y: 0 },
+      aim: 0,
+      range: 120,
+      hitRadius: 10,
+      pelletCount: 2,
+      spread: Math.PI / 2,
+      primaryDamage: 7,
+      secondaryMult: 0.5,
+      maxHits: 1,
+      enemies: [east, north],
+      armorOf: () => 0,
+      pen: 0,
+      maxAlongOf: (angle) => (Math.abs(angle) < 0.2 ? 30 : null),
+    });
+    expect(east.hp).toBe(100);
+    expect(north.hp).toBeLessThan(100);
+  });
+
+  it("secondary penetration still works before a wall and not behind it", () => {
+    const a = body(1, 20, 0, 100);
+    const b = body(2, 40, 0, 100);
+    const c = body(3, 70, 0, 100);
+    resolveShotgunBlast({
+      origin: { x: 0, y: 0 },
+      aim: 0,
+      range: 200,
+      hitRadius: 8,
+      pelletCount: 1,
+      spread: 0,
+      primaryDamage: 7,
+      secondaryMult: 0.5,
+      maxHits: 2,
+      enemies: [a, b, c],
+      armorOf: () => 0,
+      pen: 0,
+      maxAlongOf: () => 55,
+    });
+    expect(a.hp).toBeLessThan(100);
+    expect(b.hp).toBeLessThan(100);
+    expect(c.hp).toBe(100);
+  });
+
+  it("per-pellet barricade uses the same cover prot, not a shotgun-specific percent", () => {
+    const protectedTarget = body(1, 40, 0, 100);
+    const pieces: DefensePiece[] = [
+      {
+        id: 1,
+        tx: 5,
+        ty: 4,
+        kind: "barricade",
+        hp: 260,
+        maxHp: 260,
+        level: 1,
+        edge: "W",
+      },
+    ];
+    const prot = incomingCoverProtection(
+      [],
+      pieces,
+      5,
+      4,
+      3 * TILE + TILE / 2,
+      4 * TILE + TILE / 2,
+      TILE,
+    ).prot;
+    expect(prot).toBeCloseTo(0.7);
+    resolveShotgunBlast({
+      origin: { x: 0, y: 0 },
+      aim: 0,
+      range: 80,
+      hitRadius: 8,
+      pelletCount: 1,
+      spread: 0,
+      primaryDamage: 10,
+      secondaryMult: 0.5,
+      maxHits: 1,
+      enemies: [protectedTarget],
+      armorOf: () => 0,
+      pen: 0,
+      coverProtOf: () => prot,
+    });
+    expect(protectedTarget.hp).toBeCloseTo(100 - 10 * (1 - prot));
+  });
+
+  it("shotgun kill settlement remains once with obstruction", () => {
+    const e = body(1, 20, 0, 5);
+    resolveShotgunBlast({
+      origin: { x: 0, y: 0 },
+      aim: 0,
+      range: 80,
+      hitRadius: 8,
+      pelletCount: 3,
+      spread: 0,
+      primaryDamage: 7,
+      secondaryMult: 0.5,
+      maxHits: 2,
+      enemies: [e],
+      armorOf: () => 0,
+      pen: 0,
+      maxAlongOf: () => 60,
+    });
+    expect(settleRemovedEnemies([e]).kills).toHaveLength(1);
+    expect(settleRemovedEnemies([e]).kills).toHaveLength(0);
   });
 });

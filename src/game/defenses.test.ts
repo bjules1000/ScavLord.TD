@@ -33,6 +33,7 @@ import {
   damageDefense,
   defenseStatus,
   edgeFromCursor,
+  incomingCoverProtection,
   interceptingBarricade,
   liveWireAt,
   obstacleDrawAlpha,
@@ -281,6 +282,30 @@ describe("directional cover", () => {
     const fromEast = interceptingBarricade(pieces, 5, 4, 6 * TILE + TILE / 2, 4 * TILE + TILE / 2, TILE);
     expect(fromNorth?.id).toBe(1);
     expect(fromEast?.id).toBe(2);
+  });
+
+  it("incomingCoverProtection uses ray entry, not a second cover formula", () => {
+    const pieces = [wall({ id: 1, kind: "barricade", tx: 5, ty: 4, edge: "N" })];
+    const fromNorth = incomingCoverProtection(
+      [],
+      pieces,
+      5,
+      4,
+      5 * TILE + TILE / 2,
+      3 * TILE + TILE / 2,
+      TILE,
+    );
+    const fromSouth = incomingCoverProtection(
+      [],
+      pieces,
+      5,
+      4,
+      5 * TILE + TILE / 2,
+      6 * TILE + TILE / 2,
+      TILE,
+    );
+    expect(fromNorth.prot).toBeCloseTo(0.7);
+    expect(fromSouth.prot).toBe(0);
   });
 });
 

@@ -1,5 +1,8 @@
 /** Player-built frontline defenses. */
 
+import { coverProtectionFrom, type CoverPiece } from "./map";
+import { LOS_EPS } from "./los";
+
 export type DefenseResource = "RAID_ROUBLES";
 
 export interface DefenseCost {
@@ -138,6 +141,82 @@ export function barricadeCoverCell(tx: number, ty: number, edge: BarricadeEdge):
   return neighborCell(tx, ty, edge);
 }
 
+/** Matches the existing hostile-fire cover miss roll: random() < prot * 0.55. */
+export const COVER_MISS_FACTOR = 0.55;
+
+export function coveredDamage(damage: number, prot: number): number {
+  return damage * (1 - Math.max(0, Math.min(1, prot)));
+}
+
+export function coverMissChance(prot: number): number {
+  return Math.max(0, Math.min(1, prot)) * COVER_MISS_FACTOR;
+}
+
+export function barricadeEdgeMidpoint(
+  tx: number,
+  ty: number,
+  edge: BarricadeEdge,
+  tile: number,
+): { x: number; y: number } {
+  const cx = tx * tile + tile / 2;
+  const cy = ty * tile + tile / 2;
+  if (edge === "N") return { x: cx, y: ty * tile };
+  if (edge === "S") return { x: cx, y: (ty + 1) * tile };
+  if (edge === "E") return { x: (tx + 1) * tile, y: cy };
+  return { x: tx * tile, y: cy };
+}
+
+/** Edges of (tx,ty) the world segment first enters through. Empty if the origin is already in the tile. */
+export function rayTileEntryEdges(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  tx: number,
+  ty: number,
+  tile: number,
+): BarricadeEdge[] {
+  const startTx = Math.floor(x0 / tile);
+  const startTy = Math.floor(y0 / tile);
+  if (startTx === tx && startTy === ty) return [];
+
+  const left = tx * tile;
+  const right = (tx + 1) * tile;
+  const top = ty * tile;
+  const bot = (ty + 1) * tile;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const hits: { edge: BarricadeEdge; t: number }[] = [];
+
+  const add = (edge: BarricadeEdge, t: number, u: number, u0: number, u1: number) => {
+    if (t < -LOS_EPS || t > 1 + LOS_EPS) return;
+    if (u < u0 - LOS_EPS || u > u1 + LOS_EPS) return;
+    hits.push({ edge, t: Math.max(0, Math.min(1, t)) });
+  };
+
+  if (Math.abs(dx) > LOS_EPS) {
+    const tW = (left - x0) / dx;
+    add("W", tW, y0 + tW * dy, top, bot);
+    const tE = (right - x0) / dx;
+    add("E", tE, y0 + tE * dy, top, bot);
+  }
+  if (Math.abs(dy) > LOS_EPS) {
+    const tN = (top - y0) / dy;
+    add("N", tN, x0 + tN * dx, left, right);
+    const tS = (bot - y0) / dy;
+    add("S", tS, x0 + tS * dx, left, right);
+  }
+  if (!hits.length) return [];
+  hits.sort((a, b) => a.t - b.t);
+  const minT = hits[0]!.t;
+  const edges: BarricadeEdge[] = [];
+  for (const h of hits) {
+    if (h.t - minT > 1e-7) break;
+    if (!edges.includes(h.edge)) edges.push(h.edge);
+  }
+  return edges;
+}
+
 export function interceptingBarricade<T extends DefensePiece>(
   pieces: readonly T[],
   tx: number,
@@ -146,9 +225,44 @@ export function interceptingBarricade<T extends DefensePiece>(
   srcY: number,
   tile: number,
 ): T | null {
-  const incoming = edgeFromCursor(srcX, srcY, tx, ty, tile);
-  const hit = barricadeOnEdge(pieces, tx, ty, incoming);
-  return hit && hit.hp > 0 ? hit : null;
+  const hitX = tx * tile + tile / 2;
+  const hitY = ty * tile + tile / 2;
+  const edges = rayTileEntryEdges(srcX, srcY, hitX, hitY, tx, ty, tile);
+  const order = edges.length ? edges : [edgeFromCursor(srcX, srcY, tx, ty, tile)];
+  for (const edge of order) {
+    const hit = barricadeOnEdge(pieces, tx, ty, edge);
+    if (hit && hit.hp > 0) return hit;
+  }
+  return null;
+}
+
+/** WHEN cover applies (ray enters through a live barricade edge) + existing HOW MUCH math. */
+export function incomingCoverProtection(
+  envCover: CoverPiece[],
+  pieces: readonly DefensePiece[],
+  tx: number,
+  ty: number,
+  srcX: number,
+  srcY: number,
+  tile: number,
+): { prot: number; shield: DefensePiece | null } {
+  let prot = coverProtectionFrom(envCover, tx, ty, srcX, srcY);
+  const hitX = tx * tile + tile / 2;
+  const hitY = ty * tile + tile / 2;
+  const edges = rayTileEntryEdges(srcX, srcY, hitX, hitY, tx, ty, tile);
+  let shield: DefensePiece | null = null;
+  const virtual: CoverPiece[] = [];
+  for (const edge of edges) {
+    const bag = barricadeOnEdge(pieces, tx, ty, edge);
+    if (!bag || bag.hp <= 0 || !bag.edge) continue;
+    if (!shield) shield = bag;
+    const cell = barricadeCoverCell(bag.tx, bag.ty, bag.edge);
+    virtual.push({ tx: cell.tx, ty: cell.ty, type: "full" });
+  }
+  if (virtual.length) {
+    prot = Math.max(prot, coverProtectionFrom(virtual, tx, ty, srcX, srcY));
+  }
+  return { prot, shield };
 }
 
 export function liveWireAt<T extends DefensePiece>(

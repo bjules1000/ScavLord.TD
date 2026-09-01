@@ -8,11 +8,11 @@
  * Outer map edges stay on the border tile (N of row 0, W of col 0, E of last
  * col, S of last row). No neighbor tile is required for those.
  *
- * Future movement / LOS (not wired into gameplay in this milestone):
+ * Movement and LOS share authored edges but keep distinct helpers:
  *   isMovementBlockedAcrossEdge(map, from, to)
  *   isSightBlockedAcrossEdge(map, from, to)
- * Both return true for these walls. Slopes stay open only where the author
- * left a gap — walls are never inferred from HIGH GROUND.
+ * Both currently return true for these walls. Slopes stay open only where the
+ * author left a gap — walls are never inferred from HIGH GROUND.
  *
  * Raid presentation never draws this overlay. Map Builder WALLS layer only.
  */
@@ -99,13 +99,15 @@ export function isMovementBlockedAcrossEdge(
   return hasCollisionWall(map.collisionWalls, wall);
 }
 
-/** Future LOS: these walls block sight across the same physical edge. */
+/** Sight: true when a wall occupies the shared edge between orthogonal neighbors. */
 export function isSightBlockedAcrossEdge(
   map: Pick<EditorMapDoc, "width" | "height" | "collisionWalls">,
   from: [number, number],
   to: [number, number],
 ): boolean {
-  return isMovementBlockedAcrossEdge(map, from, to);
+  const wall = sharedCanonicalWall(from, to, map.width, map.height);
+  if (!wall) return false;
+  return hasCollisionWall(map.collisionWalls, wall);
 }
 
 export function collisionWallBlocksMovement(_wall: CollisionWall): boolean {
