@@ -149,10 +149,11 @@ function normalizeLegacyMeta(p: Partial<Meta>): Meta {
     stash: Array.isArray(p.stash)
       ? p.stash
           .filter((s) => s && !!ITEM_BY_ID[s.defId])
-          .map((s) => ({
-            defId: s.defId,
-            installed: Array.isArray(s.installed) ? [...s.installed] : undefined,
-          }))
+          .map((s) => {
+            const entry: StashEntry = { defId: s.defId };
+            if (Array.isArray(s.installed) && s.installed.length) entry.installed = [...s.installed];
+            return entry;
+          })
       : [],
     quests: {
       scavKills: Number(p.quests?.scavKills) || 0,

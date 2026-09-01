@@ -62,8 +62,8 @@ function pickKit(archetypeId: string, rng: () => number): OperatorEquipment {
 
 function pickAppearance(rng: () => number): OperatorAppearance {
   const presetId = `scav_${Math.floor(rng() * 4)}`;
-  const paletteId = rng() < 0.5 ? `accent_${Math.floor(rng() * 3)}` : undefined;
-  return { presetId, paletteId };
+  if (rng() < 0.5) return { presetId, paletteId: `accent_${Math.floor(rng() * 3)}` };
+  return { presetId };
 }
 
 function uniqueName(rng: () => number, used: Set<string>): string {

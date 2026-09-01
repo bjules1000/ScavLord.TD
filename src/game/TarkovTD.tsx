@@ -199,6 +199,7 @@ import {
   syncOperatorEquipmentFromTower,
 } from "./operators/runtime";
 import { operatorSpeedMultiplier, OPERATOR_MOVE_SPEED_TILES } from "./movement";
+import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
 import { RAID_SCRAP_MULT } from "./loot";

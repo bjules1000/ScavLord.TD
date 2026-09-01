@@ -31,10 +31,9 @@ export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentO
       attachments: Array.isArray(raw.equipment?.attachments) ? [...raw.equipment.attachments] : [],
       armor: raw.equipment?.armor ?? null,
     },
-    appearance: {
-      presetId: raw.appearance?.presetId ?? "scav_0",
-      paletteId: raw.appearance?.paletteId,
-    },
+    appearance: raw.appearance?.paletteId
+      ? { presetId: raw.appearance?.presetId ?? "scav_0", paletteId: raw.appearance.paletteId }
+      : { presetId: raw.appearance?.presetId ?? "scav_0" },
     progression: {
       level: Math.max(1, Number(raw.progression?.level) || 1),
       xp: Math.max(0, Number(raw.progression?.xp) || 0),
