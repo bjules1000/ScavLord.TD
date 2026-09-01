@@ -20,7 +20,8 @@ export type EditorTool =
   | { id: "bridge" }
   | { id: "erase-bridge" }
   | { id: "erase-prop" }
-  | { id: "erase-gameplay" };
+  | { id: "erase-gameplay" }
+  | { id: "los-probe" };
 
 export const TERRAIN_PAINT_KINDS = ["GROUND", "ROAD", "WATER", "MOUNTAIN", "HIGH_GROUND"] as const;
 export const DRAG_PLACE_PROPS: PropType[] = ["tree", "rock", "barrel"];
@@ -35,6 +36,10 @@ export function selectEraserTool(): EditorTool {
 
 export function selectInspectTool(): EditorTool {
   return { id: "select" };
+}
+
+export function selectLosProbeTool(): EditorTool {
+  return { id: "los-probe" };
 }
 
 export function selectPropTool(type: PropType): EditorTool {
@@ -63,6 +68,10 @@ export function isTerrainEraserMode(tool: EditorTool): boolean {
 
 export function isInspectMode(tool: EditorTool): boolean {
   return tool.id === "select";
+}
+
+export function isLosProbeMode(tool: EditorTool): boolean {
+  return tool.id === "los-probe";
 }
 
 export function isPropPlaceMode(tool: EditorTool): boolean {
@@ -114,7 +123,7 @@ export function selectEraseBridgeTool(): EditorTool {
 }
 
 export function isAuthoringTool(tool: EditorTool): boolean {
-  return tool.id !== "select";
+  return tool.id !== "select" && tool.id !== "los-probe";
 }
 
 export function isDragPlaceProp(type: PropType): boolean {

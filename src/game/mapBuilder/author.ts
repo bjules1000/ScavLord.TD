@@ -51,6 +51,7 @@ export function applyAuthor(
   const pos: [number, number] = [cell.tx, cell.ty];
   switch (tool.id) {
     case "select":
+    case "los-probe":
       return doc;
     case "terrain":
       return paintTiles(doc, [pos], tool.terrain);

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { TILE } from "../data";
-import { MAP_BY_ID, MAP_DEFS } from "../map";
+import { MAP_BY_ID, MAP_DEFS, type GameMap } from "../map";
+import type { LosHit } from "../los";
+import type { SurfaceLevel } from "../types";
+import { EDITOR_GUTTER, canvasPixelSize, EDGE_LABEL, hitLanePort, portEdgeFromCursor } from "./ports";
 import { draftIdForSource, fromProductionMap, productionMaps } from "./adapters";
 import { createBlankMap, slugId, unlockRevision, validateNewMapInput } from "./document";
 import { edgeFromCursor } from "./edges";
@@ -12,7 +15,6 @@ import { addLane, canPlaceOccupant, clearLanePath, removeLane, removeObject } fr
 import { nextLaneId, pathCells } from "./pathing";
 import { emptyStore, readStore, upsertDoc, writeStore } from "./persist";
 import { DEFAULT_LAYERS, clientToTile, drawEditorMap, hitObject, type LayerFlags } from "./render";
-import { EDITOR_GUTTER, canvasPixelSize, EDGE_LABEL, hitLanePort, portEdgeFromCursor } from "./ports";
 import {
   isAuthoringTool,
   isBridgeMode,
@@ -21,6 +23,7 @@ import {
   isEraseWallMode,
   isGameplayEraseMode,
   isInspectMode,
+  isLosProbeMode,
   isPathMode,
   isPropEraseMode,
   isPropPlaceMode,
@@ -31,12 +34,33 @@ import {
   selectEraseBridgeTool,
   selectEraseWallTool,
   selectGameplayEraser,
+  selectLosProbeTool,
   selectPathTool,
   selectPropEraser,
   selectPropTool,
   selectTerrainTool,
   type EditorTool,
 } from "./tools";
+import {
+  applyLosProbeClick,
+  applyLosProbeHover,
+  displaySurface,
+  drawLosProbeOverlay,
+  emptyLosProbeState,
+  evaluateCustomProbe,
+  evaluatePathSweep,
+  formatOriginLine,
+  formatPathLosSummary,
+  formatProbeBlocker,
+  gameMapFromEditorDoc,
+  probeKindLabel,
+  probePointAsSight,
+  probeSurfacesAt,
+  resolveProbePoint,
+  sampleActiveLane,
+  type LosProbeState,
+  type PathSweepResult,
+} from "./losProbe";
 import type { EditorMapDoc, TerrainKind } from "./schema";
 import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
@@ -87,6 +111,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const [zoom, setZoom] = useState(1);
   const [hover, setHover] = useState<{ tx: number; ty: number; localX: number; localY: number } | null>(null);
   const [selected, setSelected] = useState<{ kind: string; id: string } | null>(null);
+  const [probe, setProbe] = useState<LosProbeState>(emptyLosProbeState);
   const [validation, setValidation] = useState<ReturnType<typeof validateMap> | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
@@ -103,9 +128,24 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const doc = liveDoc ?? session.doc;
   const locked = doc.status === "locked";
 
+  const probeMap = useMemo(() => gameMapFromEditorDoc(doc), [doc]);
+  const pathSamples = useMemo(() => sampleActiveLane(probeMap, laneId), [probeMap, laneId]);
+  const pathSweep = useMemo(() => {
+    if (!probe.origin) return { results: [], visible: 0, blocked: 0 };
+    return evaluatePathSweep(probeMap, probePointAsSight(probe.origin), pathSamples);
+  }, [probeMap, probe.origin, pathSamples]);
+  const customHit = useMemo(() => {
+    if (probe.mode !== "CUSTOM" || !probe.origin || !probe.customTarget) return null;
+    return evaluateCustomProbe(probeMap, probePointAsSight(probe.origin), probePointAsSight(probe.customTarget));
+  }, [probe.mode, probe.origin, probe.customTarget, probeMap]);
+
   useEffect(() => {
     if (!doc.lanes.some((l) => l.id === laneId)) setLaneId(doc.lanes[0]?.id ?? "MAIN");
   }, [doc.lanes, laneId]);
+
+  useEffect(() => {
+    setProbe((s) => ({ ...s, hoverSampleIndex: null, selectedSampleIndex: null }));
+  }, [laneId]);
 
   useEffect(() => {
     persist(session);
@@ -195,7 +235,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       ctx,
       doc,
       layers,
-      hover
+      hover && !isLosProbeMode(tool)
         ? {
             tx: hover.tx,
             ty: hover.ty,
@@ -214,7 +254,26 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
         : null,
       laneId,
     );
-  }, [doc, layers, hover, tool, laneId]);
+    if (isLosProbeMode(tool)) {
+      ctx.save();
+      ctx.translate(EDITOR_GUTTER, EDITOR_GUTTER);
+      const active =
+        probe.selectedSampleIndex != null && probe.selectedSampleIndex < pathSweep.results.length
+          ? probe.selectedSampleIndex
+          : probe.hoverSampleIndex != null && probe.hoverSampleIndex < pathSweep.results.length
+            ? probe.hoverSampleIndex
+            : null;
+      drawLosProbeOverlay(ctx, {
+        origin: probe.origin,
+        mode: probe.mode,
+        customTarget: probe.customTarget,
+        customHit,
+        samples: pathSweep.results,
+        activeSampleIndex: active,
+      });
+      ctx.restore();
+    }
+  }, [doc, layers, hover, tool, laneId, probe, pathSweep, customHit]);
 
   const apply = useCallback((next: EditorMapDoc) => {
     setSession((s) => commit(s, next));
@@ -239,6 +298,12 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     ev.currentTarget.setPointerCapture(ev.pointerId);
     const cell = pointerCell(ev);
     if (!cell) return;
+    if (isLosProbeMode(tool)) {
+      const x = cell.tx * TILE + cell.localX;
+      const y = cell.ty * TILE + cell.localY;
+      setProbe((s) => applyLosProbeClick(s, probeMap, { tx: cell.tx, ty: cell.ty, x, y }, pathSweep.results));
+      return;
+    }
     if (isInspectMode(tool)) {
       setSelected(hitObject(doc, cell.tx, cell.ty, cell.localX, cell.localY));
       return;
@@ -259,6 +324,11 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const onPointerMove = (ev: PointerEvent<HTMLCanvasElement>) => {
     const cell = pointerCell(ev);
     setHover(cell);
+    if (isLosProbeMode(tool)) {
+      const world = cell ? { x: cell.tx * TILE + cell.localX, y: cell.ty * TILE + cell.localY } : null;
+      setProbe((s) => applyLosProbeHover(s, pathSweep.results, world));
+      return;
+    }
     if (!painting.current || !cell || locked) return;
     const last = stroke.current[stroke.current.length - 1];
     if (last && last.tx === cell.tx && last.ty === cell.ty) return;
@@ -322,6 +392,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     setLaneId(next.lanes[0]?.id ?? "MAIN");
     setZoneId(null);
     setSelected(null);
+    setProbe(emptyLosProbeState());
     setValidation(null);
   };
 
@@ -336,6 +407,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     setSession(replaceDoc(session, next));
     setShowNew(false);
     setLaneId("MAIN");
+    setProbe(emptyLosProbeState());
     setMessage(null);
   };
 
@@ -347,6 +419,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       if (!window.confirm("Clear this map? All authored tiles will be lost.")) return;
       setSession(replaceDoc(session, createBlankMap({ displayName: doc.displayName, id: doc.id, width: doc.width, height: doc.height })));
     }
+    setProbe(emptyLosProbeState());
     setValidation(null);
   };
 
@@ -395,6 +468,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     }
     const id = `import-${parsed.payload.id}`;
     setSession(replaceDoc(session, importedToDoc(parsed.payload, id)));
+    setProbe(emptyLosProbeState());
     setMessage("Import loaded as a new editor draft.");
   };
 
@@ -613,6 +687,43 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               <Chip active={tool.id === "select"} onClick={() => setTool({ id: "select" })}>
                 SELECT
               </Chip>
+              <Chip active={isLosProbeMode(tool)} onClick={() => setTool(selectLosProbeTool())}>
+                LOS PROBE
+              </Chip>
+              {isLosProbeMode(tool) && (
+                <>
+                  <Chip
+                    active={probe.mode === "PATH"}
+                    onClick={() =>
+                      setProbe((s) => ({
+                        ...s,
+                        mode: "PATH",
+                        customTarget: null,
+                        selectedSampleIndex: null,
+                        hoverSampleIndex: null,
+                      }))
+                    }
+                  >
+                    TARGETS: ENEMY PATH
+                  </Chip>
+                  <Chip
+                    active={probe.mode === "CUSTOM"}
+                    onClick={() =>
+                      setProbe((s) => ({
+                        ...s,
+                        mode: "CUSTOM",
+                        selectedSampleIndex: null,
+                        hoverSampleIndex: null,
+                      }))
+                    }
+                  >
+                    TARGETS: CUSTOM
+                  </Chip>
+                  <div className="w-full text-muted-foreground">
+                    Diagnostic only. Click a tile for origin (HIGH on HIGH_GROUND / bridge; LOW elsewhere; stacked tiles cycle). Unlimited range. Same LOS as raids. Does not edit the map.
+                  </div>
+                </>
+              )}
             </Section>
           </aside>
 
@@ -640,6 +751,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               onPointerCancel={onPointerUp}
               onPointerLeave={() => {
                 if (!painting.current) setHover(null);
+                if (isLosProbeMode(tool)) setProbe((s) => applyLosProbeHover(s, pathSweep.results, null));
               }}
               onContextMenu={(e) => e.preventDefault()}
             />
@@ -698,6 +810,29 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 </label>
               ))}
             </Section>
+            {isLosProbeMode(tool) && (
+              <Section title="LOS PROBE">
+                <LosProbeInspector
+                  map={probeMap}
+                  probe={probe}
+                  laneId={laneId}
+                  pathSweep={pathSweep}
+                  customHit={customHit}
+                  onSetOriginSurface={(surface) =>
+                    setProbe((s) =>
+                      s.origin ? { ...s, origin: resolveProbePoint(probeMap, s.origin.tx, s.origin.ty, surface) } : s,
+                    )
+                  }
+                  onSetTargetSurface={(surface) =>
+                    setProbe((s) =>
+                      s.customTarget
+                        ? { ...s, customTarget: resolveProbePoint(probeMap, s.customTarget.tx, s.customTarget.ty, surface) }
+                        : s,
+                    )
+                  }
+                />
+              </Section>
+            )}
             <Section title="INSPECTOR">
               <Inspector
                 doc={doc}
@@ -878,4 +1013,109 @@ function Inspector({
     );
   }
   return <div className="text-muted-foreground">Hover or select a tile.</div>;
+}
+
+function LosProbeInspector({
+  map,
+  probe,
+  laneId,
+  pathSweep,
+  customHit,
+  onSetOriginSurface,
+  onSetTargetSurface,
+}: {
+  map: GameMap;
+  probe: LosProbeState;
+  laneId: string;
+  pathSweep: PathSweepResult;
+  customHit: LosHit | null;
+  onSetOriginSurface: (surface: SurfaceLevel) => void;
+  onSetTargetSurface: (surface: SurfaceLevel) => void;
+}) {
+  const originSurfaces = probe.origin ? probeSurfacesAt(map, probe.origin.tx, probe.origin.ty) : [];
+  const targetSurfaces = probe.customTarget ? probeSurfacesAt(map, probe.customTarget.tx, probe.customTarget.ty) : [];
+  const activeIdx = probe.selectedSampleIndex ?? probe.hoverSampleIndex;
+  const sample =
+    probe.mode === "PATH" && activeIdx != null && activeIdx >= 0 && activeIdx < pathSweep.results.length
+      ? pathSweep.results[activeIdx]
+      : null;
+
+  return (
+    <div className="w-full space-y-1">
+      <div>LANE {laneId}</div>
+      <div>RANGE UNLIMITED · VISIBILITY ONLY</div>
+      {probe.origin ? (
+        <div>{formatOriginLine(map, probe.origin)}</div>
+      ) : (
+        <div className="text-muted-foreground">ORIGIN: click the map</div>
+      )}
+      {originSurfaces.length > 1 && probe.origin && (
+        <div className="flex flex-wrap gap-1">
+          {originSurfaces.map((surface) => (
+            <Chip
+              key={surface}
+              active={probe.origin?.surface === surface}
+              onClick={() => onSetOriginSurface(surface)}
+            >
+              ORIGIN {displaySurface(surface)}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {probe.mode === "PATH" && (
+        <div>
+          {probe.origin
+            ? formatPathLosSummary(pathSweep.visible, pathSweep.results.length)
+            : "PATH LOS: —"}
+        </div>
+      )}
+      {probe.mode === "CUSTOM" && probe.customTarget && (
+        <>
+          <div>
+            TARGET: ({probe.customTarget.tx},{probe.customTarget.ty}) · {displaySurface(probe.customTarget.surface)} ·{" "}
+            {probeKindLabel(map, probe.customTarget.tx, probe.customTarget.ty, probe.customTarget.surface)}
+          </div>
+          {targetSurfaces.length > 1 && (
+            <div className="flex flex-wrap gap-1">
+              {targetSurfaces.map((surface) => (
+                <Chip
+                  key={surface}
+                  active={probe.customTarget?.surface === surface}
+                  onClick={() => onSetTargetSurface(surface)}
+                >
+                  TARGET {displaySurface(surface)}
+                </Chip>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {probe.mode === "CUSTOM" && probe.origin && !probe.customTarget && (
+        <div className="text-muted-foreground">Click a second tile for the custom target.</div>
+      )}
+      {probe.mode === "PATH" && sample && probe.origin && (
+        <div>
+          <div>{formatProbeBlocker(sample.hit)}</div>
+          <div>
+            SRC {displaySurface(probe.origin.surface)} · {probeKindLabel(map, probe.origin.tx, probe.origin.ty, probe.origin.surface)}
+          </div>
+          <div>
+            TGT {displaySurface(sample.surface)} · PATH
+          </div>
+        </div>
+      )}
+      {probe.mode === "CUSTOM" && customHit && probe.origin && probe.customTarget && (
+        <div>
+          <div>{formatProbeBlocker(customHit)}</div>
+          <div>
+            SRC {displaySurface(probe.origin.surface)} · {probeKindLabel(map, probe.origin.tx, probe.origin.ty, probe.origin.surface)}
+          </div>
+          <div>
+            TGT {displaySurface(probe.customTarget.surface)} ·{" "}
+            {probeKindLabel(map, probe.customTarget.tx, probe.customTarget.ty, probe.customTarget.surface)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
