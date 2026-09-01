@@ -6,6 +6,7 @@ import {
   type AttachmentDef,
   type WeaponDef,
 } from "../gear";
+import { burstDps, damagePerShot, moveSpeedWithWeaponOnly, sustainedDps, weaponRpm } from "./compareMetrics";
 import { DEV_TOOLS_ENABLED } from "./tools";
 
 export const BALANCE_STORAGE_KEY = "scavlord.dev.balanceLab.v1";
@@ -203,9 +204,9 @@ export function weaponDerivedRows(base: WeaponDef, current: WeaponDef): LabDeriv
   if (base.pellets != null || current.pellets != null) {
     rows.push({
       key: "blast",
-      label: "Max raw blast",
-      base: (base.pellets ?? 1) * base.damage,
-      current: (current.pellets ?? 1) * current.damage,
+      label: "Max raw / shot",
+      base: damagePerShot(base),
+      current: damagePerShot(current),
       display: (n) => formatLabValue("blast", n),
     });
   }
@@ -213,9 +214,23 @@ export function weaponDerivedRows(base: WeaponDef, current: WeaponDef): LabDeriv
     {
       key: "rpm",
       label: "Fire rate",
-      base: 60000 / base.cooldown,
-      current: 60000 / current.cooldown,
+      base: weaponRpm(base),
+      current: weaponRpm(current),
       display: (n) => `${n.toFixed(0)} RPM`,
+    },
+    {
+      key: "burstDps",
+      label: "Burst DPS",
+      base: burstDps(base),
+      current: burstDps(current),
+      display: (n) => n.toFixed(1),
+    },
+    {
+      key: "sustainedDps",
+      label: "Sustained DPS",
+      base: sustainedDps(base),
+      current: sustainedDps(current),
+      display: (n) => n.toFixed(1),
     },
     {
       key: "magSize",
@@ -230,6 +245,13 @@ export function weaponDerivedRows(base: WeaponDef, current: WeaponDef): LabDeriv
       base: base.weight,
       current: current.weight,
       display: (n) => formatLabValue("weight", n),
+    },
+    {
+      key: "moveSpeed",
+      label: "Move (weapon only)",
+      base: moveSpeedWithWeaponOnly(base.weight),
+      current: moveSpeedWithWeaponOnly(current.weight),
+      display: (n) => `${n.toFixed(2)} t/s`,
     },
   );
   return rows;

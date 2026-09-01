@@ -30,6 +30,16 @@ import {
   type LabEntry,
   type LabField,
 } from "./balance";
+import ArsenalBenchmark from "./ArsenalBenchmark";
+import WeaponCompare from "./WeaponCompare";
+import {
+  allCanonicalWeapons,
+  mergeWeaponDef,
+  type BenchmarkScope,
+  type CompareCategory,
+  type CompareMetric,
+  type LabView,
+} from "./compareMetrics";
 
 const CATS: LabCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS"];
 
@@ -57,6 +67,12 @@ export default function BalanceLab({
   const [selected, setSelected] = useState<LabEntry | null>(null);
   const [draft, setDraft] = useState<BalanceOverrides>(() => getBalanceOverrides());
   const [copied, setCopied] = useState(false);
+  const [labView, setLabView] = useState<LabView>("editor");
+  const [compareCategory, setCompareCategory] = useState<CompareCategory>("ALL");
+  const [compareMetric, setCompareMetric] = useState<CompareMetric>("overview");
+  const [sortReversed, setSortReversed] = useState(false);
+  const [benchmarkScope, setBenchmarkScope] = useState<BenchmarkScope>("category");
+  const allWeapons = useMemo(() => allCanonicalWeapons(), []);
   const catalog = useMemo(() => balanceLabCatalog(), []);
   const visible = useMemo(
     () => filterLabCatalog(catalog, category, query, draft),
@@ -146,26 +162,68 @@ export default function BalanceLab({
         </div>
 
         <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
-          {CATS.map((cat) => (
+          {(["editor", "compare"] as const).map((view) => (
             <button
-              key={cat}
+              key={view}
               type="button"
               className={`pixel-btn px-3 py-2 text-[10px] ${
-                category === cat ? "pixel-btn-primary" : "text-muted-foreground"
+                labView === view ? "pixel-btn-primary" : "text-muted-foreground"
               }`}
-              onClick={() => setCategory(cat)}
+              onClick={() => setLabView(view)}
             >
-              {cat}
+              {view === "editor" ? "ITEM EDITOR" : "WEAPON COMPARE"}
             </button>
           ))}
+        </div>
+
+        <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2">
+          {labView === "editor" &&
+            CATS.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                className={`pixel-btn px-3 py-2 text-[10px] ${
+                  category === cat ? "pixel-btn-primary" : "text-muted-foreground"
+                }`}
+                onClick={() => setCategory(cat)}
+              >
+                {cat}
+              </button>
+            ))}
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="SEARCH ITEMS"
+            placeholder={labView === "compare" ? "SEARCH WEAPONS" : "SEARCH ITEMS"}
             className="min-w-[14rem] flex-1 border-2 border-border bg-background px-3 py-2 font-mono text-sm"
           />
         </div>
 
+        {labView === "compare" ? (
+          <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
+            <WeaponCompare
+              allWeapons={allWeapons}
+              testOf={(w) => mergeWeaponDef(w, draft.weapons[w.id])}
+              displayName={(w) => labDisplayName({ kind: "weapon", id: w.id, name: w.name }, draft)}
+              category={compareCategory}
+              query={query}
+              metric={compareMetric}
+              sortReversed={sortReversed}
+              selectedId={selected?.kind === "weapon" ? selected.id : null}
+              onCategory={setCompareCategory}
+              onMetric={(m) => {
+                setCompareMetric(m);
+                setSortReversed(false);
+              }}
+              onToggleSort={() => setSortReversed((v) => !v)}
+              onSelect={(id) => {
+                const w = canonicalWeapon(id);
+                if (!w) return;
+                setSelected({ kind: "weapon", id: w.id, name: w.name });
+                setLabView("editor");
+              }}
+            />
+          </div>
+        ) : (
         <div className="mt-3 grid min-h-0 flex-1 gap-3 overflow-hidden md:grid-cols-[minmax(240px,0.28fr)_minmax(0,0.72fr)]">
           <div className="pixel-scrollbar min-h-0 overflow-auto border-2 border-border bg-background/50">
             {visible.map((entry) => {
@@ -293,10 +351,20 @@ export default function BalanceLab({
                     </div>
                   </div>
                 )}
+                {selected.kind === "weapon" && canonical && (
+                  <ArsenalBenchmark
+                    selected={canonical as NonNullable<ReturnType<typeof canonicalWeapon>>}
+                    testOf={(w) => mergeWeaponDef(w, draft.weapons[w.id])}
+                    allWeapons={allWeapons}
+                    scope={benchmarkScope}
+                    onScope={setBenchmarkScope}
+                  />
+                )}
               </>
             )}
           </div>
         </div>
+        )}
 
         <div className="mt-3 flex shrink-0 flex-wrap items-center gap-2 border-t-2 border-border pt-3">
           <span className="mr-auto font-mono text-xs text-muted-foreground">
