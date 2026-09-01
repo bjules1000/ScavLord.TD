@@ -174,7 +174,31 @@ import {
   swapRaidWeapon,
   type AttachSlot,
 } from "./raidGear";
-import CampHub from "./hub/CampHub";
+import {
+  aliveOperators,
+  findOperator,
+  hireCandidate,
+  markOperatorDead,
+  refreshRecruitmentPoolIfNeeded,
+} from "./operators/crew";
+import {
+  applyOperatorEquipToMeta,
+  equipArmorOnOperator,
+  equipAttachmentOnOperator,
+  equipWeaponOnOperator,
+  stashEntriesFromItems,
+  unequipOperatorSlot,
+} from "./operators/equipment";
+import { PERKS, STAT_LABELS, type PersistentOperator } from "./operators";
+import {
+  operatorAccuracyBonus,
+  operatorEffectiveWeight,
+  operatorMaxHp as persistentOperatorMaxHp,
+  operatorReloadMult,
+  resolveCombatMods,
+  syncOperatorEquipmentFromTower,
+} from "./operators/runtime";
+import { operatorSpeedMultiplier, OPERATOR_MOVE_SPEED_TILES } from "./movement";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
 import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
 import { RAID_SCRAP_MULT } from "./loot";
@@ -387,7 +411,7 @@ function coverList(map: GameMap, s: GameState): CoverPiece[] {
   ];
 }
 
-export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap) {
+export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Meta) {
   const w = weaponDef(t.weapon);
   const folded = applyAttachmentMods(w, t.attachments, attachmentDef);
   let damage = folded.damage;
@@ -396,6 +420,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap) {
   let accuracy = folded.accuracy;
   let pen = folded.pen;
   const splash = folded.splash * SCALE;
+  const operatorMods = t.operatorId && meta ? resolveCombatMods(findOperator(meta, t.operatorId) ?? { stats: { aim: 50, toughness: 50, handling: 50, mobility: 50 }, perkIds: [] }) : null;
   if (t.pmc) {
     const lvl = t.level ?? 1;
     damage *= 1 + (lvl - 1) * 0.05;
@@ -404,6 +429,10 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap) {
       accuracy += mods.pmcAcc;
       cooldown /= mods.pmcRof;
     }
+  }
+  if (operatorMods) {
+    accuracy += operatorAccuracyBonus(operatorMods);
+    cooldown *= operatorReloadMult(operatorMods);
   }
   if (map) {
     const boosted = applyHighGroundCombat(range, accuracy, map, t.tx, t.ty);
@@ -448,6 +477,67 @@ function pmcSpawnTile(map: GameMap, s: GameState) {
   return best ?? { tx: 1, ty: 1 };
 }
 
+function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
+  const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
+  let weight = getEquippedWeight(kit);
+  if (t.operatorId && meta) {
+    const op = findOperator(meta, t.operatorId);
+    if (op) weight = operatorEffectiveWeight(kit, resolveCombatMods(op));
+  }
+  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * TILE;
+}
+
+function findDeployTiles(map: GameMap, s: GameState, count: number) {
+  const primary = pmcSpawnTile(map, s);
+  const tiles = [primary];
+  const steps = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+    { dx: 1, dy: 1 },
+    { dx: -1, dy: 1 },
+  ];
+  for (const d of steps) {
+    if (tiles.length >= count) break;
+    const tx = primary.tx + d.dx;
+    const ty = primary.ty + d.dy;
+    if (operatorPlaceableFor(map, s, tx, ty)) tiles.push({ tx, ty, score: 0 });
+  }
+  while (tiles.length < count) tiles.push(primary);
+  return tiles;
+}
+
+function spawnPersistentOperatorTower(
+  s: GameState,
+  map: GameMap,
+  op: PersistentOperator,
+  spot: { tx: number; ty: number },
+  debuffHpMult: number,
+) {
+  const hp = persistentOperatorMaxHp(op, debuffHpMult);
+  const armorDef = op.equipment.armor ? ARMORS[op.equipment.armor] : undefined;
+  s.towers.push({
+    id: s.nextId++,
+    tx: spot.tx,
+    ty: spot.ty,
+    surface: operatorPlacementSurface(map, spot.tx, spot.ty) ?? "GROUND",
+    weapon: op.equipment.weapon,
+    attachments: [...op.equipment.attachments],
+    cd: 0,
+    angle: 0,
+    flash: 0,
+    kills: 0,
+    hp,
+    maxHp: hp,
+    hurt: 0,
+    operatorId: op.id,
+    armor: op.equipment.armor,
+    armorHp: armorDef ? armorDef.durability : 0,
+    ...weaponRuntimeFields(op.equipment.weapon),
+  });
+}
+
 
 export default function TarkovTD() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -455,10 +545,15 @@ export default function TarkovTD() {
   const metaRef = useRef<Meta>(loadMeta());
   const uidRef = useRef(1);
   const [mapId, setMapId] = useState<string>("kolkhoz");
-  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "supplies">("hideout");
+  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "supplies" | "radio">("hideout");
   const [editMode, setEditMode] = useState(false);
   const [suppliesTab, setSuppliesTab] = useState<"stash" | "market">("stash");
-  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests">("overview");
+  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew">("overview");
+  const [selectedRecruitId, setSelectedRecruitId] = useState<string | null>(null);
+  const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
+  const [deployOperatorIds, setDeployOperatorIds] = useState<string[]>(() =>
+    aliveOperators(loadMeta()).map((o) => o.id),
+  );
   const [shopTab, setShopTab] = useState<"weapon" | "attachment" | "armor" | "backpack" | "meds">("weapon");
   const [stashTab, setStashTab] = useState<
     "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
@@ -517,7 +612,7 @@ export default function TarkovTD() {
 
   const persist = useCallback((nextStash: Item[], nextLoadout: Item[]) => {
     const m = metaRef.current;
-    m.stash = [...nextStash, ...nextLoadout].map((i) => ({ defId: i.id }));
+    m.stash = stashEntriesFromItems([...nextStash, ...nextLoadout]);
     saveMeta(m);
   }, []);
 
@@ -544,15 +639,15 @@ export default function TarkovTD() {
 
   const deploy = useCallback(() => {
     const m = metaRef.current;
-    const mods = debuffMods(m.pmc.debuffs);
+    const debuffs = debuffMods(m.pmc.debuffs);
     const s = freshState(
       loadout.map((i) => ({ ...i })),
       "prep",
       mapRef.current,
-      Math.round(START_ROUBLES * mods.startRoubles) + skillMods(m.skills).startRoubles,
+      Math.round(START_ROUBLES * debuffs.startRoubles) + skillMods(m.skills).startRoubles,
     );
     const spot = pmcSpawnTile(mapRef.current, s);
-    const hp = pmcMaxHp(m.pmc.level, mods);
+    const hp = pmcMaxHp(m.pmc.level, debuffs);
     const armorDef = m.pmc.armor ? ARMORS[m.pmc.armor] : undefined;
     s.towers.push({
       id: s.nextId++,
@@ -575,6 +670,11 @@ export default function TarkovTD() {
       armorHp: armorDef ? armorDef.durability : 0,
       ...weaponRuntimeFields(m.pmc.weapon),
     });
+    const crewDeploy = aliveOperators(m).filter((o) => deployOperatorIds.includes(o.id));
+    const tiles = findDeployTiles(mapRef.current, s, crewDeploy.length + 1);
+    crewDeploy.forEach((op, i) => {
+      spawnPersistentOperatorTower(s, mapRef.current, op, tiles[i + 1] ?? tiles[0]!, debuffs.pmcHp);
+    });
     gs.current = s;
     setChoices([]);
     setPendingLoot(null);
@@ -584,11 +684,12 @@ export default function TarkovTD() {
     setLoadout([]);
     setScreen("hideout");
     persist(stash, []);
+    const crewNote = crewDeploy.length ? ` + ${crewDeploy.length} crew` : "";
     setLog([
-      `${m.pmc.name} inserted at ${mapRef.current.def.name}. Keep them alive — if they die, the run is over for good.`,
+      `${m.pmc.name} inserted at ${mapRef.current.def.name}${crewNote}. Keep them alive — if they die, the run is over for good.`,
     ]);
     rerender();
-  }, [loadout, persist, rerender, stash]);
+  }, [deployOperatorIds, loadout, persist, rerender, stash]);
 
   const toHideout = useCallback(
     (keepBackpack: boolean) => {
@@ -625,9 +726,18 @@ export default function TarkovTD() {
         m.pmc.attachments = keepBackpack ? [...pmc.attachments] : [];
         m.pmc.armor = keepBackpack ? (pmc.armor ?? null) : null;
       }
+      for (const t of s.towers) {
+        if (!t.operatorId) continue;
+        const idx = m.crew.operators.findIndex((o) => o.id === t.operatorId);
+        if (idx < 0 || m.crew.operators[idx]!.status === "dead") continue;
+        if (keepBackpack) {
+          m.crew.operators[idx] = syncOperatorEquipmentFromTower(m.crew.operators[idx]!, t);
+        }
+      }
       setStash(next);
-      m.stash = next.map((i) => ({ defId: i.id }));
+      m.stash = stashEntriesFromItems(next);
       m.runs += 1;
+      refreshRecruitmentPoolIfNeeded(m);
       saveMeta(m);
       gs.current = freshState([], "hideout", mapRef.current);
       setLoadout([]);
@@ -665,7 +775,7 @@ export default function TarkovTD() {
       const item = makeItem(defId, newUid())!;
       const next = [...stash, item];
       setStash(next);
-      m.stash = [...next, ...loadout].map((i) => ({ defId: i.id }));
+      m.stash = stashEntriesFromItems([...next, ...loadout]);
       saveMeta(m);
       pushLog(`Bought ${def.name} for ${price}₽.`);
       rerender();
@@ -683,7 +793,7 @@ export default function TarkovTD() {
       const next = stash.filter((i) => i.uid !== uid);
       setStash(next);
       m.bank += paid;
-      m.stash = [...next, ...loadout].map((i) => ({ defId: i.id }));
+      m.stash = stashEntriesFromItems([...next, ...loadout]);
       saveMeta(m);
       pushLog(`Sold ${item.name} on the black market for ${paid}₽ (bank).`);
       rerender();
@@ -782,6 +892,7 @@ export default function TarkovTD() {
         if (oldId) back.push(makeItem(oldId, newUid())!);
         m.pmc.weapon = item.ref;
         const slots = WEAPONS[item.ref]?.slots ?? 1;
+        m.pmc.attachments = [...(item.installed ?? [])].slice(0, slots);
         while (m.pmc.attachments.length > slots) {
           const popped = m.pmc.attachments.pop()!;
           const aid = attachItemId(popped);
@@ -800,7 +911,7 @@ export default function TarkovTD() {
       }
       ns = [...ns, ...back].slice(0, stashSlots);
       setStash(ns);
-      m.stash = [...ns, ...loadout].map((i) => ({ defId: i.id }));
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
       saveMeta(m);
       pushLog(`${item.name} fitted to ${m.pmc.name}.`);
       rerender();
@@ -811,42 +922,90 @@ export default function TarkovTD() {
   const unequipPmc = useCallback(
     (slot: "weapon" | "armor" | number) => {
       const m = metaRef.current;
-      let defId: string | null = null;
+      let back: Item | null = null;
       if (slot === "weapon") {
         if (m.pmc.weapon === STARTER_WEAPON_ID) return pushLog("They keep a sidearm as a fallback.");
-        defId = weaponItemId(m.pmc.weapon);
+        const wid = weaponItemId(m.pmc.weapon);
+        back = wid ? makeItem(wid, newUid()) : null;
+        if (back && m.pmc.attachments.length) back.installed = [...m.pmc.attachments];
         m.pmc.weapon = STARTER_WEAPON_ID;
-        const slots = WEAPONS[STARTER_WEAPON_ID]!.slots;
-        const spill: Item[] = [];
-        while (m.pmc.attachments.length > slots) {
-          const popped = m.pmc.attachments.pop()!;
-          const aid = attachItemId(popped);
-          if (aid) spill.push(makeItem(aid, newUid())!);
-        }
-        if (spill.length) {
-          const ns = [...stash, ...spill].slice(0, stashSlots);
-          setStash(ns);
-        }
+        m.pmc.attachments = [];
       } else if (slot === "armor") {
         if (!m.pmc.armor) return;
-        defId = armorItemId(m.pmc.armor);
+        const aid = armorItemId(m.pmc.armor);
+        back = aid ? makeItem(aid, newUid()) : null;
         m.pmc.armor = null;
       } else {
         const att = m.pmc.attachments[slot];
         if (!att) return;
         m.pmc.attachments.splice(slot, 1);
-        defId = attachItemId(att);
+        const aid = attachItemId(att);
+        back = aid ? makeItem(aid, newUid()) : null;
       }
       setStash((cur) => {
-        const back = defId ? makeItem(defId, newUid()) : null;
         const ns = (back ? [...cur, back] : cur).slice(0, stashSlots);
-        m.stash = [...ns, ...loadout].map((i) => ({ defId: i.id }));
+        m.stash = stashEntriesFromItems([...ns, ...loadout]);
         saveMeta(m);
         return ns;
       });
       rerender();
     },
-    [loadout, pushLog, rerender, stash, stashSlots],
+    [loadout, pushLog, rerender, stashSlots],
+  );
+
+  const hireRecruit = useCallback(
+    (candidateId: string) => {
+      const m = metaRef.current;
+      const candidate = m.crew.recruitment.candidates.find((c) => c.candidateId === candidateId);
+      const cost = candidate?.cost ?? 0;
+      const result = hireCandidate(m, candidateId);
+      if (!result.ok) return pushLog(result.reason);
+      saveMeta(m);
+      setDeployOperatorIds((ids) => [...ids, result.operator.id]);
+      setSelectedRecruitId(null);
+      pushLog(`${result.operator.name} hired for ${cost}₽.`);
+      rerender();
+    },
+    [pushLog, rerender],
+  );
+
+  const equipOnCrew = useCallback(
+    (operatorId: string, uid: number) => {
+      const m = metaRef.current;
+      const op = findOperator(m, operatorId);
+      if (!op || op.status !== "alive") return;
+      const item = stash.find((i) => i.uid === uid);
+      if (!item) return;
+      let result;
+      if (item.kind === "weapon") result = equipWeaponOnOperator(op, stash, newUid(), uid);
+      else if (item.kind === "armor") result = equipArmorOnOperator(op, stash, newUid(), uid);
+      else if (item.kind === "attachment") result = equipAttachmentOnOperator(op, stash, newUid(), uid);
+      else return pushLog("Operators can only wear guns, mods and armor.");
+      if (!result.ok) return pushLog(result.reason);
+      const applied = applyOperatorEquipToMeta(m, operatorId, result, stashSlots);
+      if (!applied.ok) return pushLog(applied.reason);
+      setStash(applied.stash.slice(0, stashSlots));
+      saveMeta(m);
+      pushLog(applied.message);
+      rerender();
+    },
+    [pushLog, rerender, stash, stashSlots],
+  );
+
+  const unequipCrew = useCallback(
+    (operatorId: string, slot: "weapon" | "armor" | number) => {
+      const m = metaRef.current;
+      const op = findOperator(m, operatorId);
+      if (!op) return;
+      const result = unequipOperatorSlot(op, stash, newUid(), slot);
+      if (!result.ok) return pushLog(result.reason);
+      const applied = applyOperatorEquipToMeta(m, operatorId, result, stashSlots);
+      if (!applied.ok) return pushLog(applied.reason);
+      setStash(applied.stash.slice(0, stashSlots));
+      saveMeta(m);
+      rerender();
+    },
+    [pushLog, rerender, stash, stashSlots],
   );
 
 
@@ -1304,8 +1463,8 @@ export default function TarkovTD() {
 
       // towers move, then fire (moving operators cannot shoot)
       for (const t of s.towers) {
-        if (isOperatorMoving(t)) stepOperatorMove(t, dt, mapRef.current, operatorMoveSpeedPx(t));
-        const st = towerStats(t, mods, mapRef.current);
+        if (isOperatorMoving(t)) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
+        const st = towerStats(t, mods, mapRef.current, metaRef.current);
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
         t.hurt = Math.max(0, t.hurt - dt);
@@ -1499,6 +1658,27 @@ export default function TarkovTD() {
                     paySettledKills(s);
                     rerender();
                     return;
+                  }
+                  if (tw.operatorId) {
+                    const op = findOperator(metaRef.current, tw.operatorId);
+                    markOperatorDead(metaRef.current, tw.operatorId);
+                    saveMeta(metaRef.current);
+                    dropGear(tw, s);
+                    clearOperatorMove(tw);
+                    s.towers = s.towers.filter((t) => t.id !== tw.id);
+                    if (s.selectedId === tw.id) s.selectedId = null;
+                    spawnParticles(b.tx, b.ty, "#ff8a3c", 22, 110);
+                    s.shake = Math.max(s.shake, 9);
+                    s.floats.push({
+                      x: b.tx,
+                      y: b.ty - 16,
+                      life: 1.4,
+                      text: "KIA — GEAR DROPPED",
+                      color: "#ff5a3c",
+                    });
+                    pushLog(`${op?.name ?? "Operator"} is KIA. Kit dropped — grab it or it's gone.`);
+                    rerender();
+                    continue;
                   }
                   dropGear(tw, s);
                   clearOperatorMove(tw);
@@ -2094,6 +2274,7 @@ export default function TarkovTD() {
     // living operators walk out with everything they carry
     const carried: Item[] = [];
     for (const t of s.towers) {
+      if (t.operatorId) continue;
       const wid = weaponItemId(t.weapon);
       if (wid && t.weapon !== "toz") carried.push(makeItem(wid, newUid())!);
       for (const a of t.attachments) {
@@ -2287,7 +2468,7 @@ export default function TarkovTD() {
                   subtitle={`${meta.pmc.name} · LVL ${meta.pmc.level} · ${meta.skillPoints} skill point(s)`}
                 >
                   <div className="mb-2 flex flex-wrap gap-1">
-                    {(["overview", "skills", "quests"] as const).map((tab) => (
+                    {(["overview", "crew", "skills", "quests"] as const).map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setScavTab(tab)}
@@ -2327,6 +2508,91 @@ export default function TarkovTD() {
                         )}
                       </div>
                       <div className="mt-2 text-muted-foreground">SKILL POINTS {meta.skillPoints}</div>
+                    </div>
+                  )}
+                  {scavTab === "crew" && (
+                    <div className="pixel-card text-left font-mono text-[10px]">
+                      <div className="text-muted-foreground">HIRED OPERATORS</div>
+                      {meta.crew.operators.length === 0 ? (
+                        <div className="mt-2 text-muted-foreground">No crew yet — check the Radio.</div>
+                      ) : (
+                        <div className="mt-2 space-y-1">
+                          {meta.crew.operators.map((op) => (
+                            <button
+                              key={op.id}
+                              onClick={() => setSelectedCrewId(op.id === selectedCrewId ? null : op.id)}
+                              className={`w-full border px-2 py-1 text-left ${
+                                selectedCrewId === op.id ? "border-primary text-primary" : "border-border/50"
+                              }`}
+                            >
+                              <div className="flex justify-between gap-2">
+                                <span>
+                                  {op.name} · {op.roleLabel}
+                                </span>
+                                <span className={op.status === "dead" ? "text-destructive" : "text-accent"}>
+                                  {op.status === "dead" ? "DEAD" : "ALIVE"}
+                                </span>
+                              </div>
+                              <div className="text-[9px] text-muted-foreground">
+                                {WEAPONS[op.equipment.weapon]?.name ?? "SIDEARM"} ·{" "}
+                                {op.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ") || "—"}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {selectedCrewId && (() => {
+                        const op = meta.crew.operators.find((o) => o.id === selectedCrewId);
+                        if (!op) return null;
+                        return (
+                          <div className="mt-3 border-t border-border/40 pt-2">
+                            <div className="font-display text-[10px] text-primary">
+                              {op.name} · {op.roleLabel}
+                            </div>
+                            <div className="mt-1 grid grid-cols-2 gap-1 text-[9px]">
+                              {(Object.keys(STAT_LABELS) as (keyof typeof STAT_LABELS)[]).map((k) => (
+                                <div key={k}>
+                                  {STAT_LABELS[k]} {op.stats[k]}
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-1 text-[9px] text-muted-foreground">
+                              PERKS: {op.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ") || "—"}
+                            </div>
+                            <div className="mt-2 grid gap-1">
+                              <button onClick={() => unequipCrew(op.id, "weapon")} className="pixel-card text-left">
+                                WEAPON: {WEAPONS[op.equipment.weapon]?.name ?? "SIDEARM"}
+                              </button>
+                              <button onClick={() => unequipCrew(op.id, "armor")} className="pixel-card text-left">
+                                ARMOR: {op.equipment.armor ? (ARMORS[op.equipment.armor]?.name ?? "ARMOR") : "EMPTY"}
+                              </button>
+                              {op.equipment.attachments.map((att, i) => (
+                                <button key={att} onClick={() => unequipCrew(op.id, i)} className="pixel-card text-left">
+                                  MOD: {ATTACHMENTS[att]?.name ?? att}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="mt-2 text-[9px] text-muted-foreground">EQUIP FROM STASH</div>
+                            <div className="mt-1 max-h-[100px] space-y-1 overflow-auto">
+                              {stash
+                                .filter((i) => i.kind === "weapon" || i.kind === "armor" || i.kind === "attachment")
+                                .slice(0, 12)
+                                .map((item) => (
+                                  <button
+                                    key={item.uid}
+                                    onClick={() => equipOnCrew(op.id, item.uid)}
+                                    className="w-full border border-border/40 px-1 py-[2px] text-left hover:border-primary"
+                                  >
+                                    {item.name}
+                                  </button>
+                                ))}
+                            </div>
+                            <div className="mt-1 text-[9px] text-muted-foreground">
+                              LVL {op.progression.level} · XP {op.progression.xp}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                   {scavTab === "skills" && (
@@ -2409,6 +2675,71 @@ export default function TarkovTD() {
                 </Overlay>
               )}
 
+              {s.phase === "hideout" && screen === "radio" && (
+                <Overlay title="RADIO — RECRUITMENT" subtitle="Incoming transmissions. Hire carefully — kit value is in the cost.">
+                  <div className="text-left font-mono text-[10px]">
+                    <div className="text-muted-foreground">AVAILABLE OPERATORS</div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                      {meta.crew.recruitment.candidates.map((c) => (
+                        <button
+                          key={c.candidateId}
+                          onClick={() => setSelectedRecruitId(c.candidateId)}
+                          className={`pixel-card text-left ${
+                            selectedRecruitId === c.candidateId ? "border-primary" : ""
+                          }`}
+                        >
+                          <div className="font-display text-[10px] text-primary">{c.name}</div>
+                          <div className="text-[9px] text-muted-foreground">{c.roleLabel}</div>
+                          <div className="mt-1 text-[9px]">{c.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ")}</div>
+                          <div className="mt-1 text-accent">{c.cost} ₽</div>
+                        </button>
+                      ))}
+                    </div>
+                    {(() => {
+                      const c =
+                        meta.crew.recruitment.candidates.find((x) => x.candidateId === selectedRecruitId) ??
+                        meta.crew.recruitment.candidates[0];
+                      if (!c) return <div className="mt-3 text-muted-foreground">No transmissions on this frequency.</div>;
+                      return (
+                        <div className="pixel-card mt-3">
+                          <div className="font-display text-[10px] text-primary">
+                            {c.name} · {c.roleLabel}
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-1 text-[9px]">
+                            {(Object.keys(STAT_LABELS) as (keyof typeof STAT_LABELS)[]).map((k) => (
+                              <div key={k}>
+                                {STAT_LABELS[k]} {c.stats[k]}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-2 text-[9px] text-muted-foreground">
+                            PERKS: {c.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ")}
+                          </div>
+                          <div className="mt-2 text-[9px]">
+                            KIT: {WEAPONS[c.equipment.weapon]?.name ?? c.equipment.weapon}
+                            {c.equipment.attachments.length
+                              ? ` + ${c.equipment.attachments.map((a) => ATTACHMENTS[a]?.name ?? a).join(", ")}`
+                              : ""}
+                            {c.equipment.armor ? ` · ${ARMORS[c.equipment.armor]?.name ?? c.equipment.armor}` : ""}
+                          </div>
+                          <div className="mt-2 font-display text-[10px]">COST: {c.cost} ₽</div>
+                          <button
+                            onClick={() => hireRecruit(c.candidateId)}
+                            disabled={meta.bank < c.cost}
+                            className="pixel-btn pixel-btn-primary mt-2 w-full disabled:opacity-50"
+                          >
+                            {meta.bank < c.cost ? "INSUFFICIENT FUNDS" : "HIRE"}
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <button onClick={() => setScreen("hideout")} className="pixel-btn mt-3 w-full">
+                    BACK TO CAMP
+                  </button>
+                </Overlay>
+              )}
+
               {s.phase === "hideout" && screen === "region" && (
                 <Overlay title="DESTINATIONS" subtitle="Pick your insertion point. Higher threat, better loot.">
                   <RegionMap
@@ -2421,6 +2752,37 @@ export default function TarkovTD() {
                     {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
                     {loadout.length}/{loadoutSlots}
                   </div>
+                  {aliveOperators(meta).length > 0 && (
+                    <div className="mt-2 pixel-card text-left font-mono text-[10px]">
+                      <div className="text-muted-foreground">CREW DEPLOYMENT</div>
+                      <div className="mt-1 space-y-1">
+                        <div className="text-primary">
+                          {meta.pmc.name} (ScavLord) — always deploys
+                        </div>
+                        {aliveOperators(meta).map((op) => {
+                          const on = deployOperatorIds.includes(op.id);
+                          return (
+                            <button
+                              key={op.id}
+                              onClick={() =>
+                                setDeployOperatorIds((ids) =>
+                                  on ? ids.filter((id) => id !== op.id) : [...ids, op.id],
+                                )
+                              }
+                              className={`flex w-full items-center justify-between border px-2 py-1 ${
+                                on ? "border-accent text-accent" : "border-border/50 text-muted-foreground"
+                              }`}
+                            >
+                              <span>
+                                {op.name} · {WEAPONS[op.equipment.weapon]?.name ?? "SIDEARM"}
+                              </span>
+                              <span>{on ? "DEPLOY" : "STAY"}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   {DEV_TOOLS_ENABLED && (
                     <Link
                       to="/dev/map-editor"
