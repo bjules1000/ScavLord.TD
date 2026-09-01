@@ -7,12 +7,15 @@ import {
 } from "./balance";
 import {
   COMPARE_CATEGORIES,
+  STACK_METRICS,
   allCanonicalWeapons,
+  axisTicks,
   benchmarkScopeCategory,
   buildCompareRows,
   burstDps,
   compareClassOf,
   compareMetricTone,
+  composeStackedCompare,
   damagePerShot,
   defaultSortDir,
   editorFieldBenchmark,
@@ -512,5 +515,84 @@ describe("Item Editor stat benchmarks", () => {
     expect(valueTone(3, 2.5, true)).toBe("buff");
     const reloadNerf = editorFieldBenchmark(mp133, (w) => mergeWeaponDef(w, { reloadMs: 900 }), all, "all", "reload")!;
     expect(reloadNerf.tone).toBe("nerf");
+  });
+});
+
+describe("stacked Weapon Compare pipeline", () => {
+  const all = allCanonicalWeapons();
+  const identity = <T,>(w: T) => w;
+
+  it("category filtering returns only that class", () => {
+    const view = composeStackedCompare(all, identity, "SHOTGUNS", "damage", "", "desc");
+    expect(view.weapons.map((w) => w.id).sort()).toEqual(["mp133", "toz"]);
+    expect(view.category).toBe("SHOTGUNS");
+    expect(view.order).toHaveLength(2);
+  });
+
+  it("stat filtering changes the displayed metric values", () => {
+    const dmg = composeStackedCompare(all, identity, "ALL", "damage", "", "desc");
+    const range = composeStackedCompare(all, identity, "ALL", "range", "", "desc");
+    expect(dmg.metric).toBe("damage");
+    expect(range.metric).toBe("range");
+    expect(dmg.rows.find((r) => r.id === "toz")?.test).toBe(damagePerShot(toz));
+    expect(range.rows.find((r) => r.id === "toz")?.test).toBe(toz.range);
+  });
+
+  it("category and stat filters compose", () => {
+    const view = composeStackedCompare(all, identity, "RIFLES", "range", "", "desc");
+    expect(view.weapons.every((w) => w.cls === "rifle")).toBe(true);
+    expect(view.metric).toBe("range");
+    expect(view.order[0]).toBe("m4");
+  });
+
+  it("search composes with category and stat", () => {
+    const view = composeStackedCompare(all, identity, "BOLT", "damage", "long", "desc");
+    expect(view.weapons.map((w) => w.id)).toEqual(["dvl10"]);
+    expect(view.rows[0]?.test).toBe(damagePerShot(WEAPONS["dvl10"]!));
+    const miss = composeStackedCompare(all, identity, "SHOTGUNS", "damage", "kalash", "desc");
+    expect(miss.weapons).toHaveLength(0);
+  });
+
+  it("sorts high → low and low → high on the selected stat", () => {
+    const hi = composeStackedCompare(all, identity, "ALL", "weight", "", "desc");
+    const lo = composeStackedCompare(all, identity, "ALL", "weight", "", "asc");
+    expect(hi.order[0]).toBe("pkm");
+    expect(lo.order[0]).toBe("pm");
+    expect(hi.order[hi.order.length - 1]).toBe("pm");
+    expect(lo.order[lo.order.length - 1]).toBe("pkm");
+  });
+
+  it("compare uses the current test/draft displayed values", () => {
+    const testOf = (w: typeof ak74) => (w.id === "ak74" ? mergeWeaponDef(w, { damage: 40 }) : w);
+    const view = composeStackedCompare(all, testOf, "RIFLES", "damage", "", "desc");
+    const ak = view.rows.find((r) => r.id === "ak74")!;
+    expect(ak.base).toBe(19);
+    expect(ak.test).toBe(40);
+    expect(ak.changed).toBe(true);
+    expect(view.order[0]).toBe("ak74");
+    expect(WEAPONS["ak74"]!.damage).toBe(19);
+  });
+
+  it("shared domain covers every visible weapon", () => {
+    const view = composeStackedCompare(all, identity, "ALL", "range", "", "desc");
+    const values = view.rows.map((r) => r.test);
+    expect(view.domain.min).toBe(Math.min(...values));
+    expect(view.domain.max).toBe(Math.max(...values));
+    expect(axisTicks(view.domain.min, view.domain.max)).toHaveLength(5);
+    expect(axisTicks(view.domain.min, view.domain.max)[0]).toBe(view.domain.min);
+  });
+
+  it("STACK_METRICS has no overview clutter axis", () => {
+    expect(STACK_METRICS).not.toContain("overview");
+    expect(STACK_METRICS).toContain("damage");
+    expect(STACK_METRICS).toContain("sustainedDps");
+  });
+
+  it("switching stat keeps category and switching category keeps search", () => {
+    const riflesDmg = composeStackedCompare(all, identity, "RIFLES", "damage", "", "desc");
+    const riflesRange = composeStackedCompare(all, identity, "RIFLES", "range", "", "desc");
+    expect(riflesDmg.weapons.map((w) => w.id).sort()).toEqual(riflesRange.weapons.map((w) => w.id).sort());
+    const searched = composeStackedCompare(all, identity, "ALL", "weight", "kalash", "desc");
+    expect(searched.weapons.map((w) => w.id)).toEqual(["ak74"]);
   });
 });

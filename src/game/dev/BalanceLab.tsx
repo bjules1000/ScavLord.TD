@@ -42,9 +42,10 @@ import {
   mergeWeaponDef,
   type BenchmarkScope,
   type CompareCategory,
-  type CompareMetric,
+  type CompareSortDir,
   type EditorBenchmark,
   type LabView,
+  type ScalarMetric,
 } from "./compareMetrics";
 
 const CATS: LabCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS"];
@@ -81,8 +82,8 @@ export default function BalanceLab({
   const [copied, setCopied] = useState(false);
   const [labView, setLabView] = useState<LabView>("editor");
   const [compareCategory, setCompareCategory] = useState<CompareCategory>("ALL");
-  const [compareMetric, setCompareMetric] = useState<CompareMetric>("overview");
-  const [sortReversed, setSortReversed] = useState(false);
+  const [compareMetric, setCompareMetric] = useState<ScalarMetric>("sustainedDps");
+  const [compareSortDir, setCompareSortDir] = useState<CompareSortDir>("desc");
   const [benchmarkScope, setBenchmarkScope] = useState<BenchmarkScope>("category");
   const allWeapons = useMemo(() => allCanonicalWeapons(), []);
   const catalog = useMemo(() => balanceLabCatalog(), []);
@@ -135,7 +136,6 @@ export default function BalanceLab({
     if (!metric) return;
     setCompareCategory(bench.category);
     setCompareMetric(metric);
-    setSortReversed(false);
     setLabView("compare");
   };
 
@@ -227,14 +227,11 @@ export default function BalanceLab({
               category={compareCategory}
               query={query}
               metric={compareMetric}
-              sortReversed={sortReversed}
+              sortDir={compareSortDir}
               selectedId={selected?.kind === "weapon" ? selected.id : null}
               onCategory={setCompareCategory}
-              onMetric={(m) => {
-                setCompareMetric(m);
-                setSortReversed(false);
-              }}
-              onToggleSort={() => setSortReversed((v) => !v)}
+              onMetric={setCompareMetric}
+              onSortDir={setCompareSortDir}
               onSelect={(id) => {
                 const w = canonicalWeapon(id);
                 if (!w) return;

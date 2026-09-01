@@ -108,6 +108,19 @@ export const COMPARE_METRIC_LABEL: Record<CompareMetric, string> = {
 
 export type ScalarMetric = Exclude<CompareMetric, "overview">;
 
+/** Stats shown in the stacked Weapon Compare graph. Overview is not a compare axis. */
+export const STACK_METRICS: readonly ScalarMetric[] = [
+  "damage",
+  "burstDps",
+  "sustainedDps",
+  "accuracy",
+  "range",
+  "rpm",
+  "mag",
+  "reload",
+  "weight",
+];
+
 export const OVERVIEW_METRICS: readonly ScalarMetric[] = [
   "damage",
   "sustainedDps",
@@ -396,6 +409,63 @@ export function sortWeaponIds(
     .map((i) => i.id);
 }
 
+export type CompareSortDir = "desc" | "asc";
+
+export function axisTicks(min: number, max: number, count = 5): number[] {
+  if (count < 2) return [min];
+  if (nearlyEqualNum(min, max)) return [min];
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) out.push(min + ((max - min) * i) / (count - 1));
+  return out;
+}
+
+export type StackedCompareView = {
+  weapons: WeaponDef[];
+  rows: MetricPair[];
+  order: string[];
+  domain: { min: number; max: number };
+  median: number;
+  ranksTest: Map<string, number>;
+  metric: ScalarMetric;
+  category: CompareCategory;
+  sortDir: CompareSortDir;
+};
+
+/**
+ * Single pipeline for Weapon Compare: category × metric × search × sort.
+ * Displayed values are TEST/draft via testOf.
+ */
+export function composeStackedCompare(
+  allWeapons: readonly WeaponDef[],
+  testOf: (w: WeaponDef) => WeaponDef,
+  category: CompareCategory,
+  metric: ScalarMetric,
+  query: string,
+  sortDir: CompareSortDir,
+  nameOf: (w: WeaponDef) => string = (w) => w.name,
+): StackedCompareView {
+  const weapons = filterCompareWeapons(allWeapons, category, query, nameOf);
+  const built = buildCompareRows(weapons, testOf, metric);
+  const order = sortWeaponIds(
+    built.rows.map((r) => {
+      const w = weapons.find((x) => x.id === r.id)!;
+      return { id: r.id, value: r.test, name: nameOf(testOf(w)) };
+    }),
+    sortDir,
+  );
+  return {
+    weapons,
+    rows: built.rows,
+    order,
+    domain: built.domain,
+    median: built.median,
+    ranksTest: built.ranksTest,
+    metric,
+    category,
+    sortDir,
+  };
+}
+
 export type MetricPair = {
   id: string;
   name: string;
@@ -650,7 +720,7 @@ export function formatEditorRank(bench: EditorBenchmark): string {
   return `${formatRank(bench.testRank, bench.total)}${suffix}`;
 }
 
-export function compareMetricFromEditorKey(key: EditorBenchmarkKey): CompareMetric | null {
+export function compareMetricFromEditorKey(key: EditorBenchmarkKey): ScalarMetric | null {
   if (key === "cooldown") return "rpm";
   if (
     key === "pellets" ||
