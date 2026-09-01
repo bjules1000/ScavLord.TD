@@ -32,4 +32,8 @@ describe("DEV tools menu", () => {
   it("menu exposes Wave Lab", () => {
     expect(devToolEntries(true).some((e) => e.id === "wave-lab" && e.label === "Wave Lab")).toBe(true);
   });
+
+  it("menu exposes Quest Editor", () => {
+    expect(devToolEntries(true).some((e) => e.id === "quest-editor" && e.label === "Quest Editor")).toBe(true);
+  });
 });

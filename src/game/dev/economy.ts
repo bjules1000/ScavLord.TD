@@ -100,7 +100,7 @@ export type ItemSourceRow = {
 };
 
 export const FUTURE_SOURCE_TYPES: readonly LootSourceType[] = ["enemy", "boss", "quest"];
-/** Economy Lab drop ids for later: enemy:<kind> / boss:<kind> (see enemyDropSourceId in waveLabCore). */
+/** Economy Lab drop ids for later: enemy:<kind> / boss:<kind> / quest:<questId>. */
 
 export const ECONOMY_CATEGORIES: readonly EconomyCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS", "LOOT"];
 

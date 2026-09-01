@@ -188,11 +188,18 @@ import {
 import BalanceLab from "./dev/BalanceLab";
 import EconomyLab from "./dev/EconomyLab";
 import WaveLab from "./dev/WaveLab";
+import QuestEditor from "./dev/QuestEditor";
 import {
   effectiveEnemy,
   effectiveWave,
   requestTestWave,
 } from "./dev/waveLabCore";
+import {
+  isQuestTestActive,
+  noteQuestTestEvent,
+  requestTestQuest,
+  resetQuestTestProgress,
+} from "./dev/questLab";
 import {
   effectiveItemDef,
   effectiveLootMult,
@@ -461,6 +468,7 @@ export default function TarkovTD() {
   const [balanceLabOpen, setBalanceLabOpen] = useState(false);
   const [economyLabOpen, setEconomyLabOpen] = useState(false);
   const [waveLabOpen, setWaveLabOpen] = useState(false);
+  const [questLabOpen, setQuestLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
@@ -600,9 +608,11 @@ export default function TarkovTD() {
         m.bank += settled.soldValue;
         next = settled.next;
       }
-      m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
-      m.quests.scavKills += s.scavKills;
-      m.quests.bossKills += s.bossKills;
+      if (!isQuestTestActive()) {
+        m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
+        m.quests.scavKills += s.scavKills;
+        m.quests.bossKills += s.bossKills;
+      }
       // Operator bookkeeping: they keep kit on extract, lose it on death / wipe
       const pmc = s.towers.find((t) => t.pmc);
       if (s.pmcDown) {
@@ -876,14 +886,16 @@ export default function TarkovTD() {
     rerender();
   }, [pushLog, rerender]);
 
-  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "none") => {
+  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "none") => {
     const balance = which === "balance";
     const economy = which === "economy";
     const wave = which === "wave";
+    const quest = which === "quest";
     setBalanceLabOpen(balance);
     setEconomyLabOpen(economy);
     setWaveLabOpen(wave);
-    labOpenRef.current = balance || economy || wave;
+    setQuestLabOpen(quest);
+    labOpenRef.current = balance || economy || wave || quest;
   }, []);
 
   const onDevTool = useCallback(
@@ -903,6 +915,10 @@ export default function TarkovTD() {
       }
       if (id === "wave-lab") {
         setLabs("wave");
+        return;
+      }
+      if (id === "quest-editor") {
+        setLabs("quest");
         return;
       }
       setLabs("balance");
@@ -1058,6 +1074,7 @@ export default function TarkovTD() {
       const def = effectiveEnemy(e.kind);
       const book: KillBook = s;
       const xp = creditKillBook(e.kind, def.bounty, book);
+      noteQuestTestEvent({ type: "KILL", kind: e.kind, mapId: mapRef.current.def.id });
       const money = def.bounty;
       const pmc = s.towers.find((t) => t.pmc);
       if (pmc) {
@@ -1593,6 +1610,7 @@ export default function TarkovTD() {
 
       if (s.phase === "combat" && s.queue.length === 0 && s.enemies.length === 0) {
         s.phase = "loot";
+        noteQuestTestEvent({ type: "WAVE_COMPLETE", wave: s.wave, mapId: mapRef.current.def.id });
         s.roubles += Math.round((120 + s.wave * 30) * effectiveLootMult(mapRef.current.def));
         const found = rollChoices(
           s.wave,
@@ -1935,6 +1953,7 @@ export default function TarkovTD() {
     s.queue = scheduleWave(wave.groups, mapRef.current.lanes.length);
     s.clock = 0;
     s.phase = "combat";
+    noteQuestTestEvent({ type: "WAVE_START", wave: s.wave, mapId: mapRef.current.def.id });
     pushLog(`WAVE ${s.wave} — ${wave.name}`);
     rerender();
   }, [pushLog, rerender]);
@@ -1950,6 +1969,7 @@ export default function TarkovTD() {
       s.queue = r.events;
       s.clock = 0;
       s.phase = "combat";
+      noteQuestTestEvent({ type: "WAVE_START", wave: r.wave, mapId: mapId });
       pushLog(`TEST WAVE ${r.wave} — ${r.name}`);
       rerender();
       return { ok: true as const };
@@ -2094,7 +2114,13 @@ export default function TarkovTD() {
     s.payout = value;
     setSellValuableUids(new Set());
     setLeaveUids(new Set());
-    metaRef.current.quests.extracts += 1;
+    const haul = [...s.backpack, ...carried];
+    const items: { itemId: string; count: number }[] = [];
+    const counts = new Map<string, number>();
+    for (const it of haul) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
+    for (const [itemId, count] of counts) items.push({ itemId, count });
+    noteQuestTestEvent({ type: "EXTRACT", mapId, items });
+    if (!isQuestTestActive()) metaRef.current.quests.extracts += 1;
     s.phase = "extracted";
     pushLog(`Extracted with ${s.backpack.length + carried.length} item(s). Decide what to keep.`);
     rerender();
@@ -3193,6 +3219,28 @@ export default function TarkovTD() {
           onApplied={() => rerender()}
           onTestWave={onTestWave}
           onResetTest={onResetTest}
+        />
+      )}
+      {DEV_TOOLS_ENABLED && questLabOpen && (
+        <QuestEditor
+          enabled={DEV_TOOLS_ENABLED}
+          inRaid={s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted"}
+          onClose={() => setLabs("none")}
+          onApplied={() => rerender()}
+          onTestQuest={(questId) => {
+            const inRaidNow = s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted";
+            const r = requestTestQuest(DEV_TOOLS_ENABLED, inRaidNow, questId);
+            if (r.ok) {
+              pushLog(`TEST QUEST ${questId} — progress isolated from save`);
+              rerender();
+            }
+            return r;
+          }}
+          onResetTestProgress={(questId) => {
+            resetQuestTestProgress(questId);
+            pushLog(`TEST QUEST progress reset (${questId})`);
+            rerender();
+          }}
         />
       )}
     </div>

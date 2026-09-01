@@ -1,22 +1,8 @@
 import { BACKPACKS, ITEM_BY_ID, WEAPONS, makeItem, type Item } from "./gear";
+import { QUESTS, type QuestProgress } from "./quests";
 
-export interface QuestProgress {
-  scavKills: number;
-  bossKills: number;
-  bestWave: number;
-  extracts: number;
-}
-
-export interface QuestDef {
-  id: string;
-  name: string;
-  desc: string;
-  reward: number; // roubles paid when redeemed
-  skillPoints?: number; // skill points paid when redeemed
-  unlocks: string[]; // item ids buyable after redeeming
-  done: (q: QuestProgress) => boolean;
-  progress: (q: QuestProgress) => string;
-}
+export type { QuestDef, QuestProgress } from "./quests";
+export { QUESTS } from "./quests";
 
 export interface SkillDef {
   id: string;
@@ -61,81 +47,6 @@ export function skillMods(ids: string[]): SkillMods {
     startRoubles: has("quartermaster") ? 250 : 0,
   };
 }
-
-
-
-export const QUESTS: QuestDef[] = [
-  {
-    id: "debut",
-    skillPoints: 1,
-    reward: 800,
-    name: "FIRST BLOOD",
-    desc: "Kill 25 scavs.",
-    unlocks: ["w_adar", "a_grip", "m_ifak", "ar_paca"],
-    done: (q) => q.scavKills >= 25,
-    progress: (q) => `${Math.min(25, q.scavKills)}/25`,
-  },
-  {
-    id: "checkpoint",
-    skillPoints: 1,
-    reward: 1500,
-    name: "HOLD THE LINE",
-    desc: "Reach wave 5 in a single raid.",
-    unlocks: ["a_optic", "a_brake", "m_salewa"],
-    done: (q) => q.bestWave >= 5,
-    progress: (q) => `${Math.min(5, q.bestWave)}/5`,
-  },
-  {
-    id: "supplier",
-    skillPoints: 1,
-    reward: 2000,
-    name: "WALK OUT",
-    desc: "Extract once with loot.",
-    unlocks: ["w_ak74", "a_mag", "a_laser"],
-    done: (q) => q.extracts >= 1,
-    progress: (q) => `${Math.min(1, q.extracts)}/1`,
-  },
-  {
-    id: "gunsmith",
-    skillPoints: 2,
-    reward: 3500,
-    name: "ARMORY RUN",
-    desc: "Extract 3 times.",
-    unlocks: ["w_pkm", "w_m4", "a_supp", "m_grizzly", "ar_6b23"],
-    done: (q) => q.extracts >= 3,
-    progress: (q) => `${Math.min(3, q.extracts)}/3`,
-  },
-  {
-    id: "shooters_gallery",
-    skillPoints: 1,
-    reward: 2500,
-    name: "DEEP RAID",
-    desc: "Reach wave 8 in a single raid.",
-    unlocks: ["w_mp133", "a_brake"],
-    done: (q) => q.bestWave >= 8,
-    progress: (q) => `${Math.min(8, q.bestWave)}/8`,
-  },
-  {
-    id: "bounty",
-    skillPoints: 3,
-    reward: 6000,
-    name: "CROWN KILL",
-    desc: "Kill the Enforcer.",
-    unlocks: ["w_sv98", "w_m32", "a_m995", "a_thermal", "ar_slick"],
-    done: (q) => q.bossKills >= 1,
-    progress: (q) => `${Math.min(1, q.bossKills)}/1`,
-  },
-  {
-    id: "long_range",
-    skillPoints: 3,
-    reward: 9000,
-    name: "BLOOD CONTRACT",
-    desc: "Kill 2 Enforcers and extract 6 times.",
-    unlocks: ["w_m700", "w_dvl10", "a_thermal"],
-    done: (q) => q.bossKills >= 2 && q.extracts >= 6,
-    progress: (q) => `${Math.min(2, q.bossKills)}/2 · ${Math.min(6, q.extracts)}/6`,
-  },
-];
 
 export interface DebuffDef {
   id: string;
@@ -191,7 +102,6 @@ export function rollDebuff(current: string[]): DebuffDef | null {
   return pool[Math.floor(Math.random() * pool.length)]!;
 }
 
-
 export interface Meta {
   bank: number;
   claimed: string[];
@@ -244,10 +154,10 @@ export function loadMeta(): Meta {
         level: Math.max(1, Number(p.pmc?.level) || 1),
         xp: Math.max(0, Number(p.pmc?.xp) || 0),
         debuffs: Array.isArray(p.pmc?.debuffs)
-          ? p.pmc!.debuffs.filter((d) => !!DEBUFF_BY_ID[d])
+          ? p.pmc.debuffs.filter((d) => !!DEBUFF_BY_ID[d])
           : [],
-        weapon: WEAPONS[p.pmc?.weapon ?? ""] ? p.pmc!.weapon : base.weapon,
-        attachments: Array.isArray(p.pmc?.attachments) ? p.pmc!.attachments : [],
+        weapon: WEAPONS[p.pmc?.weapon ?? ""] ? p.pmc.weapon : base.weapon,
+        attachments: Array.isArray(p.pmc?.attachments) ? p.pmc.attachments : [],
         armor: p.pmc?.armor ?? null,
         deaths: Number(p.pmc?.deaths) || 0,
       },
@@ -259,7 +169,6 @@ export function loadMeta(): Meta {
     return freshMeta();
   }
 }
-
 
 export function saveMeta(m: Meta) {
   if (typeof window === "undefined") return;
