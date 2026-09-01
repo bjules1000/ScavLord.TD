@@ -1,19 +1,24 @@
 /**
  * Canonical line of sight. Operates on world pixels, not tile ids.
- * Authored invisible walls block sight; decorative props do not.
- * Bridge-deck separation is a surface rule, not 3D raycasting.
+ *
+ * Authored invisible walls block movement only. Sight is blocked by:
+ *   MOUNTAIN occupancy
+ *   intervening HIGH_GROUND ridge mass (not just leaving/entering the
+ *   source or target plateau)
+ *   suspended-bridge deck separation
+ * Decorative props do not block. Range is not applied here.
  */
 import { COLS, ROWS, TILE } from "./data";
-import type { GameMap } from "./map";
-import type { CollisionWall, TileEdge } from "./mapBuilder/schema";
-import { canonicalCollisionWall, isSightBlockedAcrossEdge } from "./mapBuilder/walls";
-import { entitySurface, hasSuspendedBridge } from "./surfaces";
+import { isMountain, type GameMap } from "./map";
+import type { TileEdge } from "./mapBuilder/schema";
+import { isSightBlockedAcrossEdge } from "./mapBuilder/walls";
+import { elevatedSurfaceAt, entitySurface, hasSuspendedBridge } from "./surfaces";
 import type { SurfaceLevel } from "./types";
 
 /** Centralized grid/corner tolerance. World units. */
 export const LOS_EPS = 1e-9;
 
-export type LosBlocker = "WALL" | "BRIDGE_DECK";
+export type LosBlocker = "MOUNTAIN" | "RIDGE" | "BRIDGE_DECK" | "LOS_WALL";
 
 export interface WorldPos {
   x: number;
@@ -27,7 +32,7 @@ export interface SightPos extends WorldPos {
 export interface LosHit {
   clear: boolean;
   blocker: LosBlocker | null;
-  edge: CollisionWall | null;
+  edge: { tx: number; ty: number } | null;
   point: WorldPos | null;
   along: number;
 }
@@ -173,6 +178,35 @@ export function crossedTileEdges(
   return out;
 }
 
+export interface TraversedTile {
+  tx: number;
+  ty: number;
+  t: number;
+  x: number;
+  y: number;
+}
+
+function pushUniqueTile(out: TraversedTile[], tile: TraversedTile) {
+  const last = out[out.length - 1];
+  if (last && last.tx === tile.tx && last.ty === tile.ty) return;
+  out.push(tile);
+}
+
+/** Supercover cell visit list, including start and end tiles. */
+export function traversedTiles(x0: number, y0: number, x1: number, y1: number, tile = TILE): TraversedTile[] {
+  const out: TraversedTile[] = [];
+  const startTx = Math.floor(x0 / tile);
+  const startTy = Math.floor(y0 / tile);
+  pushUniqueTile(out, { tx: startTx, ty: startTy, t: 0, x: x0, y: y0 });
+  for (const cross of crossedTileEdges(x0, y0, x1, y1, tile)) {
+    pushUniqueTile(out, { tx: cross.to[0], ty: cross.to[1], t: cross.t, x: cross.x, y: cross.y });
+  }
+  const endTx = Math.floor(x1 / tile);
+  const endTy = Math.floor(y1 / tile);
+  pushUniqueTile(out, { tx: endTx, ty: endTy, t: 1, x: x1, y: y1 });
+  return out;
+}
+
 export function surfaceOf(pos: SightPos): SurfaceLevel {
   return entitySurface(pos);
 }
@@ -188,68 +222,119 @@ export function bridgeDeckSeparates(map: GameMap, from: SightPos, to: SightPos):
   return surfaceOf(from) !== surfaceOf(to);
 }
 
-function wallAlong(map: GameMap, from: [number, number], to: [number, number]): boolean {
-  return isRaidSightBlockedAcrossEdge(map, from, to);
+/** HIGH_GROUND terrain mass. Suspended-bridge decks are not ridge bodies. */
+export function isRidgeMass(map: GameMap, tx: number, ty: number): boolean {
+  return elevatedSurfaceAt(map, tx, ty) === "HIGH_GROUND";
 }
 
-/**
- * Exact grid-corner: block only when an L of two walls meets at that vertex.
- * Checking both the origin L and the destination L keeps A→D and D→A consistent.
- * A single wall at the vertex does not by itself close the diagonal.
- */
-function cornerPairBlocks(map: GameMap, a: GridEdgeCross, b: GridEdgeCross): boolean {
-  const originWalls = wallAlong(map, a.from, a.to) && wallAlong(map, b.from, b.to);
-  if (originWalls) return true;
-  const ox = a.from[0];
-  const oy = a.from[1];
-  const stepX = Math.sign(a.to[0] - a.from[0] || b.to[0] - b.from[0]);
-  const stepY = Math.sign(a.to[1] - a.from[1] || b.to[1] - b.from[1]);
-  const dest: [number, number] = [ox + stepX, oy + stepY];
-  const destV: [number, number] = [dest[0] - stepX, dest[1]];
-  const destH: [number, number] = [dest[0], dest[1] - stepY];
-  return wallAlong(map, dest, destV) && wallAlong(map, dest, destH);
-}
-
-export function firstSightBlockingCross(map: GameMap, crosses: GridEdgeCross[]): GridEdgeCross | null {
-  for (let i = 0; i < crosses.length; i++) {
-    const a = crosses[i]!;
-    const b = crosses[i + 1];
-    if (b && nearlyEqual(a.t, b.t)) {
-      if (cornerPairBlocks(map, a, b)) return a;
-      i += 1;
-      continue;
-    }
-    if (wallAlong(map, a.from, a.to)) return a;
+function sameRidge(map: GameMap, a: { tx: number; ty: number }, b: { tx: number; ty: number }): boolean {
+  if (!isRidgeMass(map, a.tx, a.ty) || !isRidgeMass(map, b.tx, b.ty)) return false;
+  if (a.tx === b.tx && a.ty === b.ty) return true;
+  const seen = new Set<string>();
+  const stack: Array<[number, number]> = [[a.tx, a.ty]];
+  while (stack.length) {
+    const [cx, cy] = stack.pop()!;
+    const key = `${cx},${cy}`;
+    if (seen.has(key) || !isRidgeMass(map, cx, cy)) continue;
+    if (cx === b.tx && cy === b.ty) return true;
+    seen.add(key);
+    stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
   }
-  return null;
+  return false;
 }
 
 function clearLos(along: number): LosHit {
   return { clear: true, blocker: null, edge: null, point: null, along };
 }
 
-function wallHit(cross: GridEdgeCross, map: GameMap, dist: number): LosHit {
-  const walls = raidSightWalls(map);
-  const canonical =
-    canonicalCollisionWall(cross.from[0], cross.from[1], cross.edge, walls.width, walls.height) ??
-    canonicalCollisionWall(cross.to[0], cross.to[1], cross.edge, walls.width, walls.height);
+function terrainHit(
+  blocker: LosBlocker,
+  cell: TraversedTile,
+  dist: number,
+): LosHit {
   return {
     clear: false,
-    blocker: "WALL",
-    edge: canonical,
-    point: { x: cross.x, y: cross.y },
-    along: dist * cross.t,
+    blocker,
+    edge: { tx: cell.tx, ty: cell.ty },
+    point: { x: cell.x, y: cell.y },
+    along: dist * cell.t,
   };
 }
 
-function wallTrace(map: GameMap, x0: number, y0: number, x1: number, y1: number): LosHit {
-  const dist = Math.hypot(x1 - x0, y1 - y0);
-  const blocked = firstSightBlockingCross(map, crossedTileEdges(x0, y0, x1, y1));
-  if (blocked) return wallHit(blocked, map, dist);
+/**
+ * Terrain-mass LOS. Movement walls are ignored.
+ *
+ * Prefix: consecutive source-plateau HIGH_GROUND from the shooter (leaving the cliff).
+ * Suffix: consecutive target-plateau HIGH_GROUND into the target (entering the cliff).
+ * Any other HIGH_GROUND is an intervening ridge. MOUNTAIN always blocks.
+ */
+export function firstTerrainObstruction(
+  map: GameMap,
+  from: SightPos,
+  to: SightPos,
+): LosHit {
+  const dist = Math.hypot(to.x - from.x, to.y - from.y);
+  const cells = traversedTiles(from.x, from.y, to.x, to.y);
+  if (!cells.length) return clearLos(dist);
+
+  const src = worldToTile(from.x, from.y);
+  const dst = worldToTile(to.x, to.y);
+  const srcOnRidge = surfaceOf(from) === "HIGH" && isRidgeMass(map, src.tx, src.ty);
+  const dstOnRidge = surfaceOf(to) === "HIGH" && isRidgeMass(map, dst.tx, dst.ty);
+
+  const inPrefix: boolean[] = [];
+  let prefix = true;
+  for (const cell of cells) {
+    const isSrc = cell.tx === src.tx && cell.ty === src.ty;
+    const stay =
+      prefix && (isSrc || (srcOnRidge && sameRidge(map, src, cell)));
+    inPrefix.push(stay);
+    if (!stay) prefix = false;
+  }
+
+  const inSuffix: boolean[] = Array(cells.length).fill(false);
+  let suffix = true;
+  for (let i = cells.length - 1; i >= 0; i--) {
+    const cell = cells[i]!;
+    const isDst = cell.tx === dst.tx && cell.ty === dst.ty;
+    const stay = suffix && (isDst || (dstOnRidge && sameRidge(map, dst, cell)));
+    inSuffix[i] = stay;
+    if (!stay) suffix = false;
+  }
+
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i]!;
+    const isSrc = cell.tx === src.tx && cell.ty === src.ty;
+    const isDst = cell.tx === dst.tx && cell.ty === dst.ty;
+    if (isMountain(map, cell.tx, cell.ty) && !isSrc && !isDst) {
+      return terrainHit("MOUNTAIN", cell, dist);
+    }
+    if (!isRidgeMass(map, cell.tx, cell.ty)) continue;
+    if (isSrc || isDst) continue;
+    if (inPrefix[i] || inSuffix[i]) continue;
+    return terrainHit("RIDGE", cell, dist);
+  }
+
   return clearLos(dist);
 }
 
-/** Full LOS result: walls then simple bridge-deck separation. Range is not applied. */
+function firstHardLosWall(map: GameMap, x0: number, y0: number, x1: number, y1: number): LosHit | null {
+  const dist = Math.hypot(x1 - x0, y1 - y0);
+  const crosses = crossedTileEdges(x0, y0, x1, y1);
+  for (const cross of crosses) {
+    if (!isRaidSightBlockedAcrossEdge(map, cross.from, cross.to)) continue;
+    return {
+      clear: false,
+      blocker: "LOS_WALL",
+      edge: { tx: cross.to[0], ty: cross.to[1] },
+      point: { x: cross.x, y: cross.y },
+      along: dist * cross.t,
+    };
+  }
+  return null;
+}
+
+/** Full LOS: bridge deck, then terrain mass, then optional future hard LOS walls. */
 export function traceLineOfSight(map: GameMap, from: SightPos, to: SightPos): LosHit {
   const dist = Math.hypot(to.x - from.x, to.y - from.y);
   if (bridgeDeckSeparates(map, from, to)) {
@@ -261,25 +346,30 @@ export function traceLineOfSight(map: GameMap, from: SightPos, to: SightPos): Lo
       along: dist / 2,
     };
   }
-  return wallTrace(map, from.x, from.y, to.x, to.y);
+  const terrain = firstTerrainObstruction(map, from, to);
+  if (!terrain.clear) return terrain;
+  return firstHardLosWall(map, from.x, from.y, to.x, to.y) ?? clearLos(dist);
 }
 
 export function hasLineOfSight(map: GameMap, from: SightPos, to: SightPos): boolean {
   return traceLineOfSight(map, from, to).clear;
 }
 
-/** First authored wall along a world segment. Bridge deck is not a 2D stop. */
-export function firstWallAlong(map: GameMap, from: WorldPos, toX: number, toY: number): LosHit {
-  return wallTrace(map, from.x, from.y, toX, toY);
+/** First terrain/LOS obstruction along a world segment. Bridge deck is not a 2D stop. */
+export function firstWallAlong(map: GameMap, from: SightPos, toX: number, toY: number): LosHit {
+  const dest: SightPos = { x: toX, y: toY, surface: "GROUND" };
+  const terrain = firstTerrainObstruction(map, from, dest);
+  if (!terrain.clear) return terrain;
+  return firstHardLosWall(map, from.x, from.y, toX, toY) ?? clearLos(Math.hypot(toX - from.x, toY - from.y));
 }
 
-export function clipWorldSegment(map: GameMap, from: WorldPos, toX: number, toY: number): WorldPos {
+export function clipWorldSegment(map: GameMap, from: SightPos, toX: number, toY: number): WorldPos {
   const hit = firstWallAlong(map, from, toX, toY);
   if (hit.clear || !hit.point) return { x: toX, y: toY };
   return hit.point;
 }
 
-export function wallAlongLimit(map: GameMap, from: WorldPos, toX: number, toY: number): number | null {
+export function wallAlongLimit(map: GameMap, from: SightPos, toX: number, toY: number): number | null {
   const hit = firstWallAlong(map, from, toX, toY);
   if (hit.clear) return null;
   return hit.along;

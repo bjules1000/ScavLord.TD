@@ -111,13 +111,13 @@ describe("invisible collision walls", () => {
     );
   });
 
-  it("wall data blocks movement and LOS across the shared edge", () => {
+  it("wall data blocks movement but not LOS across the shared edge", () => {
     let doc = createBlankMap({ displayName: "W", id: "wall-los", width: 12, height: 10 });
     doc = placeCollisionWall(doc, 4, 5, "E");
     expect(collisionWallBlocksMovement(doc.collisionWalls[0]!)).toBe(true);
-    expect(collisionWallBlocksSight(doc.collisionWalls[0]!)).toBe(true);
+    expect(collisionWallBlocksSight(doc.collisionWalls[0]!)).toBe(false);
     expect(isMovementBlockedAcrossEdge(doc, [4, 5], [5, 5])).toBe(true);
-    expect(isSightBlockedAcrossEdge(doc, [4, 5], [5, 5])).toBe(true);
+    expect(isSightBlockedAcrossEdge(doc, [4, 5], [5, 5])).toBe(false);
     expect(isMovementBlockedAcrossEdge(doc, [5, 5], [4, 5])).toBe(true);
     expect(isMovementBlockedAcrossEdge(doc, [4, 5], [4, 6])).toBe(false);
   });

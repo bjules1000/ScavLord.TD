@@ -82,45 +82,47 @@ function bag(edge: "N" | "E" | "S" | "W", hp = BARRICADE_HP): DefensePiece {
 }
 
 describe("LOS geometry", () => {
-  it("adjacent tiles with no wall have LOS", () => {
+  it("adjacent tiles with no terrain mass have LOS", () => {
     const map = testMap();
     expect(hasLineOfSight(map, at(3, 3), at(4, 3))).toBe(true);
     expect(isRaidSightBlockedAcrossEdge(map, [3, 3], [4, 3])).toBe(false);
   });
 
-  it("wall between adjacent tiles blocks LOS", () => {
+  it("cliff-edge movement walls do not block LOS", () => {
     const map = testMap({ collisionWalls: [{ tx: 3, ty: 3, edge: "E" }] });
-    expect(hasLineOfSight(map, at(3, 3), at(4, 3))).toBe(false);
-    expect(traceLineOfSight(map, at(3, 3), at(4, 3)).blocker).toBe("WALL");
+    expect(hasLineOfSight(map, at(3, 3), at(4, 3))).toBe(true);
+    expect(isRaidMovementBlockedAcrossEdge(map, [3, 3], [4, 3])).toBe(true);
+    expect(isRaidSightBlockedAcrossEdge(map, [3, 3], [4, 3])).toBe(false);
   });
 
-  it("same wall blocks the reverse ray", () => {
+  it("movement walls stay reverse-blocked for walking only", () => {
     const map = testMap({ collisionWalls: [{ tx: 3, ty: 3, edge: "E" }] });
-    expect(hasLineOfSight(map, at(4, 3), at(3, 3))).toBe(false);
-    expect(isRaidSightBlockedAcrossEdge(map, [4, 3], [3, 3])).toBe(true);
+    expect(hasLineOfSight(map, at(4, 3), at(3, 3))).toBe(true);
+    expect(isRaidMovementBlockedAcrossEdge(map, [4, 3], [3, 3])).toBe(true);
   });
 
-  it("multi-tile ray with no walls is clear", () => {
+  it("multi-tile ray with no terrain mass is clear", () => {
     const map = testMap();
     expect(hasLineOfSight(map, at(1, 2), at(6, 2))).toBe(true);
     expect(crossedTileEdges(at(1, 2).x, at(1, 2).y, at(6, 2).x, at(6, 2).y).length).toBeGreaterThan(1);
   });
 
-  it("multi-tile ray crossing a wall is blocked", () => {
-    const map = testMap({ collisionWalls: [{ tx: 3, ty: 2, edge: "E" }] });
+  it("multi-tile ray through MOUNTAIN is blocked", () => {
+    const map = testMap({ mountain: [[3, 2]] });
     expect(hasLineOfSight(map, at(1, 2), at(6, 2))).toBe(false);
+    expect(traceLineOfSight(map, at(1, 2), at(6, 2)).blocker).toBe("MOUNTAIN");
   });
 
-  it("wall not intersected by the ray does not block", () => {
-    const map = testMap({ collisionWalls: [{ tx: 3, ty: 4, edge: "S" }] });
+  it("terrain not intersected by the ray does not block", () => {
+    const map = testMap({ mountain: [[3, 4]] });
     expect(hasLineOfSight(map, at(1, 2), at(6, 2))).toBe(true);
   });
 
-  it("exact-corner traversal cannot peek through a blocked L", () => {
+  it("cannot peek through a blocked mountain corner", () => {
     const map = testMap({
-      collisionWalls: [
-        { tx: 2, ty: 2, edge: "E" },
-        { tx: 2, ty: 2, edge: "S" },
+      mountain: [
+        [3, 2],
+        [2, 3],
       ],
     });
     const a = at(2, 2);
@@ -129,11 +131,11 @@ describe("LOS geometry", () => {
     expect(hasLineOfSight(map, d, a)).toBe(false);
   });
 
-  it("nearby corner ray is deterministic", () => {
+  it("nearby mountain-corner ray is deterministic", () => {
     const map = testMap({
-      collisionWalls: [
-        { tx: 2, ty: 2, edge: "E" },
-        { tx: 2, ty: 2, edge: "S" },
+      mountain: [
+        [3, 2],
+        [2, 3],
       ],
     });
     const a = at(2, 2);
@@ -144,9 +146,9 @@ describe("LOS geometry", () => {
   });
 
   it("continuous non-center world positions work", () => {
-    const map = testMap({ collisionWalls: [{ tx: 2, ty: 5, edge: "E" }] });
+    const map = testMap({ mountain: [[3, 5]] });
     const from = at(2, 5, "GROUND", 0.2, 0.7);
-    const to = at(3, 5, "GROUND", 0.8, 0.3);
+    const to = at(4, 5, "GROUND", 0.8, 0.3);
     expect(hasLineOfSight(map, from, to)).toBe(false);
     expect(hasLineOfSight(testMap(), from, to)).toBe(true);
   });
@@ -174,12 +176,13 @@ describe("LOS surfaces and bridge deck", () => {
     expect(hasLineOfSight(map, at(4, 4, "HIGH"), at(5, 4, "HIGH"))).toBe(true);
   });
 
-  it("HIGH_GROUND wall still blocks LOS", () => {
+  it("HIGH_GROUND movement wall does not block same-plateau LOS", () => {
     const map = testMap({
       highGround: [[4, 4], [5, 4]],
       collisionWalls: [{ tx: 4, ty: 4, edge: "E" }],
     });
-    expect(hasLineOfSight(map, at(4, 4, "HIGH"), at(5, 4, "HIGH"))).toBe(false);
+    expect(hasLineOfSight(map, at(4, 4, "HIGH"), at(5, 4, "HIGH"))).toBe(true);
+    expect(isRaidMovementBlockedAcrossEdge(map, [4, 4], [5, 4])).toBe(true);
     expect(grantsHighGroundCombatBonus(map, 4, 4)).toBe(true);
   });
 
@@ -237,15 +240,16 @@ describe("LOS surfaces and bridge deck", () => {
       bridges: [{ tx: 3, ty: 3, orientation: "V" }],
     });
     expect(isRaidMovementBlockedAcrossEdge(map, [4, 4], [5, 4])).toBe(true);
-    expect(isRaidSightBlockedAcrossEdge(map, [4, 4], [5, 4])).toBe(true);
+    expect(isRaidSightBlockedAcrossEdge(map, [4, 4], [5, 4])).toBe(false);
     const path = findOperatorPath(map, { tx: 3, ty: 4, surface: "GROUND" }, { tx: 6, ty: 4, surface: "GROUND" });
     expect(path).not.toBeNull();
     expect(path!.some((n) => n.tx === 4 && n.ty === 4 && n.surface === "HIGH")).toBe(false);
   });
 
-  it("MOUNTAIN occupancy is not an extra LOS body without an authored wall", () => {
+  it("MOUNTAIN occupancy blocks LOS without an authored wall", () => {
     const map = testMap({ mountain: [[5, 5]] });
-    expect(hasLineOfSight(map, at(4, 5), at(6, 5))).toBe(true);
+    expect(hasLineOfSight(map, at(4, 5), at(6, 5))).toBe(false);
+    expect(traceLineOfSight(map, at(4, 5), at(6, 5)).blocker).toBe("MOUNTAIN");
   });
 
   it("trees and crates do not block LOS", () => {
@@ -255,6 +259,77 @@ describe("LOS surfaces and bridge deck", () => {
     });
     expect(hasLineOfSight(map, at(4, 4), at(6, 4))).toBe(true);
     expect(hasLineOfSight(map, at(4, 5), at(6, 5))).toBe(true);
+  });
+});
+
+describe("plateau edge vs ridge mass", () => {
+  const plateau = () =>
+    testMap({
+      highGround: [
+        [4, 4],
+        [5, 4],
+      ],
+      collisionWalls: [{ tx: 5, ty: 4, edge: "E" }],
+    });
+
+  it("HIGH → LOW across the plateau edge is allowed", () => {
+    const map = plateau();
+    expect(hasLineOfSight(map, at(5, 4, "HIGH"), at(7, 4, "GROUND"))).toBe(true);
+    expect(isRaidMovementBlockedAcrossEdge(map, [5, 4], [6, 4])).toBe(true);
+  });
+
+  it("LOW → HIGH onto the visible plateau edge is allowed", () => {
+    const map = plateau();
+    expect(hasLineOfSight(map, at(7, 4, "GROUND"), at(5, 4, "HIGH"))).toBe(true);
+  });
+
+  it("LOW cannot shoot through the ridge body to the far side", () => {
+    const map = plateau();
+    expect(hasLineOfSight(map, at(3, 4, "GROUND"), at(7, 4, "GROUND"))).toBe(false);
+    expect(traceLineOfSight(map, at(3, 4), at(7, 4)).blocker).toBe("RIDGE");
+  });
+});
+
+describe("Pine Cut plateau LOS", () => {
+  function pine() {
+    return buildMap(MAP_BY_ID["woods"]!);
+  }
+
+  it("left beige HIGH_GROUND shoots the pass below and can be shot back", () => {
+    const map = pine();
+    expect(hasLineOfSight(map, at(5, 4, "HIGH"), at(7, 4, "GROUND"))).toBe(true);
+    expect(hasLineOfSight(map, at(7, 4, "GROUND"), at(5, 4, "HIGH"))).toBe(true);
+    expect(isRaidMovementBlockedAcrossEdge(map, [5, 4], [6, 4])).toBe(true);
+  });
+
+  it("left ridge shoulder does not shoot through the mass", () => {
+    const map = pine();
+    expect(hasLineOfSight(map, at(3, 4, "GROUND"), at(7, 4, "GROUND"))).toBe(false);
+  });
+
+  it("right HIGH_GROUND shoots the pass and does not shoot through the mass", () => {
+    const map = pine();
+    expect(hasLineOfSight(map, at(13, 4, "HIGH"), at(10, 4, "GROUND"))).toBe(true);
+    expect(hasLineOfSight(map, at(10, 4, "GROUND"), at(13, 4, "HIGH"))).toBe(true);
+    expect(hasLineOfSight(map, at(15, 4, "GROUND"), at(10, 4, "GROUND"))).toBe(false);
+  });
+
+  it("does not gain LOS through mountain bulk", () => {
+    const map = pine();
+    expect(hasLineOfSight(map, at(7, 4, "GROUND"), at(9, 1, "GROUND"))).toBe(false);
+    expect(traceLineOfSight(map, at(7, 4), at(9, 1)).blocker).toBe("MOUNTAIN");
+  });
+
+  it("cliff walking and slopes stay unchanged", () => {
+    const map = pine();
+    expect(isRaidMovementBlockedAcrossEdge(map, [5, 4], [6, 4])).toBe(true);
+    expect(MAP_BY_ID["woods"]!.collisionWalls).toHaveLength(91);
+    const path = findOperatorPath(
+      map,
+      { tx: 13, ty: 4, surface: "HIGH" },
+      { tx: 13, ty: 8, surface: "HIGH" },
+    );
+    expect(path).not.toBeNull();
   });
 });
 
@@ -380,9 +455,9 @@ describe("barricade cover vs LOS", () => {
 
 describe("combat integration with LOS", () => {
   it("blocked LOS means the operator cannot engage that target", () => {
-    const map = testMap({ collisionWalls: [{ tx: 2, ty: 2, edge: "E" }] });
+    const map = testMap({ mountain: [[3, 2]] });
     const origin = tileCenterWorld(2, 2);
-    const enemies = [foe({ id: 1, x: tileCenterWorld(3, 2).x, y: tileCenterWorld(3, 2).y, pathProgress: 1 })];
+    const enemies = [foe({ id: 1, x: tileCenterWorld(4, 2).x, y: tileCenterWorld(4, 2).y, pathProgress: 1 })];
     const visible = (e: Targetable) =>
       hasLineOfSight(map, { ...origin, surface: "GROUND" }, { x: e.x, y: e.y, surface: "GROUND" });
     expect(selectTarget("FIRST", origin, 200, enemies, null, visible)).toBeNull();
@@ -424,9 +499,9 @@ describe("combat integration with LOS", () => {
   });
 
   it("weight does not affect LOS", () => {
-    const map = testMap({ collisionWalls: [{ tx: 2, ty: 2, edge: "E" }] });
-    expect(hasLineOfSight(map, at(2, 2), at(3, 2))).toBe(false);
-    expect(hasLineOfSight(testMap(), at(2, 2), at(3, 2))).toBe(true);
+    const map = testMap({ mountain: [[3, 2]] });
+    expect(hasLineOfSight(map, at(2, 2), at(4, 2))).toBe(false);
+    expect(hasLineOfSight(testMap(), at(2, 2), at(4, 2))).toBe(true);
   });
 
   it("kills still settle once after a covered hit", () => {
@@ -439,14 +514,15 @@ describe("combat integration with LOS", () => {
     expect(MAP_BY_ID["woods"]!.collisionWalls).toHaveLength(91);
   });
 
-  it("wallAlongLimit clips a tracer to the obstruction", () => {
-    const map = testMap({ collisionWalls: [{ tx: 2, ty: 2, edge: "E" }] });
+  it("wallAlongLimit clips a tracer to terrain obstruction", () => {
+    const map = testMap({ mountain: [[3, 2]] });
     const from = at(2, 2);
     const to = at(4, 2);
     const along = wallAlongLimit(map, from, to.x, to.y);
     expect(along).not.toBeNull();
     expect(along!).toBeLessThan(Math.hypot(to.x - from.x, to.y - from.y));
     const clip = clipWorldSegment(map, from, to.x, to.y);
-    expect(clip.x).toBeCloseTo(from.x + TILE / 2, 5);
+    expect(clip.x).toBeGreaterThan(from.x);
+    expect(clip.x).toBeLessThan(to.x);
   });
 });

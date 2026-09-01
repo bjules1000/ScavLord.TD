@@ -216,7 +216,8 @@ describe("shotgun obstruction", () => {
     cover: [],
     crates: [],
     palette: pal,
-    collisionWalls: [{ tx: 3, ty: 2, edge: "E" }],
+    collisionWalls: [],
+    mountain: [[4, 2]],
   });
   const ox = 2.5 * TILE;
   const oy = 2.5 * TILE;
@@ -229,7 +230,7 @@ describe("shotgun obstruction", () => {
   });
 
   it("a pellet crossing a wall stops and cannot hit behind it", () => {
-    const behind = body(1, 4.5 * TILE, 2.5 * TILE, 100);
+    const behind = body(1, 5.5 * TILE, 2.5 * TILE, 100);
     const before = body(2, 3.2 * TILE, 2.5 * TILE, 100);
     resolveShotgunBlast({
       origin: { x: ox, y: oy },

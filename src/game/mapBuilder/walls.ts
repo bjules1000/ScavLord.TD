@@ -8,11 +8,12 @@
  * Outer map edges stay on the border tile (N of row 0, W of col 0, E of last
  * col, S of last row). No neighbor tile is required for those.
  *
- * Movement and LOS share authored edges but keep distinct helpers:
- *   isMovementBlockedAcrossEdge(map, from, to)
- *   isSightBlockedAcrossEdge(map, from, to)
- * Both currently return true for these walls. Slopes stay open only where the
- * author left a gap — walls are never inferred from HIGH GROUND.
+ * Movement and sight use distinct helpers:
+ *   isMovementBlockedAcrossEdge — authored cliff/invisible walls
+ *   isSightBlockedAcrossEdge — reserved for future hard LOS walls
+ * Cliff-edge collision walls are movement-only. They do not block sight.
+ * Slopes stay open only where the author left a gap — walls are never
+ * inferred from HIGH GROUND.
  *
  * Raid presentation never draws this overlay. Map Builder WALLS layer only.
  */
@@ -99,23 +100,25 @@ export function isMovementBlockedAcrossEdge(
   return hasCollisionWall(map.collisionWalls, wall);
 }
 
-/** Sight: true when a wall occupies the shared edge between orthogonal neighbors. */
+/**
+ * Sight across an authored cliff/movement wall is not blocked.
+ * Future explicit LOS walls would be consulted here.
+ */
 export function isSightBlockedAcrossEdge(
-  map: Pick<EditorMapDoc, "width" | "height" | "collisionWalls">,
-  from: [number, number],
-  to: [number, number],
+  _map: Pick<EditorMapDoc, "width" | "height" | "collisionWalls">,
+  _from: [number, number],
+  _to: [number, number],
 ): boolean {
-  const wall = sharedCanonicalWall(from, to, map.width, map.height);
-  if (!wall) return false;
-  return hasCollisionWall(map.collisionWalls, wall);
+  return false;
 }
 
 export function collisionWallBlocksMovement(_wall: CollisionWall): boolean {
   return true;
 }
 
+/** Authored cliff walls are movement-only. */
 export function collisionWallBlocksSight(_wall: CollisionWall): boolean {
-  return true;
+  return false;
 }
 
 export function sortCollisionWalls(walls: CollisionWall[]): CollisionWall[] {
