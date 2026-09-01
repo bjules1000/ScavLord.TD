@@ -30,18 +30,30 @@ import {
   type LabEntry,
   type LabField,
 } from "./balance";
-import ArsenalBenchmark from "./ArsenalBenchmark";
+import StatBenchmark from "./StatBenchmark";
 import WeaponCompare from "./WeaponCompare";
 import {
   allCanonicalWeapons,
+  compareClassOf,
+  compareMetricFromEditorKey,
+  derivedKeyToBenchmarkKey,
+  editorFieldBenchmark,
+  editorFieldToBenchmarkKey,
   mergeWeaponDef,
   type BenchmarkScope,
   type CompareCategory,
   type CompareMetric,
+  type EditorBenchmark,
   type LabView,
 } from "./compareMetrics";
 
 const CATS: LabCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS"];
+const EDITOR_COLS =
+  "grid-cols-[minmax(6rem,0.9fr)_minmax(3.5rem,0.5fr)_minmax(5rem,0.7fr)_minmax(6rem,0.8fr)]";
+const WEAPON_EDITOR_COLS =
+  "grid-cols-[minmax(6rem,0.85fr)_minmax(3.5rem,0.45fr)_minmax(5rem,0.65fr)_minmax(6rem,0.75fr)_minmax(8.5rem,1.4fr)]";
+const DERIVED_COLS =
+  "grid-cols-[minmax(7.5rem,0.9fr)_minmax(4.5rem,0.55fr)_minmax(6.5rem,0.8fr)_minmax(8.5rem,1.4fr)]";
 
 function fieldValue(obj: object, key: string): number | undefined {
   const v = (obj as Record<string, unknown>)[key];
@@ -108,16 +120,24 @@ export default function BalanceLab({
   const draftName = selected ? (stringField(overBag, "name") ?? canonical?.name ?? "") : "";
   const nameChanged = Boolean(selected && canonical && draftName !== canonical.name);
 
+  const selectedWeapon =
+    selected?.kind === "weapon" ? (canonical as NonNullable<ReturnType<typeof canonicalWeapon>> | undefined) : undefined;
+
+  const testWeapon = (w: NonNullable<typeof selectedWeapon>) => mergeWeaponDef(w, draft.weapons[w.id]);
+
   const derived =
-    selected?.kind === "weapon" && canonical
-      ? weaponDerivedRows(
-          canonical as NonNullable<ReturnType<typeof canonicalWeapon>>,
-          {
-            ...(canonical as NonNullable<ReturnType<typeof canonicalWeapon>>),
-            ...(overBag ?? {}),
-          } as NonNullable<ReturnType<typeof canonicalWeapon>>,
-        )
+    selectedWeapon
+      ? weaponDerivedRows(selectedWeapon, testWeapon(selectedWeapon))
       : [];
+
+  const openCompareFromBench = (bench: EditorBenchmark) => {
+    const metric = compareMetricFromEditorKey(bench.key);
+    if (!metric) return;
+    setCompareCategory(bench.category);
+    setCompareMetric(metric);
+    setSortReversed(false);
+    setLabView("compare");
+  };
 
   const applyDraft = (next: BalanceOverrides) => {
     const live = applyBalanceOverrides(next, true);
@@ -287,11 +307,36 @@ export default function BalanceLab({
                   </div>
                 </div>
 
-                <div className="mt-5 grid grid-cols-[minmax(7rem,1.1fr)_minmax(4.5rem,0.7fr)_minmax(6.5rem,0.9fr)_minmax(7rem,1fr)] items-center gap-x-3 gap-y-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                {selectedWeapon && (
+                  <div className="mt-5 flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Benchmark:
+                    </span>
+                    {(["category", "all"] as const).map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        className={`pixel-btn px-2 py-1 text-[9px] ${
+                          benchmarkScope === s ? "pixel-btn-primary" : "text-muted-foreground"
+                        }`}
+                        onClick={() => setBenchmarkScope(s)}
+                      >
+                        {s === "category" ? `CATEGORY [${compareClassOf(selectedWeapon)}]` : "ALL"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div
+                  className={`grid items-center gap-x-3 gap-y-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground ${
+                    selectedWeapon ? WEAPON_EDITOR_COLS : EDITOR_COLS
+                  } ${selectedWeapon ? "mt-3" : "mt-5"}`}
+                >
                   <span>Stat</span>
                   <span>Base</span>
                   <span>Delta</span>
                   <span>Test value</span>
+                  {selectedWeapon && <span>Benchmark</span>}
                 </div>
                 <div className="mt-1">
                   {fields.map((field) => {
@@ -301,10 +346,25 @@ export default function BalanceLab({
                     const changed = test != null && !Object.is(test, base);
                     const tone = balanceFieldTone(field.key, base, current);
                     const delta = formatLabDelta(field.key, base, current);
+                    const benchKey = selectedWeapon
+                      ? editorFieldToBenchmarkKey(field.key, selectedWeapon)
+                      : null;
+                    const bench =
+                      selectedWeapon && benchKey
+                        ? editorFieldBenchmark(
+                            selectedWeapon,
+                            testWeapon,
+                            allWeapons,
+                            benchmarkScope,
+                            benchKey,
+                          )
+                        : null;
                     return (
-                      <label
+                      <div
                         key={field.key}
-                        className="grid grid-cols-[minmax(7rem,1.1fr)_minmax(4.5rem,0.7fr)_minmax(6.5rem,0.9fr)_minmax(7rem,1fr)] items-center gap-x-3 border-b border-border/60 py-2.5 font-mono text-sm"
+                        className={`grid items-center gap-x-3 border-b border-border/60 py-2.5 font-mono text-sm ${
+                          selectedWeapon ? WEAPON_EDITOR_COLS : EDITOR_COLS
+                        }`}
                       >
                         <span className={changed ? "text-foreground" : "text-muted-foreground"}>{field.label}</span>
                         <span className="text-muted-foreground">{formatLabValue(field.key, base)}</span>
@@ -322,7 +382,20 @@ export default function BalanceLab({
                             setDraft((d) => setOverrideField(d, selected.kind, selected.id, field.key, n, base));
                           }}
                         />
-                      </label>
+                        {selectedWeapon &&
+                          (bench ? (
+                            <StatBenchmark
+                              bench={bench}
+                              onOpen={
+                                compareMetricFromEditorKey(bench.key)
+                                  ? () => openCompareFromBench(bench)
+                                  : undefined
+                              }
+                            />
+                          ) : (
+                            <span />
+                          ))}
+                      </div>
                     );
                   })}
                 </div>
@@ -335,30 +408,44 @@ export default function BalanceLab({
                         const changed = !Object.is(row.base, row.current);
                         const tone = balanceFieldTone(row.key, row.base, row.current);
                         const delta = formatLabDelta(row.key, row.base, row.current);
+                        const benchKey = selectedWeapon ? derivedKeyToBenchmarkKey(row.key) : null;
+                        const bench =
+                          selectedWeapon && benchKey
+                            ? editorFieldBenchmark(
+                                selectedWeapon,
+                                testWeapon,
+                                allWeapons,
+                                benchmarkScope,
+                                benchKey,
+                              )
+                            : null;
                         return (
                           <div
                             key={row.key}
-                            className="grid grid-cols-[minmax(8rem,1.2fr)_minmax(5rem,0.8fr)_minmax(7rem,1fr)] items-center gap-3 border border-border bg-secondary/30 px-3 py-2.5 font-mono text-sm"
+                            className={`grid items-center gap-3 border border-border bg-secondary/30 px-3 py-2.5 font-mono text-sm ${
+                              bench ? DERIVED_COLS : "grid-cols-[minmax(8rem,1.2fr)_minmax(5rem,0.8fr)_minmax(7rem,1fr)]"
+                            }`}
                           >
                             <span className="text-foreground">{row.label}</span>
                             <span className="text-muted-foreground">{row.display(row.base)}</span>
                             <span className={changed ? balanceToneTextClass(tone) : "text-foreground"}>
                               {changed ? `${row.display(row.current)} (${delta})` : row.display(row.current)}
                             </span>
+                            {bench ? (
+                              <StatBenchmark
+                                bench={bench}
+                                onOpen={
+                                  compareMetricFromEditorKey(bench.key)
+                                    ? () => openCompareFromBench(bench)
+                                    : undefined
+                                }
+                              />
+                            ) : null}
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                )}
-                {selected.kind === "weapon" && canonical && (
-                  <ArsenalBenchmark
-                    selected={canonical as NonNullable<ReturnType<typeof canonicalWeapon>>}
-                    testOf={(w) => mergeWeaponDef(w, draft.weapons[w.id])}
-                    allWeapons={allWeapons}
-                    scope={benchmarkScope}
-                    onScope={setBenchmarkScope}
-                  />
                 )}
               </>
             )}

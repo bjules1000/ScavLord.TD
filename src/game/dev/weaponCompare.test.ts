@@ -15,8 +15,11 @@ import {
   compareMetricTone,
   damagePerShot,
   defaultSortDir,
+  editorFieldBenchmark,
+  editorFieldToBenchmarkKey,
   emptyCompareSession,
   filterCompareWeapons,
+  formatEditorRank,
   magazineSustainedCycleMs,
   medianValue,
   mergeWeaponDef,
@@ -31,6 +34,7 @@ import {
   sortWeaponIds,
   sustainedDps,
   switchLabView,
+  valueTone,
   weaponCombatMetrics,
   weaponRpm,
   weaponsInCategory,
@@ -350,5 +354,163 @@ describe("weapon editor arsenal benchmark", () => {
     expect(session.compareCategory).toBe("RIFLES");
     expect(session.query).toBe("kalash");
     expect(draft.weapons["ak74"]?.damage).toBe(21);
+  });
+});
+
+describe("Item Editor stat benchmarks", () => {
+  const all = allCanonicalWeapons();
+  const identity = <T,>(w: T) => w;
+
+  it("weapon editor defaults benchmark scope to CATEGORY", () => {
+    expect(emptyCompareSession().benchmarkScope).toBe("category");
+  });
+
+  it("CATEGORY uses canonical weapon category", () => {
+    expect(editorFieldToBenchmarkKey("range", mp133)).toBe("range");
+    const bench = editorFieldBenchmark(mp133, identity, all, "category", "range")!;
+    expect(bench.category).toBe("SHOTGUNS");
+    expect(bench.total).toBe(2);
+    expect(bench.forcedCategory).toBe(false);
+  });
+
+  it("ALL uses full weapon arsenal", () => {
+    const bench = editorFieldBenchmark(mp133, identity, all, "all", "range")!;
+    expect(bench.category).toBe("ALL");
+    expect(bench.total).toBe(all.length);
+  });
+
+  it("rank denominator changes with scope", () => {
+    const cat = editorFieldBenchmark(mp133, identity, all, "category", "weight")!;
+    const allScope = editorFieldBenchmark(mp133, identity, all, "all", "weight")!;
+    expect(cat.total).toBe(2);
+    expect(allScope.total).toBe(all.length);
+    expect(cat.total).not.toBe(allScope.total);
+  });
+
+  it("higher-is-better rank logic: damage highest is #1", () => {
+    const bench = editorFieldBenchmark(WEAPONS["dvl10"]!, identity, all, "all", "damage")!;
+    expect(bench.testRank).toBe(1);
+  });
+
+  it("lower-is-better: weight lowest is rank #1", () => {
+    const bench = editorFieldBenchmark(pm, identity, all, "all", "weight")!;
+    expect(bench.testRank).toBe(1);
+  });
+
+  it("lower-is-better: reload lowest is rank #1", () => {
+    const bench = editorFieldBenchmark(mp133, identity, all, "all", "reload")!;
+    expect(bench.testRank).toBe(1);
+  });
+
+  it("unmodified stat shows current marker/rank without BASE→TEST", () => {
+    const bench = editorFieldBenchmark(mp133, identity, all, "category", "range")!;
+    expect(bench.changed).toBe(false);
+    expect(bench.rankChanged).toBe(false);
+    expect(formatEditorRank(bench)).toBe(`#${bench.testRank} / 2`);
+    expect(formatEditorRank(bench)).not.toContain("→");
+  });
+
+  it("modified stat exposes BASE and TEST positions and rank change", () => {
+    const testOf = (w: typeof mp133) => (w.id === "mp133" ? mergeWeaponDef(w, { range: 400 }) : w);
+    const bench = editorFieldBenchmark(mp133, testOf, all, "all", "range")!;
+    expect(bench.changed).toBe(true);
+    expect(bench.base).toBe(74);
+    expect(bench.test).toBe(400);
+    expect(bench.testRank).toBe(1);
+    expect(bench.rankChanged).toBe(true);
+    expect(formatEditorRank(bench)).toContain("→");
+    expect(bench.tone).toBe("buff");
+  });
+
+  it("live draft updates rank before APPLY", () => {
+    const draft = setOverrideField(emptyBalanceOverrides(), "weapon", "mp133", "damage", 13, 11);
+    const testOf = (w: typeof mp133) => mergeWeaponDef(w, draft.weapons[w.id]);
+    const pellet = editorFieldBenchmark(mp133, testOf, all, "all", "pelletDamage")!;
+    expect(pellet.test).toBe(13);
+    expect(pellet.base).toBe(11);
+    const dps = editorFieldBenchmark(mp133, testOf, all, "all", "sustainedDps")!;
+    expect(dps.test).toBeGreaterThan(dps.base);
+    expect(dps.changed).toBe(true);
+  });
+
+  it("RESET ITEM restores original rank", () => {
+    let over = setOverrideField(emptyBalanceOverrides(), "weapon", "mp133", "damage", 13, 11);
+    over = resetOverrideItem(over, "weapon", "mp133");
+    const bench = editorFieldBenchmark(mp133, (w) => mergeWeaponDef(w, over.weapons[w.id]), all, "category", "pelletDamage")!;
+    expect(bench.changed).toBe(false);
+    expect(bench.test).toBe(11);
+  });
+
+  it("RESET ALL restores original rankings", () => {
+    let over = setOverrideField(emptyBalanceOverrides(), "weapon", "mp133", "weight", 5, 3);
+    over = setOverrideField(over, "weapon", "ak74", "damage", 40, 19);
+    over = emptyBalanceOverrides();
+    const pump = editorFieldBenchmark(mp133, (w) => mergeWeaponDef(w, over.weapons[w.id]), all, "all", "weight")!;
+    const ak = editorFieldBenchmark(ak74, (w) => mergeWeaponDef(w, over.weapons[w.id]), all, "all", "damage")!;
+    expect(pump.changed).toBe(false);
+    expect(ak.changed).toBe(false);
+  });
+
+  it("shotgun pellet count uses shotgun-only comparison", () => {
+    const bench = editorFieldBenchmark(mp133, identity, all, "all", "pellets")!;
+    expect(bench.forcedCategory).toBe(true);
+    expect(bench.category).toBe("SHOTGUNS");
+    expect(bench.total).toBe(2);
+    expect(bench.testRank).toBe(2);
+    expect(formatEditorRank(bench)).toContain("SHOTGUNS");
+    expect(editorFieldBenchmark(toz, identity, all, "all", "pellets")!.testRank).toBe(1);
+  });
+
+  it("shotgun damage/pellet uses shotgun-only comparison", () => {
+    expect(editorFieldToBenchmarkKey("damage", mp133)).toBe("pelletDamage");
+    const bench = editorFieldBenchmark(mp133, identity, all, "all", "pelletDamage")!;
+    expect(bench.forcedCategory).toBe(true);
+    expect(bench.total).toBe(2);
+    expect(bench.testRank).toBe(1);
+  });
+
+  it("universal shotgun range can compare CATEGORY or ALL", () => {
+    const cat = editorFieldBenchmark(mp133, identity, all, "category", "range")!;
+    const allScope = editorFieldBenchmark(mp133, identity, all, "all", "range")!;
+    expect(cat.total).toBe(2);
+    expect(allScope.total).toBe(all.length);
+    expect(cat.forcedCategory).toBe(false);
+  });
+
+  it("Item Editor rank matches WEAPON COMPARE rank for the same metric/scope", () => {
+    const editor = editorFieldBenchmark(ak74, identity, all, "all", "damage")!;
+    const compare = buildCompareRows(all, identity, "damage");
+    expect(editor.testRank).toBe(compare.ranksTest.get("ak74")!);
+    const group = weaponsInCategory("RIFLES");
+    const editorCat = editorFieldBenchmark(ak74, identity, all, "category", "sustainedDps")!;
+    const compareCat = buildCompareRows(group, identity, "sustainedDps");
+    expect(editorCat.testRank).toBe(compareCat.ranksTest.get("ak74")!);
+    expect(editorCat.total).toBe(group.length);
+  });
+
+  it("derived DPS rank updates when underlying draft changes", () => {
+    const testOf = (w: typeof mp133) => (w.id === "mp133" ? mergeWeaponDef(w, { damage: 20 }) : w);
+    const before = editorFieldBenchmark(mp133, identity, all, "all", "burstDps")!;
+    const after = editorFieldBenchmark(mp133, testOf, all, "all", "burstDps")!;
+    expect(after.test).toBeGreaterThan(before.test);
+    expect(after.testRank).toBeLessThanOrEqual(before.testRank);
+    expect(after.changed).toBe(true);
+  });
+
+  it("buff/nerf semantic works for rank marker changes", () => {
+    const buff = editorFieldBenchmark(mp133, (w) => mergeWeaponDef(w, { damage: 13 }), all, "category", "pelletDamage")!;
+    expect(buff.tone).toBe("buff");
+    expect(valueTone(11, 13, false)).toBe("buff");
+    expect(compareMetricTone("damage", 19, 21)).toBe("buff");
+  });
+
+  it("lower-is-better semantic colors remain correct", () => {
+    const nerf = editorFieldBenchmark(mp133, (w) => mergeWeaponDef(w, { weight: 5 }), all, "all", "weight")!;
+    expect(nerf.tone).toBe("nerf");
+    expect(nerf.testRank).toBeGreaterThan(nerf.baseRank);
+    expect(valueTone(3, 5, true)).toBe("nerf");
+    expect(valueTone(3, 2.5, true)).toBe("buff");
+    const reloadNerf = editorFieldBenchmark(mp133, (w) => mergeWeaponDef(w, { reloadMs: 900 }), all, "all", "reload")!;
+    expect(reloadNerf.tone).toBe("nerf");
   });
 });

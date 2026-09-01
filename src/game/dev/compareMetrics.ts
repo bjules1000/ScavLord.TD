@@ -296,10 +296,7 @@ export function defaultSortDir(metric: CompareMetric): "asc" | "desc" {
 }
 
 export function compareMetricTone(metric: CompareMetric, base: number, test: number): BalanceTone {
-  if (nearlyEqualNum(base, test)) return "neutral";
-  const increased = test > base;
-  if (metricLowerIsBetter(metric)) return increased ? "nerf" : "buff";
-  return increased ? "buff" : "nerf";
+  return valueTone(base, test, metricLowerIsBetter(metric));
 }
 
 export function formatMetricValue(metric: CompareMetric, n: number): string {
@@ -434,14 +431,45 @@ export function buildCompareRows(
   median: number;
   domain: { min: number; max: number };
 } {
-  const rows = canonicals.map((base) => metricPairForWeapon(base, testOf(base), metric));
+  return buildValueCompareRows(
+    canonicals,
+    testOf,
+    (w) => metricValue(weaponCombatMetrics(w), metric),
+    metricLowerIsBetter(metric),
+  );
+}
+
+export function buildValueCompareRows(
+  canonicals: readonly WeaponDef[],
+  testOf: (w: WeaponDef) => WeaponDef,
+  valueOf: (w: WeaponDef) => number,
+  lowerIsBetter: boolean,
+): {
+  rows: MetricPair[];
+  ranksTest: Map<string, number>;
+  ranksBase: Map<string, number>;
+  median: number;
+  domain: { min: number; max: number };
+} {
+  const rows: MetricPair[] = canonicals.map((base) => {
+    const b = valueOf(base);
+    const testWeapon = testOf(base);
+    const t = valueOf(testWeapon);
+    return {
+      id: base.id,
+      name: testWeapon.name,
+      base: b,
+      test: t,
+      changed: !nearlyEqualNum(b, t),
+    };
+  });
   const ranksTest = rankByValue(
     rows.map((r) => ({ id: r.id, value: r.test })),
-    metricLowerIsBetter(metric),
+    lowerIsBetter,
   );
   const ranksBase = rankByValue(
     rows.map((r) => ({ id: r.id, value: r.base })),
-    metricLowerIsBetter(metric),
+    lowerIsBetter,
   );
   const testValues = rows.map((r) => r.test);
   const domain = scaleDomain([...rows.flatMap((r) => (r.changed ? [r.base, r.test] : [r.test]))]);
@@ -450,4 +478,189 @@ export function buildCompareRows(
 
 export function benchmarkScopeCategory(weapon: WeaponDef, scope: BenchmarkScope): CompareCategory {
   return scope === "all" ? "ALL" : compareClassOf(weapon);
+}
+
+export type EditorBenchmarkKey =
+  | ScalarMetric
+  | "cooldown"
+  | "pellets"
+  | "pelletDamage"
+  | "spread"
+  | "maxPelletHits"
+  | "secondaryHitMult"
+  | "splash";
+
+/** Shotgun/launcher identity stats are never ranked against the whole arsenal. */
+export const CATEGORY_LOCKED_KEYS = new Set<EditorBenchmarkKey>([
+  "pellets",
+  "pelletDamage",
+  "spread",
+  "maxPelletHits",
+  "secondaryHitMult",
+  "splash",
+]);
+
+export function editorFieldToBenchmarkKey(fieldKey: string, weapon: WeaponDef): EditorBenchmarkKey | null {
+  switch (fieldKey) {
+    case "weight":
+      return "weight";
+    case "damage":
+      return weapon.pellets != null ? "pelletDamage" : "damage";
+    case "pellets":
+      return "pellets";
+    case "range":
+      return "range";
+    case "accuracy":
+      return "accuracy";
+    case "cooldown":
+      return "cooldown";
+    case "reloadMs":
+      return "reload";
+    case "magSize":
+      return "mag";
+    case "spread":
+      return "spread";
+    case "maxPelletHits":
+      return "maxPelletHits";
+    case "secondaryHitMult":
+      return "secondaryHitMult";
+    case "splash":
+      return "splash";
+    default:
+      return null;
+  }
+}
+
+export function derivedKeyToBenchmarkKey(derivedKey: string): EditorBenchmarkKey | null {
+  switch (derivedKey) {
+    case "blast":
+      return "damage";
+    case "rpm":
+      return "rpm";
+    case "burstDps":
+      return "burstDps";
+    case "sustainedDps":
+      return "sustainedDps";
+    case "magSize":
+      return "mag";
+    case "weight":
+      return "weight";
+    default:
+      return null;
+  }
+}
+
+export function fieldLowerIsBetter(key: EditorBenchmarkKey): boolean {
+  return key === "weight" || key === "reload" || key === "cooldown" || key === "spread";
+}
+
+export function extractFieldValue(weapon: WeaponDef, key: EditorBenchmarkKey): number {
+  switch (key) {
+    case "pelletDamage":
+      return weapon.damage;
+    case "pellets":
+      return weapon.pellets ?? 0;
+    case "cooldown":
+      return weapon.cooldown;
+    case "spread":
+      return weapon.spread ?? 0;
+    case "maxPelletHits":
+      return weapon.maxPelletHits ?? 0;
+    case "secondaryHitMult":
+      return weapon.secondaryHitMult ?? 0;
+    case "splash":
+      return weapon.splash;
+    default:
+      return metricValue(weaponCombatMetrics(weapon), key);
+  }
+}
+
+export function valueTone(base: number, test: number, lowerIsBetter: boolean): BalanceTone {
+  if (nearlyEqualNum(base, test)) return "neutral";
+  const increased = test > base;
+  if (lowerIsBetter) return increased ? "nerf" : "buff";
+  return increased ? "buff" : "nerf";
+}
+
+export function editorBenchmarkPool(
+  selected: WeaponDef,
+  allWeapons: readonly WeaponDef[],
+  scope: BenchmarkScope,
+  key: EditorBenchmarkKey,
+): { weapons: WeaponDef[]; category: CompareCategory; forcedCategory: boolean } {
+  const forcedCategory = CATEGORY_LOCKED_KEYS.has(key);
+  const category = forcedCategory ? compareClassOf(selected) : benchmarkScopeCategory(selected, scope);
+  return {
+    weapons: filterCompareWeapons(allWeapons, category, ""),
+    category,
+    forcedCategory,
+  };
+}
+
+export type EditorBenchmark = {
+  key: EditorBenchmarkKey;
+  base: number;
+  test: number;
+  changed: boolean;
+  baseRank: number;
+  testRank: number;
+  rankChanged: boolean;
+  total: number;
+  domain: { min: number; max: number };
+  category: CompareCategory;
+  forcedCategory: boolean;
+  tone: BalanceTone;
+};
+
+export function editorFieldBenchmark(
+  selected: WeaponDef,
+  testOf: (w: WeaponDef) => WeaponDef,
+  allWeapons: readonly WeaponDef[],
+  scope: BenchmarkScope,
+  key: EditorBenchmarkKey,
+): EditorBenchmark | null {
+  const pool = editorBenchmarkPool(selected, allWeapons, scope, key);
+  if (pool.weapons.length === 0) return null;
+  const built = buildValueCompareRows(pool.weapons, testOf, (w) => extractFieldValue(w, key), fieldLowerIsBetter(key));
+  const row = built.rows.find((r) => r.id === selected.id);
+  if (!row) return null;
+  const baseRank = built.ranksBase.get(selected.id) ?? pool.weapons.length;
+  const testRank = built.ranksTest.get(selected.id) ?? pool.weapons.length;
+  return {
+    key,
+    base: row.base,
+    test: row.test,
+    changed: row.changed,
+    baseRank,
+    testRank,
+    rankChanged: baseRank !== testRank,
+    total: pool.weapons.length,
+    domain: built.domain,
+    category: pool.category,
+    forcedCategory: pool.forcedCategory,
+    tone: valueTone(row.base, row.test, fieldLowerIsBetter(key)),
+  };
+}
+
+export function formatEditorRank(bench: EditorBenchmark): string {
+  const suffix = bench.forcedCategory && bench.category !== "ALL" ? ` ${bench.category}` : "";
+  if (bench.changed && bench.rankChanged) {
+    return `${formatRank(bench.baseRank, bench.total)} → ${formatRank(bench.testRank, bench.total)}${suffix}`;
+  }
+  return `${formatRank(bench.testRank, bench.total)}${suffix}`;
+}
+
+export function compareMetricFromEditorKey(key: EditorBenchmarkKey): CompareMetric | null {
+  if (key === "cooldown") return "rpm";
+  if (
+    key === "pellets" ||
+    key === "pelletDamage" ||
+    key === "spread" ||
+    key === "maxPelletHits" ||
+    key === "secondaryHitMult" ||
+    key === "splash"
+  ) {
+    return null;
+  }
+  return key;
 }
