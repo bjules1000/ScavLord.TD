@@ -52,6 +52,8 @@ describe("direct attachment swap", () => {
 
   it("rejects incompatible attachments", () => {
     expect(canEquipAttachment("pm")).toBe(false);
+    expect(canEquipAttachment("optic", "pm")).toBe(true);
+    expect(canEquipAttachment("ar_drum", "pm")).toBe(false);
     const gun = mustItem("w_pm", 1);
     const result = equipAttachment(gun, [], [gun], 2, 7, "pm");
     expect(result.ok).toBe(false);
