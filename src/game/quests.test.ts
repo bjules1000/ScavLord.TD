@@ -35,6 +35,10 @@ function spec(partial: Partial<QuestSpec> & Pick<QuestSpec, "id">): QuestSpec {
 describe("quest catalog", () => {
   it("canonical quests populate editor", () => {
     expect(QUEST_SPECS.map((q) => q.id)).toEqual([
+      "radio_power",
+      "radio_signal",
+      "wolf_help",
+      "radio_network",
       "debut",
       "checkpoint",
       "supplier",
@@ -48,18 +52,36 @@ describe("quest catalog", () => {
   });
 
   it("canonical quest remains unchanged after cloning a draft edit", () => {
-    const draft = cloneQuestSpec(QUEST_SPECS[0]!);
+    const debut = QUEST_SPECS.find((q) => q.id === "debut")!;
+    const draft = cloneQuestSpec(debut);
     draft.name = "EDITED";
     draft.objectives[0] = { type: "KILL", count: 3 };
-    expect(QUEST_SPECS[0]!.name).toBe("FIRST BLOOD");
-    expect(QUEST_SPECS[0]!.objectives[0]).toEqual({ type: "KILL", count: 25 });
+    expect(debut.name).toBe("FIRST BLOOD");
+    expect(debut.objectives[0]).toEqual({ type: "KILL", count: 25 });
   });
 
   it("specToQuestDef matches camp progress for First Blood", () => {
-    const def = specToQuestDef(QUEST_SPECS[0]!);
-    expect(def.done({ scavKills: 24, bossKills: 0, bestWave: 0, extracts: 0 })).toBe(false);
-    expect(def.done({ scavKills: 25, bossKills: 0, bestWave: 0, extracts: 0 })).toBe(true);
-    expect(def.progress({ scavKills: 10, bossKills: 0, bestWave: 0, extracts: 0 })).toBe("10/25");
+    const def = specToQuestDef(QUEST_SPECS.find((q) => q.id === "debut")!);
+    const empty = { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0, trackers: {} };
+    expect(def.done(empty)).toBe(false);
+    expect(
+      def.done({
+        ...empty,
+        trackers: { debut: { scavKills: 24, bossKills: 0, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe(false);
+    expect(
+      def.done({
+        ...empty,
+        trackers: { debut: { scavKills: 25, bossKills: 0, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe(true);
+    expect(
+      def.progress({
+        ...empty,
+        trackers: { debut: { scavKills: 10, bossKills: 0, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe("10/25");
     expect(def.reward).toBe(800);
     expect(def.skillPoints).toBe(1);
     expect(def.unlocks).toContain("w_adar");

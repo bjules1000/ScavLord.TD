@@ -174,9 +174,77 @@ import {
   swapRaidWeapon,
   type AttachSlot,
 } from "./raidGear";
+import {
+  aliveOperators,
+  capabilityFromMeta,
+  crewOccupancy,
+  ensureRadio,
+  findOperator,
+  hireCandidate,
+  hireUniqueContact,
+  markOperatorDead,
+  progressionFactsFromMeta,
+  refreshRecruitmentPoolIfNeeded,
+  regenerateRecruitmentPool,
+  requestNewTransmission,
+} from "./operators/crew";
+import {
+  QUEST_SPEC_BY_ID,
+  QUEST_SPECS,
+  applyRaidQuestProgress,
+  listAvailableQuestIds,
+  listNewlyUnlockedQuestIds,
+  type QuestUnlockContext,
+} from "./quests";
+import PlayerQuestsPanel, { type PlayerQuestFilter } from "./PlayerQuestsPanel";
+import ProgressionNoticeModal from "./ProgressionNoticeModal";
+import { redeemQuest, unlockContextFromMeta } from "./questRedeem";
+import {
+  buildNewQuestsNotice,
+  type ProgressionNotice,
+} from "./progressionNotifications";
+import { nextRetransmissionCashCost, CANONICAL_RETRANSMISSION } from "./operators/retransmission";
+import {
+  advanceUniqueLifecycle,
+  getUniqueContactProgress,
+  isUniqueContactActiveTransmission,
+  maybeTriggerUniqueDistress,
+  setUniqueLifecycle,
+  settleUniqueTransmission,
+  syncUniqueEligibility,
+  uniqueContactRequirementsMet,
+  uniqueTransmissionForLifecycle,
+  UNIQUE_OPERATOR_BY_ID,
+  getUniqueOperatorDisplayName,
+} from "./operators/uniqueOperators";
+import { freshRadioProgression, radioStatePresentation } from "./operators/radioProgression";
+import { evaluateRequirement } from "./operators/recruitmentRequirements";
+import {
+  stashEntriesFromItems,
+} from "./operators/equipment";
+import {
+  LEADER_EQUIPMENT_OWNER_ID,
+  coerceEquipmentOwnerId,
+  equipOnEquipmentOwner,
+  unequipFromEquipmentOwner,
+  type EquipmentOwnerId,
+} from "./operators/crewEquipment";
+import { getRaidOperatorTitle, getRaidOperatorDisplayName } from "./operators/raidIdentity";
+import CrewEquipmentPanel from "./CrewEquipmentPanel";
+import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
+import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
+import {
+  operatorAccuracyBonus,
+  operatorEffectiveWeight,
+  operatorMaxHp as persistentOperatorMaxHp,
+  operatorReloadMult,
+  resolveCombatMods,
+  syncOperatorEquipmentFromTower,
+} from "./operators/runtime";
+import { operatorSpeedMultiplier, OPERATOR_MOVE_SPEED_TILES } from "./movement";
 import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
-import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
+
 import { RAID_SCRAP_MULT } from "./loot";
 import { DEV_TOOLS_ENABLED } from "./dev/tools";
 import { confirmLeaveRaidForMapBuilder, type DevToolId } from "./dev/menu";
@@ -189,6 +257,8 @@ import BalanceLab from "./dev/BalanceLab";
 import EconomyLab from "./dev/EconomyLab";
 import WaveLab from "./dev/WaveLab";
 import QuestEditor from "./dev/QuestEditor";
+import RecruitmentLab from "./dev/RecruitmentLab";
+import { initRecruitmentLab } from "./operators/recruitmentLabCore";
 import {
   effectiveEnemy,
   effectiveWave,
@@ -387,7 +457,7 @@ function coverList(map: GameMap, s: GameState): CoverPiece[] {
   ];
 }
 
-export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap) {
+export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Meta) {
   const w = weaponDef(t.weapon);
   const folded = applyAttachmentMods(w, t.attachments, attachmentDef);
   let damage = folded.damage;
@@ -396,6 +466,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap) {
   let accuracy = folded.accuracy;
   let pen = folded.pen;
   const splash = folded.splash * SCALE;
+  const operatorMods = t.operatorId && meta ? resolveCombatMods(findOperator(meta, t.operatorId) ?? { stats: { aim: 50, toughness: 50, handling: 50, mobility: 50 }, traitIds: [], perkIds: [] }) : null;
   if (t.pmc) {
     const lvl = t.level ?? 1;
     damage *= 1 + (lvl - 1) * 0.05;
@@ -404,6 +475,10 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap) {
       accuracy += mods.pmcAcc;
       cooldown /= mods.pmcRof;
     }
+  }
+  if (operatorMods) {
+    accuracy += operatorAccuracyBonus(operatorMods);
+    cooldown *= operatorReloadMult(operatorMods);
   }
   if (map) {
     const boosted = applyHighGroundCombat(range, accuracy, map, t.tx, t.ty);
@@ -448,6 +523,67 @@ function pmcSpawnTile(map: GameMap, s: GameState) {
   return best ?? { tx: 1, ty: 1 };
 }
 
+function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
+  const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
+  let weight = getEquippedWeight(kit);
+  if (t.operatorId && meta) {
+    const op = findOperator(meta, t.operatorId);
+    if (op) weight = operatorEffectiveWeight(kit, resolveCombatMods(op));
+  }
+  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * TILE;
+}
+
+function findDeployTiles(map: GameMap, s: GameState, count: number) {
+  const primary = pmcSpawnTile(map, s);
+  const tiles = [primary];
+  const steps = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+    { dx: 1, dy: 1 },
+    { dx: -1, dy: 1 },
+  ];
+  for (const d of steps) {
+    if (tiles.length >= count) break;
+    const tx = primary.tx + d.dx;
+    const ty = primary.ty + d.dy;
+    if (operatorPlaceableFor(map, s, tx, ty)) tiles.push({ tx, ty, score: 0 });
+  }
+  while (tiles.length < count) tiles.push(primary);
+  return tiles;
+}
+
+function spawnPersistentOperatorTower(
+  s: GameState,
+  map: GameMap,
+  op: PersistentOperator,
+  spot: { tx: number; ty: number },
+  debuffHpMult: number,
+) {
+  const hp = persistentOperatorMaxHp(op, debuffHpMult);
+  const armorDef = op.equipment.armor ? ARMORS[op.equipment.armor] : undefined;
+  s.towers.push({
+    id: s.nextId++,
+    tx: spot.tx,
+    ty: spot.ty,
+    surface: operatorPlacementSurface(map, spot.tx, spot.ty) ?? "GROUND",
+    weapon: op.equipment.weapon,
+    attachments: [...op.equipment.attachments],
+    cd: 0,
+    angle: 0,
+    flash: 0,
+    kills: 0,
+    hp,
+    maxHp: hp,
+    hurt: 0,
+    operatorId: op.id,
+    armor: op.equipment.armor,
+    armorHp: armorDef ? armorDef.durability : 0,
+    ...weaponRuntimeFields(op.equipment.weapon),
+  });
+}
+
 
 export default function TarkovTD() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -455,20 +591,30 @@ export default function TarkovTD() {
   const metaRef = useRef<Meta>(loadMeta());
   const uidRef = useRef(1);
   const [mapId, setMapId] = useState<string>("kolkhoz");
-  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "supplies">("hideout");
+  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "supplies" | "radio">("hideout");
   const [editMode, setEditMode] = useState(false);
   const [suppliesTab, setSuppliesTab] = useState<"stash" | "market">("stash");
-  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests">("overview");
+  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew">("overview");
+  const [selectedRecruitId, setSelectedRecruitId] = useState<string | null>(null);
+  const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
+  const [selectedEquipOwnerId, setSelectedEquipOwnerId] = useState<EquipmentOwnerId>(
+    LEADER_EQUIPMENT_OWNER_ID,
+  );
+  const [deployOperatorIds, setDeployOperatorIds] = useState<string[]>(() =>
+    aliveOperators(loadMeta()).map((o) => o.id),
+  );
   const [shopTab, setShopTab] = useState<"weapon" | "attachment" | "armor" | "backpack" | "meds">("weapon");
   const [stashTab, setStashTab] = useState<
     "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
   >("all");
-  const [questFilter, setQuestFilter] = useState<"all" | "open" | "done">("all");
+  const [questFilter, setQuestFilter] = useState<PlayerQuestFilter>("active");
+  const [progressionNotices, setProgressionNotices] = useState<ProgressionNotice[]>([]);
   const [devPickerOpen, setDevPickerOpen] = useState(false);
   const [balanceLabOpen, setBalanceLabOpen] = useState(false);
   const [economyLabOpen, setEconomyLabOpen] = useState(false);
   const [waveLabOpen, setWaveLabOpen] = useState(false);
   const [questLabOpen, setQuestLabOpen] = useState(false);
+  const [recruitmentLabOpen, setRecruitmentLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
@@ -517,8 +663,12 @@ export default function TarkovTD() {
 
   const persist = useCallback((nextStash: Item[], nextLoadout: Item[]) => {
     const m = metaRef.current;
-    m.stash = [...nextStash, ...nextLoadout].map((i) => ({ defId: i.id }));
+    m.stash = stashEntriesFromItems([...nextStash, ...nextLoadout]);
     saveMeta(m);
+  }, []);
+
+  useEffect(() => {
+    initRecruitmentLab(DEV_TOOLS_ENABLED);
   }, []);
 
   useEffect(() => {
@@ -544,15 +694,15 @@ export default function TarkovTD() {
 
   const deploy = useCallback(() => {
     const m = metaRef.current;
-    const mods = debuffMods(m.pmc.debuffs);
+    const debuffs = debuffMods(m.pmc.debuffs);
     const s = freshState(
       loadout.map((i) => ({ ...i })),
       "prep",
       mapRef.current,
-      Math.round(START_ROUBLES * mods.startRoubles) + skillMods(m.skills).startRoubles,
+      Math.round(START_ROUBLES * debuffs.startRoubles) + skillMods(m.skills).startRoubles,
     );
     const spot = pmcSpawnTile(mapRef.current, s);
-    const hp = pmcMaxHp(m.pmc.level, mods);
+    const hp = pmcMaxHp(m.pmc.level, debuffs);
     const armorDef = m.pmc.armor ? ARMORS[m.pmc.armor] : undefined;
     s.towers.push({
       id: s.nextId++,
@@ -575,6 +725,11 @@ export default function TarkovTD() {
       armorHp: armorDef ? armorDef.durability : 0,
       ...weaponRuntimeFields(m.pmc.weapon),
     });
+    const crewDeploy = aliveOperators(m).filter((o) => deployOperatorIds.includes(o.id));
+    const tiles = findDeployTiles(mapRef.current, s, crewDeploy.length + 1);
+    crewDeploy.forEach((op, i) => {
+      spawnPersistentOperatorTower(s, mapRef.current, op, tiles[i + 1] ?? tiles[0]!, debuffs.pmcHp);
+    });
     gs.current = s;
     setChoices([]);
     setPendingLoot(null);
@@ -584,11 +739,12 @@ export default function TarkovTD() {
     setLoadout([]);
     setScreen("hideout");
     persist(stash, []);
+    const crewNote = crewDeploy.length ? ` + ${crewDeploy.length} crew` : "";
     setLog([
-      `${m.pmc.name} inserted at ${mapRef.current.def.name}. Keep them alive — if they die, the run is over for good.`,
+      `${m.pmc.name} inserted at ${mapRef.current.def.name}${crewNote}. Keep them alive — if they die, the run is over for good.`,
     ]);
     rerender();
-  }, [loadout, persist, rerender, stash]);
+  }, [deployOperatorIds, loadout, persist, rerender, stash]);
 
   const toHideout = useCallback(
     (keepBackpack: boolean) => {
@@ -609,9 +765,22 @@ export default function TarkovTD() {
         next = settled.next;
       }
       if (!isQuestTestActive()) {
-        m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
-        m.quests.scavKills += s.scavKills;
-        m.quests.bossKills += s.bossKills;
+        const unlockCtx: QuestUnlockContext = {
+          claimedQuestIds: m.claimed,
+          playerLevel: m.pmc.level,
+          radioState: (m.crew.radio ?? freshRadioProgression()).radioState,
+          uniqueContacts: m.crew.radio?.uniqueContacts,
+        };
+        // Snapshot AVAILABLE before applying this raid — newly unlocked quests get 0 from this event.
+        const availableAtStart = listAvailableQuestIds(QUEST_SPECS, unlockCtx, m.quests);
+        const mapKey = mapRef.current.def.id;
+        m.quests = applyRaidQuestProgress(m.quests, availableAtStart, {
+          scavKills: s.scavKills,
+          bossKills: s.bossKills,
+          wave: s.wave,
+          mapId: mapKey,
+          extracted: keepBackpack,
+        });
       }
       // Operator bookkeeping: they keep kit on extract, lose it on death / wipe
       const pmc = s.towers.find((t) => t.pmc);
@@ -625,9 +794,18 @@ export default function TarkovTD() {
         m.pmc.attachments = keepBackpack ? [...pmc.attachments] : [];
         m.pmc.armor = keepBackpack ? (pmc.armor ?? null) : null;
       }
+      for (const t of s.towers) {
+        if (!t.operatorId) continue;
+        const idx = m.crew.operators.findIndex((o) => o.id === t.operatorId);
+        if (idx < 0 || m.crew.operators[idx]!.status === "dead") continue;
+        if (keepBackpack) {
+          m.crew.operators[idx] = syncOperatorEquipmentFromTower(m.crew.operators[idx]!, t);
+        }
+      }
       setStash(next);
-      m.stash = next.map((i) => ({ defId: i.id }));
+      m.stash = stashEntriesFromItems(next);
       m.runs += 1;
+      refreshRecruitmentPoolIfNeeded(m);
       saveMeta(m);
       gs.current = freshState([], "hideout", mapRef.current);
       setLoadout([]);
@@ -665,7 +843,7 @@ export default function TarkovTD() {
       const item = makeItem(defId, newUid())!;
       const next = [...stash, item];
       setStash(next);
-      m.stash = [...next, ...loadout].map((i) => ({ defId: i.id }));
+      m.stash = stashEntriesFromItems([...next, ...loadout]);
       saveMeta(m);
       pushLog(`Bought ${def.name} for ${price}₽.`);
       rerender();
@@ -683,7 +861,7 @@ export default function TarkovTD() {
       const next = stash.filter((i) => i.uid !== uid);
       setStash(next);
       m.bank += paid;
-      m.stash = [...next, ...loadout].map((i) => ({ defId: i.id }));
+      m.stash = stashEntriesFromItems([...next, ...loadout]);
       saveMeta(m);
       pushLog(`Sold ${item.name} on the black market for ${paid}₽ (bank).`);
       rerender();
@@ -722,21 +900,27 @@ export default function TarkovTD() {
     [pushLog, rerender],
   );
 
+  const enqueueNotices = useCallback((...notices: (ProgressionNotice | null | undefined)[]) => {
+    const next = notices.filter((n): n is ProgressionNotice => !!n);
+    if (!next.length) return;
+    setProgressionNotices((cur) => [...cur, ...next]);
+  }, []);
+
+  const dismissProgressionNotice = useCallback(() => {
+    setProgressionNotices((cur) => cur.slice(1));
+  }, []);
+
   const redeem = useCallback(
     (questId: string) => {
       const m = metaRef.current;
-      const q = QUESTS.find((x) => x.id === questId);
-      if (!q || !q.done(m.quests) || m.claimed.includes(q.id)) return;
-      m.claimed = [...m.claimed, q.id];
-      m.bank += q.reward;
-      m.skillPoints += q.skillPoints ?? 0;
+      const result = redeemQuest(m, questId, QUEST_SPECS);
+      if (!result.ok) return pushLog(result.reason);
+      if (result.alreadySettled) return;
       saveMeta(m);
-      pushLog(
-        `${q.name} redeemed: +${q.reward}₽${q.skillPoints ? `, +${q.skillPoints} skill point(s)` : ""} and new market stock.`,
-      );
+      enqueueNotices(result.notice);
       rerender();
     },
-    [pushLog, rerender],
+    [pushLog, rerender, enqueueNotices],
   );
 
   const toLoadout = useCallback(
@@ -768,82 +952,103 @@ export default function TarkovTD() {
 
   /* ---------------- operator equipment (hideout) ---------------- */
 
-  const pmcSlots = () => WEAPONS[metaRef.current.pmc.weapon]?.slots ?? 1;
-
-  const equipOnPmc = useCallback(
+  const equipOnSelectedOwner = useCallback(
     (uid: number) => {
       const m = metaRef.current;
-      const item = stash.find((i) => i.uid === uid);
-      if (!item) return;
-      let ns = stash.filter((i) => i.uid !== uid);
-      const back: Item[] = [];
-      if (item.kind === "weapon" && item.ref) {
-        const oldId = weaponItemId(m.pmc.weapon);
-        if (oldId) back.push(makeItem(oldId, newUid())!);
-        m.pmc.weapon = item.ref;
-        const slots = WEAPONS[item.ref]?.slots ?? 1;
-        while (m.pmc.attachments.length > slots) {
-          const popped = m.pmc.attachments.pop()!;
-          const aid = attachItemId(popped);
-          if (aid) back.push(makeItem(aid, newUid())!);
-        }
-      } else if (item.kind === "attachment" && item.ref) {
-        if (m.pmc.attachments.length >= pmcSlots()) return pushLog("No free mod slots on that gun.");
-        if (m.pmc.attachments.includes(item.ref)) return pushLog("That mod is already fitted.");
-        m.pmc.attachments.push(item.ref);
-      } else if (item.kind === "armor" && item.ref) {
-        const oldId = m.pmc.armor ? armorItemId(m.pmc.armor) : null;
-        if (oldId) back.push(makeItem(oldId, newUid())!);
-        m.pmc.armor = item.ref;
-      } else {
-        return pushLog("Your operator can only wear guns, mods and armor.");
-      }
-      ns = [...ns, ...back].slice(0, stashSlots);
+      const ownerId = coerceEquipmentOwnerId(m, selectedEquipOwnerId);
+      const result = equipOnEquipmentOwner(m, ownerId, stash, newUid(), uid, stashSlots);
+      if (!result.ok) return pushLog(result.reason);
+      const ns = result.stash.slice(0, stashSlots);
       setStash(ns);
-      m.stash = [...ns, ...loadout].map((i) => ({ defId: i.id }));
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
       saveMeta(m);
-      pushLog(`${item.name} fitted to ${m.pmc.name}.`);
+      pushLog(result.message);
+      rerender();
+    },
+    [loadout, pushLog, rerender, selectedEquipOwnerId, stash, stashSlots],
+  );
+
+  const unequipSelectedOwner = useCallback(
+    (slot: "weapon" | "armor" | number) => {
+      const m = metaRef.current;
+      const ownerId = coerceEquipmentOwnerId(m, selectedEquipOwnerId);
+      const result = unequipFromEquipmentOwner(m, ownerId, stash, newUid(), slot, stashSlots);
+      if (!result.ok) return pushLog(result.reason);
+      const ns = result.stash.slice(0, stashSlots);
+      setStash(ns);
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
+      saveMeta(m);
+      pushLog(result.message);
+      rerender();
+    },
+    [loadout, pushLog, rerender, selectedEquipOwnerId, stash, stashSlots],
+  );
+
+  const hireRecruit = useCallback(
+    (candidateId: string) => {
+      const m = metaRef.current;
+      const candidate = m.crew.recruitment.candidates.find((c) => c.candidateId === candidateId);
+      const cost = candidate?.cost ?? 0;
+      const result = hireCandidate(m, candidateId);
+      if (!result.ok) return pushLog(result.reason);
+      saveMeta(m);
+      setDeployOperatorIds((ids) => [...ids, result.operator.id]);
+      setSelectedRecruitId(null);
+      pushLog(`${result.operator.name} hired for ${cost}₽.`);
+      rerender();
+    },
+    [pushLog, rerender],
+  );
+
+  // First Radio open after SIGNAL_RESTORED: Wolf distress once + eligibility sync.
+  useEffect(() => {
+    if (screen !== "radio") return;
+    const m = metaRef.current;
+    ensureRadio(m);
+    let radio = m.crew.radio!;
+    let dirty = false;
+    const distress = maybeTriggerUniqueDistress(radio, "wolf", m.runs);
+    if (distress.triggered) {
+      radio = distress.radio;
+      dirty = true;
+    }
+    const synced = syncUniqueEligibility(radio, "wolf", progressionFactsFromMeta(m));
+    if (synced !== radio) {
+      radio = synced;
+      dirty = true;
+    }
+    if (dirty) {
+      m.crew.radio = radio;
+      saveMeta(m);
+      rerender();
+    }
+  }, [screen, rerender]);
+
+  const equipOnCrew = useCallback(
+    (operatorId: string, uid: number) => {
+      const m = metaRef.current;
+      const result = equipOnEquipmentOwner(m, operatorId, stash, newUid(), uid, stashSlots);
+      if (!result.ok) return pushLog(result.reason);
+      const ns = result.stash.slice(0, stashSlots);
+      setStash(ns);
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
+      saveMeta(m);
+      pushLog(result.message);
       rerender();
     },
     [loadout, pushLog, rerender, stash, stashSlots],
   );
 
-  const unequipPmc = useCallback(
-    (slot: "weapon" | "armor" | number) => {
+  const unequipCrew = useCallback(
+    (operatorId: string, slot: "weapon" | "armor" | number) => {
       const m = metaRef.current;
-      let defId: string | null = null;
-      if (slot === "weapon") {
-        if (m.pmc.weapon === STARTER_WEAPON_ID) return pushLog("They keep a sidearm as a fallback.");
-        defId = weaponItemId(m.pmc.weapon);
-        m.pmc.weapon = STARTER_WEAPON_ID;
-        const slots = WEAPONS[STARTER_WEAPON_ID]!.slots;
-        const spill: Item[] = [];
-        while (m.pmc.attachments.length > slots) {
-          const popped = m.pmc.attachments.pop()!;
-          const aid = attachItemId(popped);
-          if (aid) spill.push(makeItem(aid, newUid())!);
-        }
-        if (spill.length) {
-          const ns = [...stash, ...spill].slice(0, stashSlots);
-          setStash(ns);
-        }
-      } else if (slot === "armor") {
-        if (!m.pmc.armor) return;
-        defId = armorItemId(m.pmc.armor);
-        m.pmc.armor = null;
-      } else {
-        const att = m.pmc.attachments[slot];
-        if (!att) return;
-        m.pmc.attachments.splice(slot, 1);
-        defId = attachItemId(att);
-      }
-      setStash((cur) => {
-        const back = defId ? makeItem(defId, newUid()) : null;
-        const ns = (back ? [...cur, back] : cur).slice(0, stashSlots);
-        m.stash = [...ns, ...loadout].map((i) => ({ defId: i.id }));
-        saveMeta(m);
-        return ns;
-      });
+      const result = unequipFromEquipmentOwner(m, operatorId, stash, newUid(), slot, stashSlots);
+      if (!result.ok) return pushLog(result.reason);
+      const ns = result.stash.slice(0, stashSlots);
+      setStash(ns);
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
+      saveMeta(m);
+      pushLog(result.message);
       rerender();
     },
     [loadout, pushLog, rerender, stash, stashSlots],
@@ -886,16 +1091,18 @@ export default function TarkovTD() {
     rerender();
   }, [pushLog, rerender]);
 
-  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "none") => {
+  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "recruitment" | "none") => {
     const balance = which === "balance";
     const economy = which === "economy";
     const wave = which === "wave";
     const quest = which === "quest";
+    const recruitment = which === "recruitment";
     setBalanceLabOpen(balance);
     setEconomyLabOpen(economy);
     setWaveLabOpen(wave);
     setQuestLabOpen(quest);
-    labOpenRef.current = balance || economy || wave || quest;
+    setRecruitmentLabOpen(recruitment);
+    labOpenRef.current = balance || economy || wave || quest || recruitment;
   }, []);
 
   const onDevTool = useCallback(
@@ -919,6 +1126,10 @@ export default function TarkovTD() {
       }
       if (id === "quest-editor") {
         setLabs("quest");
+        return;
+      }
+      if (id === "recruitment-lab") {
+        setLabs("recruitment");
         return;
       }
       setLabs("balance");
@@ -1304,8 +1515,8 @@ export default function TarkovTD() {
 
       // towers move, then fire (moving operators cannot shoot)
       for (const t of s.towers) {
-        if (isOperatorMoving(t)) stepOperatorMove(t, dt, mapRef.current, operatorMoveSpeedPx(t));
-        const st = towerStats(t, mods, mapRef.current);
+        if (isOperatorMoving(t)) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
+        const st = towerStats(t, mods, mapRef.current, metaRef.current);
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
         t.hurt = Math.max(0, t.hurt - dt);
@@ -1499,6 +1710,28 @@ export default function TarkovTD() {
                     paySettledKills(s);
                     rerender();
                     return;
+                  }
+                  if (tw.operatorId) {
+                    markOperatorDead(metaRef.current, tw.operatorId);
+                    saveMeta(metaRef.current);
+                    dropGear(tw, s);
+                    clearOperatorMove(tw);
+                    s.towers = s.towers.filter((t) => t.id !== tw.id);
+                    if (s.selectedId === tw.id) s.selectedId = null;
+                    spawnParticles(b.tx, b.ty, "#ff8a3c", 22, 110);
+                    s.shake = Math.max(s.shake, 9);
+                    s.floats.push({
+                      x: b.tx,
+                      y: b.ty - 16,
+                      life: 1.4,
+                      text: "KIA — GEAR DROPPED",
+                      color: "#ff5a3c",
+                    });
+                    pushLog(
+                      `${getRaidOperatorDisplayName(tw, metaRef.current)} is KIA. Kit dropped — grab it or it's gone.`,
+                    );
+                    rerender();
+                    continue;
                   }
                   dropGear(tw, s);
                   clearOperatorMove(tw);
@@ -2094,6 +2327,7 @@ export default function TarkovTD() {
     // living operators walk out with everything they carry
     const carried: Item[] = [];
     for (const t of s.towers) {
+      if (t.operatorId) continue;
       const wid = weaponItemId(t.weapon);
       if (wid && t.weapon !== "toz") carried.push(makeItem(wid, newUid())!);
       for (const a of t.attachments) {
@@ -2120,7 +2354,7 @@ export default function TarkovTD() {
     for (const it of haul) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
     for (const [itemId, count] of counts) items.push({ itemId, count });
     noteQuestTestEvent({ type: "EXTRACT", mapId, items });
-    if (!isQuestTestActive()) metaRef.current.quests.extracts += 1;
+    // Extract count for quest trackers is applied in toHideout via applyRaidQuestProgress.
     s.phase = "extracted";
     pushLog(`Extracted with ${s.backpack.length + carried.length} item(s). Decide what to keep.`);
     rerender();
@@ -2159,10 +2393,6 @@ export default function TarkovTD() {
     .reduce((a, i) => a + saleValueOf(i), 0);
 
   const campScar = meta.pmc.debuffs[0] ? DEBUFF_BY_ID[meta.pmc.debuffs[0]] : null;
-  const kitActions = {
-    attachments: meta.pmc.attachments,
-    attachmentSlots: WEAPONS[meta.pmc.weapon]?.slots ?? 1,
-  };
 
   return (
     <div className="relative min-h-[100dvh] bg-background text-foreground">
@@ -2283,11 +2513,12 @@ export default function TarkovTD() {
 
               {s.phase === "hideout" && screen === "skills" && (
                 <Overlay
-                  title="SCAVLORD"
-                  subtitle={`${meta.pmc.name} · LVL ${meta.pmc.level} · ${meta.skillPoints} skill point(s)`}
+                  title={meta.pmc.name}
+                  subtitle={`LEADER · LVL ${meta.pmc.level} · ${meta.skillPoints} skill point(s)`}
+                  layout={scavTab === "quests" ? "wide" : "center"}
                 >
                   <div className="mb-2 flex flex-wrap gap-1">
-                    {(["overview", "skills", "quests"] as const).map((tab) => (
+                    {(["overview", "crew", "skills", "quests"] as const).map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setScavTab(tab)}
@@ -2329,6 +2560,106 @@ export default function TarkovTD() {
                       <div className="mt-2 text-muted-foreground">SKILL POINTS {meta.skillPoints}</div>
                     </div>
                   )}
+                  {scavTab === "crew" && (
+                    <div className="pixel-card text-left font-mono text-[10px]">
+                      <div className="text-muted-foreground">HIRED OPERATORS</div>
+                      {meta.crew.operators.length === 0 ? (
+                        <div className="mt-2 text-muted-foreground">No crew yet — check the Radio.</div>
+                      ) : (
+                        <div className="mt-2 space-y-1">
+                          {meta.crew.operators.map((op) => (
+                            <button
+                              key={op.id}
+                              onClick={() => setSelectedCrewId(op.id === selectedCrewId ? null : op.id)}
+                              className={`w-full border px-2 py-1 text-left ${
+                                selectedCrewId === op.id ? "border-primary text-primary" : "border-border/50"
+                              }`}
+                            >
+                              <div className="flex justify-between gap-2">
+                                <span>
+                                  {op.name} · {op.roleLabel}
+                                </span>
+                                <span className={op.status === "dead" ? "text-destructive" : "text-accent"}>
+                                  {op.status === "dead" ? "DEAD" : "ALIVE"}
+                                </span>
+                              </div>
+                              <div className="text-[9px] text-muted-foreground">
+                                {WEAPONS[op.equipment.weapon]?.name ?? "SIDEARM"} ·{" "}
+                                {op.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ") || "—"}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {selectedCrewId && (() => {
+                        const op = meta.crew.operators.find((o) => o.id === selectedCrewId);
+                        if (!op) return null;
+                        return (
+                          <div className="mt-3 border-t border-border/40 pt-2">
+                            <div className="font-display text-[10px] text-primary">
+                              {op.name} · {op.roleLabel}
+                            </div>
+                            <div className="mt-1 space-y-0.5 text-[9px]">
+                              {crewStatRows(op.stats, op.potential).map((row) => (
+                                <div key={row.key} className="grid grid-cols-[3rem_1.5rem_1fr] items-center gap-1">
+                                  <span className="text-muted-foreground">{row.label}</span>
+                                  <span className="text-foreground">{row.current}</span>
+                                  <span className="font-mono text-[8px] text-primary/90">{row.bar}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-1 text-[9px] text-muted-foreground">
+                              PERKS: {op.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ") || "—"}
+                            </div>
+                            <div className="mt-2 text-[9px] text-muted-foreground">
+                              Full kit editing: open Equipment / Raid Prep and select this operator.
+                            </div>
+                            <div className="mt-2 grid gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedEquipOwnerId(op.id);
+                                  setScreen("gear");
+                                }}
+                                className="pixel-btn w-full"
+                              >
+                                OPEN EQUIPMENT
+                              </button>
+                              <button onClick={() => unequipCrew(op.id, "weapon")} className="pixel-card text-left">
+                                WEAPON: {WEAPONS[op.equipment.weapon]?.name ?? "SIDEARM"}
+                              </button>
+                              <button onClick={() => unequipCrew(op.id, "armor")} className="pixel-card text-left">
+                                ARMOR: {op.equipment.armor ? (ARMORS[op.equipment.armor]?.name ?? "ARMOR") : "EMPTY"}
+                              </button>
+                              {op.equipment.attachments.map((att, i) => (
+                                <button key={att} onClick={() => unequipCrew(op.id, i)} className="pixel-card text-left">
+                                  MOD: {ATTACHMENTS[att]?.name ?? att}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="mt-2 text-[9px] text-muted-foreground">QUICK EQUIP FROM STASH</div>
+                            <div className="mt-1 max-h-[100px] space-y-1 overflow-auto">
+                              {stash
+                                .filter((i) => i.kind === "weapon" || i.kind === "armor" || i.kind === "attachment")
+                                .slice(0, 12)
+                                .map((item) => (
+                                  <button
+                                    key={item.uid}
+                                    onClick={() => equipOnCrew(op.id, item.uid)}
+                                    className="w-full border border-border/40 px-1 py-[2px] text-left hover:border-primary"
+                                  >
+                                    {item.name}
+                                  </button>
+                                ))}
+                            </div>
+                            <div className="mt-1 text-[9px] text-muted-foreground">
+                              LVL {op.progression.level} · XP {op.progression.xp}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                   {scavTab === "skills" && (
                     <div className="grid gap-2 text-left sm:grid-cols-2">
                       {SKILLS.map((sk) => {
@@ -2356,58 +2687,196 @@ export default function TarkovTD() {
                     </div>
                   )}
                   {scavTab === "quests" && (
-                    <div className="pixel-card pixel-scrollbar max-h-[280px] overflow-auto text-left">
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {(["all", "open", "done"] as const).map((t) => (
-                          <button
-                            key={t}
-                            onClick={() => setQuestFilter(t)}
-                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                              questFilter === t
-                                ? "border-primary text-primary"
-                                : "border-border/60 text-muted-foreground"
-                            }`}
-                          >
-                            {t === "open" ? "not completed" : t === "done" ? "completed" : "all"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-2 space-y-1 font-mono text-[10px]">
-                        {QUESTS.filter((q) => {
-                          const d = q.done(meta.quests);
-                          return questFilter === "all" || (questFilter === "done" ? d : !d);
-                        }).map((q) => {
-                          const done = q.done(meta.quests);
-                          const claimed = meta.claimed.includes(q.id);
-                          return (
-                            <div
-                              key={q.id}
-                              className={`flex items-center justify-between gap-2 border-b border-border/40 pb-1 ${
-                                claimed ? "text-muted-foreground" : done ? "text-accent" : "text-muted-foreground"
-                              }`}
-                            >
-                              <span>
-                                [{claimed ? "✓" : done ? "!" : q.progress(meta.quests)}] {q.name} — {q.desc}
-                              </span>
-                              {done && !claimed && (
-                                <button
-                                  onClick={() => redeem(q.id)}
-                                  className="pixel-btn pixel-btn-primary shrink-0 px-2 py-1 text-[9px]"
-                                >
-                                  REDEEM +{q.reward}₽{q.skillPoints ? ` +${q.skillPoints}SP` : ""}
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <PlayerQuestsPanel
+                      catalog={QUEST_SPECS}
+                      unlockCtx={{
+                        claimedQuestIds: meta.claimed,
+                        playerLevel: meta.pmc.level,
+                        radioState: (meta.crew.radio ?? freshRadioProgression()).radioState,
+                        uniqueContacts: meta.crew.radio?.uniqueContacts,
+                      }}
+                      questProgress={meta.quests}
+                      filter={questFilter}
+                      onFilter={setQuestFilter}
+                      onRedeem={redeem}
+                    />
                   )}
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
                     BACK TO CAMP
                   </button>
                 </Overlay>
               )}
+
+              {s.phase === "hideout" && screen === "radio" && (() => {
+                const m = meta;
+                const radio = m.crew.radio ?? freshRadioProgression();
+                const facts = progressionFactsFromMeta(m);
+                const cap = capabilityFromMeta(m);
+                const crewFull =
+                  crewOccupancy(m) >= cap.crewCapacity.effective
+                    ? "CREW CAPACITY FULL"
+                    : null;
+
+                const wolfProg = getUniqueContactProgress(radio, "wolf");
+                const wolfDef = UNIQUE_OPERATOR_BY_ID["wolf"];
+                const wolfTx =
+                  wolfDef && wolfProg.lifecycle !== "HIDDEN"
+                    ? uniqueTransmissionForLifecycle(wolfDef, wolfProg.lifecycle)
+                    : null;
+                const wolfReqs =
+                  wolfDef &&
+                  (wolfProg.lifecycle === "REQUIREMENTS_VISIBLE" ||
+                    wolfProg.lifecycle === "CONTACTABLE" ||
+                    wolfProg.lifecycle === "RECRUITABLE")
+                    ? wolfDef.contactRequirements.map((r) => evaluateRequirement(r, facts))
+                    : null;
+                const wolfCanRecruit =
+                  !!wolfDef &&
+                  (wolfProg.lifecycle === "RECRUITABLE" || wolfProg.lifecycle === "CONTACTABLE") &&
+                  uniqueContactRequirementsMet(wolfDef, facts);
+
+                const questHint =
+                  radio.radioState === "BROKEN"
+                    ? `CURRENT SIGNAL TASK · ${QUEST_SPEC_BY_ID["radio_power"]?.name ?? "DEAD CHANNEL"} — restore power.`
+                    : radio.radioState === "POWERED_STATIC"
+                      ? `CURRENT SIGNAL TASK · ${QUEST_SPEC_BY_ID["radio_signal"]?.name ?? "RAISE THE TOWER"} — repair the signal path.`
+                      : radio.radioState === "SIGNAL_RESTORED" &&
+                          wolfProg.lifecycle === "RECRUITED" &&
+                          wolfProg.transmissionSettled
+                        ? `CURRENT SIGNAL TASK · ${QUEST_SPEC_BY_ID["radio_network"]?.name ?? "OPEN FREQUENCIES"} — unlock the scav network.`
+                        : radio.radioState === "SIGNAL_RESTORED" &&
+                            (wolfProg.lifecycle === "REQUIREMENTS_VISIBLE" ||
+                              wolfProg.lifecycle === "CONTACTABLE" ||
+                              wolfProg.lifecycle === "RECRUITABLE")
+                          ? `CURRENT SIGNAL TASK · ${QUEST_SPEC_BY_ID["wolf_help"]?.name ?? "HELP WOLF"} — prove you can hold a line.`
+                          : null;
+
+                const showWolfTx =
+                  !!wolfDef &&
+                  !!wolfTx &&
+                  isUniqueContactActiveTransmission(wolfProg);
+
+                const uniqueContact = showWolfTx
+                    ? {
+                        uniqueId: "wolf",
+                        lifecycle: wolfProg.lifecycle,
+                        transmission: wolfTx!,
+                        onAdvance:
+                          wolfProg.lifecycle === "DISTRESS_SIGNAL" ||
+                          wolfProg.lifecycle === "IDENTIFIED"
+                            ? () => {
+                                const cur = metaRef.current;
+                                ensureRadio(cur);
+                                const before = unlockContextFromMeta(cur);
+                                const life =
+                                  wolfProg.lifecycle === "IDENTIFIED"
+                                    ? ("REQUIREMENTS_VISIBLE" as const)
+                                    : advanceUniqueLifecycle(wolfProg.lifecycle);
+                                cur.crew.radio = setUniqueLifecycle(cur.crew.radio!, "wolf", life);
+                                const after = unlockContextFromMeta(cur);
+                                const unlockedIds = listNewlyUnlockedQuestIds(QUEST_SPECS, before, after);
+                                const unlocked = unlockedIds
+                                  .map((id) => QUEST_SPEC_BY_ID[id])
+                                  .filter((q): q is NonNullable<typeof q> => !!q);
+                                saveMeta(cur);
+                                if (unlocked.length) {
+                                  enqueueNotices(buildNewQuestsNotice(unlocked));
+                                }
+                                rerender();
+                              }
+                            : wolfProg.lifecycle === "RECRUITED"
+                              ? () => {
+                                  const cur = metaRef.current;
+                                  ensureRadio(cur);
+                                  const before = unlockContextFromMeta(cur);
+                                  cur.crew.radio = settleUniqueTransmission(cur.crew.radio!, "wolf");
+                                  const after = unlockContextFromMeta(cur);
+                                  const unlockedIds = listNewlyUnlockedQuestIds(QUEST_SPECS, before, after);
+                                  const unlocked = unlockedIds
+                                    .map((id) => QUEST_SPEC_BY_ID[id])
+                                    .filter((q): q is NonNullable<typeof q> => !!q);
+                                  saveMeta(cur);
+                                  if (unlocked.length) {
+                                    enqueueNotices(buildNewQuestsNotice(unlocked));
+                                  } else {
+                                    pushLog(
+                                      `${getUniqueOperatorDisplayName("wolf")} cleared the channel.`,
+                                    );
+                                  }
+                                  rerender();
+                                }
+                              : null,
+                        onRecruit: wolfCanRecruit
+                          ? () => {
+                              const cur = metaRef.current;
+                              const before = unlockContextFromMeta(cur);
+                              const result = hireUniqueContact(cur, "wolf");
+                              if (!result.ok) return pushLog(result.reason);
+                              const after = unlockContextFromMeta(cur);
+                              const unlockedIds = listNewlyUnlockedQuestIds(QUEST_SPECS, before, after);
+                              const unlocked = unlockedIds
+                                .map((id) => QUEST_SPEC_BY_ID[id])
+                                .filter((q): q is NonNullable<typeof q> => !!q);
+                              saveMeta(cur);
+                              setDeployOperatorIds((ids) => [...ids, result.operator.id]);
+                              pushLog(`${result.operator.name} joined the crew.`);
+                              if (unlocked.length) {
+                                enqueueNotices(buildNewQuestsNotice(unlocked));
+                              }
+                              rerender();
+                            }
+                          : null,
+                        requirements: wolfReqs,
+                        canRecruit: wolfCanRecruit,
+                        recruitBlockedReason: crewFull,
+                      }
+                    : null;
+
+                return (
+                  <Overlay
+                    title="RADIO"
+                    subtitle={
+                      cap.radioState === "NETWORKED"
+                        ? RECRUITMENT_SUBTITLE
+                        : radioStatePresentation(cap.radioState).subtitle
+                    }
+                    layout="wide"
+                  >
+                    <RecruitmentPanel
+                      candidates={m.crew.recruitment.candidates}
+                      bank={m.bank}
+                      selectedId={selectedRecruitId}
+                      onSelect={setSelectedRecruitId}
+                      onHire={hireRecruit}
+                      onBack={() => setScreen("hideout")}
+                      radioState={cap.radioState}
+                      hireBlockedReason={crewFull}
+                      questHint={questHint}
+                      uniqueContact={uniqueContact}
+                      retransmission={
+                        cap.retransmissionUnlocked
+                          ? {
+                              unlocked: true,
+                              nextCost: nextRetransmissionCashCost(
+                                CANONICAL_RETRANSMISSION,
+                                radio.retransmissionCount,
+                              ),
+                              onRequest: () => {
+                                const result = requestNewTransmission(metaRef.current);
+                                if (!result.ok) return pushLog(result.reason);
+                                saveMeta(metaRef.current);
+                                pushLog(
+                                  `New transmission — ${result.cost.toLocaleString()} ₽.`,
+                                );
+                                rerender();
+                              },
+                            }
+                          : null
+                      }
+                    />
+                  </Overlay>
+                );
+              })()}
 
               {s.phase === "hideout" && screen === "region" && (
                 <Overlay title="DESTINATIONS" subtitle="Pick your insertion point. Higher threat, better loot.">
@@ -2421,6 +2890,37 @@ export default function TarkovTD() {
                     {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
                     {loadout.length}/{loadoutSlots}
                   </div>
+                  {aliveOperators(meta).length > 0 && (
+                    <div className="mt-2 pixel-card text-left font-mono text-[10px]">
+                      <div className="text-muted-foreground">CREW DEPLOYMENT</div>
+                      <div className="mt-1 space-y-1">
+                        <div className="text-primary">
+                          {meta.pmc.name} — always deploys
+                        </div>
+                        {aliveOperators(meta).map((op) => {
+                          const on = deployOperatorIds.includes(op.id);
+                          return (
+                            <button
+                              key={op.id}
+                              onClick={() =>
+                                setDeployOperatorIds((ids) =>
+                                  on ? ids.filter((id) => id !== op.id) : [...ids, op.id],
+                                )
+                              }
+                              className={`flex w-full items-center justify-between border px-2 py-1 ${
+                                on ? "border-accent text-accent" : "border-border/50 text-muted-foreground"
+                              }`}
+                            >
+                              <span>
+                                {op.name} · {WEAPONS[op.equipment.weapon]?.name ?? "SIDEARM"}
+                              </span>
+                              <span>{on ? "DEPLOY" : "STAY"}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   {DEV_TOOLS_ENABLED && (
                     <Link
                       to="/dev/map-editor"
@@ -2442,125 +2942,26 @@ export default function TarkovTD() {
               {s.phase === "hideout" && screen === "gear" && (
                 <Overlay
                   title="EQUIPMENT / RAID PREP"
-                  subtitle="Worn kit · carried loadout · owned stash. EQUIP and PACK are chosen per item."
+                  subtitle="Crew kits · shared stash · raid loadout. Select an operator, then EQUIP / INSTALL / PACK."
                   layout="fill"
                 >
-                  <div className="flex h-full min-h-0 flex-col gap-2">
-                    <div className="grid min-h-0 flex-1 gap-3 text-left sm:grid-cols-2 lg:grid-cols-[minmax(190px,0.28fr)_minmax(150px,0.22fr)_minmax(0,1fr)] lg:items-stretch">
-                    <div className="pixel-card lg:self-start">
-                      <div className="font-display text-[10px] text-primary">SCAVLORD KIT</div>
-                      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Worn · tap a slot to return it to stash</p>
-                      <div className="mt-2 grid gap-2 font-mono text-[10px]">
-                        <button
-                          onClick={() => unequipPmc("weapon")}
-                          className="pixel-card text-left hover:-translate-y-[2px]"
-                        >
-                          <div className="text-muted-foreground">PRIMARY</div>
-                          <div className="text-primary">{WEAPONS[meta.pmc.weapon]?.name ?? "SIDEARM"}</div>
-                        </button>
-                        <button
-                          onClick={() => unequipPmc("armor")}
-                          className="pixel-card text-left hover:-translate-y-[2px]"
-                        >
-                          <div className="text-muted-foreground">BODY ARMOR</div>
-                          <div className={meta.pmc.armor ? "text-primary" : "text-muted-foreground"}>
-                            {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "EMPTY"}
-                          </div>
-                        </button>
-                        <div>
-                          <div className="text-muted-foreground">
-                            MODS {meta.pmc.attachments.length}/{WEAPONS[meta.pmc.weapon]?.slots ?? 1}
-                          </div>
-                          <div className="mt-1 grid grid-cols-2 gap-1">
-                            {Array.from({ length: WEAPONS[meta.pmc.weapon]?.slots ?? 1 }).map((_, i) => {
-                              const att = meta.pmc.attachments[i];
-                              if (!att)
-                                return (
-                                  <div
-                                    key={`pa-${i}`}
-                                    className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                                  />
-                                );
-                              return (
-                                <button
-                                  key={`pa-${i}-${att}`}
-                                  onClick={() => unequipPmc(i)}
-                                  title={ATTACHMENTS[att]?.name}
-                                  className="h-[42px] overflow-hidden border-2 border-accent bg-background/70 p-1 text-left font-mono text-[8px] leading-tight text-accent hover:-translate-y-[2px]"
-                                >
-                                  {ATTACHMENTS[att]?.name ?? att}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pixel-card lg:self-start">
-                      <div className="font-display text-[10px] text-primary">
-                        RAID LOADOUT {loadout.length}/{loadoutSlots}
-                      </div>
-                      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Carried in · tap a slot to return it to stash</p>
-                      <div className="mt-2 grid grid-cols-3 gap-1">
-                        {Array.from({ length: loadoutSlots }).map((_, i) => {
-                          const item = loadout[i];
-                          if (!item)
-                            return (
-                              <div
-                                key={`empty-${i}`}
-                                className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                              />
-                            );
-                          return <ItemCell key={item.uid} item={item} onClick={() => fromLoadout(item.uid)} />;
-                        })}
-                      </div>
-                    </div>
-                    <div className="pixel-card flex min-h-0 flex-col sm:col-span-2 lg:col-span-1 lg:h-full">
-                      <div className="shrink-0">
-                        <div className="font-display text-[10px] text-primary">
-                          STASH {stash.length}/{stashSlots}
-                        </div>
-                        <p className="mt-1 font-mono text-[9px] text-muted-foreground">
-                          EQUIP → ScavLord kit · PACK → raid loadout
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
-                            <button
-                              key={t}
-                              onClick={() => setStashTab(t)}
-                              className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                                stashTab === t
-                                  ? "border-primary text-primary"
-                                  : "border-border/60 text-muted-foreground"
-                              }`}
-                            >
-                              {t === "all" ? "all" : t + "s"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="pixel-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto max-h-[36vh] lg:max-h-none">
-                        {sortedStash.length === 0 ? (
-                          <div className="font-mono text-[9px] text-muted-foreground">Nothing in this category.</div>
-                        ) : (
-                          sortedStash.map((item) => (
-                            <PrepItemRow
-                              key={item.uid}
-                              item={item}
-                              actions={raidPrepActions(item, kitActions)}
-                              onEquip={() => equipOnPmc(item.uid)}
-                              onPack={() => toLoadout(item.uid)}
-                            />
-                          ))
-                        )}
-                      </div>
-                    </div>
-                    </div>
-                    <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary w-full shrink-0">
-                      BACK TO CAMP
-                    </button>
-                  </div>
+                  <CrewEquipmentPanel
+                    meta={meta}
+                    selectedOwnerId={coerceEquipmentOwnerId(meta, selectedEquipOwnerId)}
+                    onSelectOwner={setSelectedEquipOwnerId}
+                    stash={stash}
+                    stashSlots={stashSlots}
+                    stashTab={stashTab}
+                    setStashTab={setStashTab}
+                    sortedStash={sortedStash}
+                    loadout={loadout}
+                    loadoutSlots={loadoutSlots}
+                    onEquip={equipOnSelectedOwner}
+                    onUnequip={unequipSelectedOwner}
+                    onPack={toLoadout}
+                    onUnpack={fromLoadout}
+                    onBack={() => setScreen("hideout")}
+                  />
                 </Overlay>
               )}
 
@@ -2894,7 +3295,7 @@ export default function TarkovTD() {
 
             <div className="pixel-card">
               <div className="font-display text-[10px] text-primary">
-                {selected?.pmc ? `${meta.pmc.name} · YOUR OPERATOR` : "OPERATOR"}
+                {selected ? getRaidOperatorTitle(selected, meta) : "NO OPERATOR SELECTED"}
               </div>
               {selected ? (
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
@@ -3227,6 +3628,12 @@ export default function TarkovTD() {
           inRaid={s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted"}
           onClose={() => setLabs("none")}
           onApplied={() => rerender()}
+          unlockContext={{
+            claimedQuestIds: metaRef.current.claimed,
+            playerLevel: metaRef.current.pmc.level,
+            radioState: (metaRef.current.crew.radio ?? freshRadioProgression()).radioState,
+            uniqueContacts: metaRef.current.crew.radio?.uniqueContacts,
+          }}
           onTestQuest={(questId) => {
             const inRaidNow = s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted";
             const r = requestTestQuest(DEV_TOOLS_ENABLED, inRaidNow, questId);
@@ -3242,6 +3649,33 @@ export default function TarkovTD() {
             rerender();
           }}
         />
+      )}
+      {DEV_TOOLS_ENABLED && recruitmentLabOpen && (
+        <RecruitmentLab
+          enabled={DEV_TOOLS_ENABLED}
+          meta={metaRef.current}
+          onClose={() => setLabs("none")}
+          onApplied={() => rerender()}
+          onRegeneratePool={() => {
+            regenerateRecruitmentPool(metaRef.current);
+            saveMeta(metaRef.current);
+            pushLog("DEV: Radio pool regenerated");
+            rerender();
+          }}
+          onRequestTransmission={() => {
+            const result = requestNewTransmission(metaRef.current);
+            if (result.ok) {
+              saveMeta(metaRef.current);
+              pushLog(`DEV: Retransmission (-${result.cost}₽)`);
+            } else {
+              pushLog(`DEV: Retransmission failed — ${result.reason}`);
+            }
+            rerender();
+          }}
+        />
+      )}
+      {progressionNotices[0] && (
+        <ProgressionNoticeModal notice={progressionNotices[0]} onContinue={dismissProgressionNotice} />
       )}
     </div>
   );
@@ -3395,37 +3829,6 @@ function useLongPress(onLong?: () => void, ms = 450) {
       onPointerCancel: clear,
     },
   };
-}
-
-function PrepItemRow({
-  item,
-  actions,
-  onEquip,
-  onPack,
-}: {
-  item: Item;
-  actions: RaidPrepAction[];
-  onEquip: () => void;
-  onPack: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-1 border-b border-border/40 py-1">
-      <div className="min-w-0 flex-1 text-left font-mono text-[9px] leading-tight" style={{ color: RARITY_COLOR[item.rarity] }}>
-        <div className="truncate">{item.name}</div>
-        <div className="uppercase text-muted-foreground">{item.kind}</div>
-      </div>
-      {actions.includes("equip") && (
-        <button type="button" onClick={onEquip} className="pixel-btn shrink-0 px-1 py-1 text-[8px]">
-          EQUIP
-        </button>
-      )}
-      {actions.includes("pack") && (
-        <button type="button" onClick={onPack} className="pixel-btn shrink-0 px-1 py-1 text-[8px]">
-          PACK
-        </button>
-      )}
-    </div>
-  );
 }
 
 type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable";
@@ -3620,20 +4023,25 @@ function Overlay({
   title: string;
   subtitle: string;
   children: React.ReactNode;
-  layout?: "center" | "fill";
+  layout?: "center" | "fill" | "wide";
 }) {
   const fill = layout === "fill";
+  const wide = layout === "wide";
   return (
     <div
-      className={`absolute inset-0 z-10 flex flex-col items-center gap-2 bg-background/90 p-3 text-center backdrop-blur-[2px] pixel-scrollbar sm:p-4 ${
-        fill ? "overflow-hidden" : "justify-center overflow-auto"
+      className={`absolute inset-0 z-10 flex flex-col items-center gap-2 bg-background/85 p-3 text-center backdrop-blur-[1px] pixel-scrollbar sm:p-5 ${
+        fill ? "overflow-hidden" : wide ? "justify-start overflow-auto pt-4 sm:pt-6" : "justify-center overflow-auto"
       }`}
     >
-      <h2 className="shrink-0 font-display text-base text-primary sm:text-lg">{title}</h2>
-      <p className="shrink-0 font-mono text-[11px] text-muted-foreground">{subtitle}</p>
+      <h2 className="shrink-0 font-display text-base text-primary sm:text-xl">{title}</h2>
+      <p className="shrink-0 max-w-3xl font-mono text-[11px] text-muted-foreground sm:text-xs">{subtitle}</p>
       <div
         className={`w-full ${
-          fill ? "flex min-h-0 flex-1 flex-col overflow-hidden max-w-6xl" : "max-w-4xl"
+          fill
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden max-w-7xl"
+            : wide
+              ? "flex min-h-0 w-[min(80vw,72rem)] max-w-[80vw] flex-1 flex-col"
+              : "max-w-4xl"
         }`}
       >
         {children}

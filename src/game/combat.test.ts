@@ -141,9 +141,15 @@ describe("kill rewards vs leak", () => {
     expect(r2.kills).toHaveLength(0);
     expect(book.killed).toBe(1);
     expect(book.roubles).toBe(ENEMIES.scav.bounty);
-    expect(QUESTS.find((q) => q.id === "debut")!.done({ scavKills: book.scavKills, bossKills: 0, bestWave: 0, extracts: 0 })).toBe(
-      false,
-    );
+    expect(
+      QUESTS.find((q) => q.id === "debut")!.done({
+        scavKills: book.scavKills,
+        bossKills: 0,
+        bestWave: 0,
+        extracts: 0,
+        trackers: { debut: { scavKills: book.scavKills, bossKills: 0, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe(false);
   });
 
   it("pays Enforcer bounty and boss quest once", () => {
@@ -159,7 +165,15 @@ describe("kill rewards vs leak", () => {
     expect(book.roubles).toBe(ENEMIES.boss.bounty);
     expect(xp).toBe(120);
     const q = QUESTS.find((x) => x.id === "bounty")!;
-    expect(q.done({ scavKills: 0, bossKills: book.bossKills, bestWave: 0, extracts: 0 })).toBe(true);
+    expect(
+      q.done({
+        scavKills: 0,
+        bossKills: book.bossKills,
+        bestWave: 0,
+        extracts: 0,
+        trackers: { bounty: { scavKills: 0, bossKills: book.bossKills, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe(true);
   });
 
   it("grants no bounty, XP, or quest progress on leak", () => {
@@ -179,18 +193,28 @@ describe("kill rewards vs leak", () => {
 });
 
 describe("quest progress from kills", () => {
-  const empty: QuestProgress = { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0 };
+  const empty: QuestProgress = { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0, trackers: {} };
 
   it("First Blood completes at 25 scav kills", () => {
     const q = QUESTS.find((x) => x.id === "debut")!;
     expect(q.done(empty)).toBe(false);
-    expect(q.done({ ...empty, scavKills: 25 })).toBe(true);
+    expect(
+      q.done({
+        ...empty,
+        trackers: { debut: { scavKills: 25, bossKills: 0, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe(true);
   });
 
   it("Crown Kill completes on one enforcer kill", () => {
     const q = QUESTS.find((x) => x.id === "bounty")!;
     expect(q.done(empty)).toBe(false);
-    expect(q.done({ ...empty, bossKills: 1 })).toBe(true);
+    expect(
+      q.done({
+        ...empty,
+        trackers: { bounty: { scavKills: 0, bossKills: 1, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe(true);
   });
 });
 

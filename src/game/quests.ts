@@ -18,11 +18,54 @@ import type { EnemyKind } from "./types";
 export const QUEST_ID_RE = /^[a-z][a-z0-9_]{1,39}$/;
 export const MAX_WAVE_OBJECTIVE = 99;
 
+export interface MapKillCounts {
+  scav?: number;
+  boss?: number;
+  raider?: number;
+}
+
 export interface QuestProgress {
   scavKills: number;
   bossKills: number;
   bestWave: number;
   extracts: number;
+  /** Cumulative waves completed per map (successful extracts). */
+  wavesCompletedByMap?: Record<string, number>;
+  /** Lifetime kills attributed by map (leaks excluded at settlement). */
+  killsByMap?: Record<string, MapKillCounts>;
+  /** Optional raider lifetime kills when tracked. */
+  raiderKills?: number;
+  /** Per-boss kill counts when multiple bosses exist. */
+  bossKillsById?: Record<string, number>;
+  /**
+   * Per-quest objective trackers. Only AVAILABLE quests receive raid deltas.
+   * Lifetime fields above remain for recruitment/requirements — not for quest objectives.
+   */
+  trackers?: Record<string, QuestTracker>;
+}
+
+/** Objective progress for a single quest while it is AVAILABLE. */
+export type QuestTracker = {
+  scavKills: number;
+  bossKills: number;
+  bestWave: number;
+  extracts: number;
+  wavesCompletedByMap?: Record<string, number>;
+  killsByMap?: Record<string, MapKillCounts>;
+  raiderKills?: number;
+  bossKillsById?: Record<string, number>;
+};
+
+export type QuestLifecycle = "LOCKED" | "ACTIVE" | "READY_TO_REDEEM" | "COMPLETED";
+
+/** @deprecated Prefer QuestLifecycle — AVAILABLE is now ACTIVE / READY_TO_REDEEM. */
+export type QuestAvailability = QuestLifecycle;
+
+export interface QuestUnlockContext {
+  claimedQuestIds: readonly string[];
+  playerLevel: number;
+  radioState: import("./operators/radioProgression").RadioState;
+  uniqueContacts?: Record<string, { lifecycle: string }>;
 }
 
 export interface QuestDef {
@@ -66,7 +109,19 @@ export type QuestObjective =
 export type QuestReward =
   | { type: "ROUBLES"; amount: number }
   | { type: "SKILL_POINTS"; amount: number }
-  | { type: "UNLOCK"; itemId: string };
+  | { type: "UNLOCK"; itemId: string }
+  | { type: "SET_RADIO_STATE"; state: import("./operators/radioProgression").RadioState }
+  | { type: "RECRUITMENT_SLOT_BONUS"; amount: number }
+  | { type: "RECRUITMENT_QUALITY_BONUS"; amount: number }
+  | { type: "CREW_CAPACITY_BONUS"; amount: number }
+  | { type: "UNLOCK_RETRANSMISSION" }
+  | { type: "UNLOCK_RECRUITMENT_PROFILE"; profileId: string }
+  | { type: "UNLOCK_UNIQUE_CONTACT"; uniqueId: string }
+  | {
+      type: "SET_UNIQUE_CONTACT_STATE";
+      uniqueId: string;
+      lifecycle: import("./operators/radioProgression").UniqueContactLifecycle;
+    };
 
 export type QuestSpec = {
   id: string;
@@ -76,13 +131,67 @@ export type QuestSpec = {
   objectives: QuestObjective[];
   rewards: QuestReward[];
   prerequisites: string[];
+  /** Player/leader level required (Camp PMC level). Unset / 0 = no requirement. */
+  minLevel?: number;
+  /** Minimum Radio state required (ordinal). */
+  minRadioState?: import("./operators/radioProgression").RadioState;
+  /**
+   * Soft gate: quest is listed / active only when this unique contact
+   * has reached at least the given lifecycle (e.g. network quest after Wolf hired).
+   */
+  requiresUnique?: {
+    uniqueId: string;
+    minLifecycle: import("./operators/radioProgression").UniqueContactLifecycle;
+  };
   /** True when created in DEV and not present in QUEST_SPECS. */
   devCreated?: boolean;
 };
 
 export function emptyQuestProgress(): QuestProgress {
-  return { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0 };
+  return {
+    scavKills: 0,
+    bossKills: 0,
+    bestWave: 0,
+    extracts: 0,
+    wavesCompletedByMap: {},
+    killsByMap: {},
+    raiderKills: 0,
+    bossKillsById: {},
+    trackers: {},
+  };
 }
+
+export function emptyQuestTracker(): QuestTracker {
+  return {
+    scavKills: 0,
+    bossKills: 0,
+    bestWave: 0,
+    extracts: 0,
+    wavesCompletedByMap: {},
+    killsByMap: {},
+    raiderKills: 0,
+    bossKillsById: {},
+  };
+}
+
+/** Objective progress for a quest — never uses lifetime globals. */
+export function getQuestTracker(progress: QuestProgress, questId: string): QuestTracker {
+  return progress.trackers?.[questId] ?? emptyQuestTracker();
+}
+
+export const QUEST_REWARD_TYPES = [
+  "ROUBLES",
+  "SKILL_POINTS",
+  "UNLOCK",
+  "SET_RADIO_STATE",
+  "RECRUITMENT_SLOT_BONUS",
+  "RECRUITMENT_QUALITY_BONUS",
+  "CREW_CAPACITY_BONUS",
+  "UNLOCK_RETRANSMISSION",
+  "UNLOCK_RECRUITMENT_PROFILE",
+  "UNLOCK_UNIQUE_CONTACT",
+  "SET_UNIQUE_CONTACT_STATE",
+] as const;
 
 export function questDropSourceId(questId: string): string {
   return `quest:${questId}`;
@@ -110,6 +219,9 @@ export function cloneQuestSpec(spec: QuestSpec): QuestSpec {
     prerequisites: [...spec.prerequisites],
   };
   if (spec.mapId) next.mapId = spec.mapId;
+  if (spec.minLevel != null && spec.minLevel > 0) next.minLevel = spec.minLevel;
+  if (spec.minRadioState) next.minRadioState = spec.minRadioState;
+  if (spec.requiresUnique) next.requiresUnique = { ...spec.requiresUnique };
   if (spec.devCreated) next.devCreated = true;
   return next;
 }
@@ -136,8 +248,10 @@ export function specToQuestDef(spec: QuestSpec): QuestDef {
     desc: spec.desc,
     reward,
     unlocks,
-    done: (q) => evaluateQuest(spec, { kind: "meta", progress: q }).complete,
-    progress: (q) => formatQuestProgress(spec, { kind: "meta", progress: q }),
+    done: (q) =>
+      evaluateQuest(spec, { kind: "meta", progress: getQuestTracker(q, spec.id) }).complete,
+    progress: (q) =>
+      formatQuestProgress(spec, { kind: "meta", progress: getQuestTracker(q, spec.id) }),
   };
   if (skillPoints > 0) def.skillPoints = skillPoints;
   return def;
@@ -154,6 +268,60 @@ function reward(partial: QuestReward): QuestReward {
 /** Canonical authored quests. Functions on QuestDef are derived from these specs. */
 export const QUEST_SPECS: QuestSpec[] = [
   {
+    id: "radio_power",
+    name: "DEAD CHANNEL",
+    desc: "Find a way to restore power to the Radio. Extract after surviving a raid with scavs down.",
+    objectives: [obj({ type: "KILL", count: 10 }), obj({ type: "EXTRACT", count: 1 })],
+    rewards: [
+      reward({ type: "ROUBLES", amount: 400 }),
+      reward({ type: "SET_RADIO_STATE", state: "POWERED_STATIC" }),
+    ],
+    prerequisites: [],
+  },
+  {
+    id: "radio_signal",
+    name: "RAISE THE TOWER",
+    desc: "Repair the antenna path. Reach wave 3 and extract to lock in a clear signal.",
+    objectives: [obj({ type: "REACH_WAVE", wave: 3 }), obj({ type: "EXTRACT", count: 1 })],
+    rewards: [
+      reward({ type: "ROUBLES", amount: 600 }),
+      reward({ type: "SET_RADIO_STATE", state: "SIGNAL_RESTORED" }),
+      reward({ type: "SKILL_POINTS", amount: 1 }),
+    ],
+    prerequisites: ["radio_power"],
+  },
+  {
+    id: "wolf_help",
+    name: "HELP WOLF",
+    desc: "Prove you can hold a line. Clear scavs and extract — Wolf is listening.",
+    objectives: [obj({ type: "KILL", count: 12 }), obj({ type: "EXTRACT", count: 1 })],
+    rewards: [
+      reward({ type: "ROUBLES", amount: 500 }),
+      reward({
+        type: "SET_UNIQUE_CONTACT_STATE",
+        uniqueId: "wolf",
+        lifecycle: "CONTACTABLE",
+      }),
+    ],
+    prerequisites: ["radio_signal"],
+    /** Unlocks only after Wolf lore ACKNOWLEDGE → REQUIREMENTS_VISIBLE. */
+    requiresUnique: { uniqueId: "wolf", minLifecycle: "REQUIREMENTS_VISIBLE" },
+  },
+  {
+    id: "radio_network",
+    name: "OPEN FREQUENCIES",
+    desc: "With Wolf in the crew, open the broader scav channels. Reach wave 2 and extract.",
+    objectives: [obj({ type: "REACH_WAVE", wave: 2 }), obj({ type: "EXTRACT", count: 1 })],
+    rewards: [
+      reward({ type: "ROUBLES", amount: 700 }),
+      reward({ type: "SET_RADIO_STATE", state: "NETWORKED" }),
+      reward({ type: "CREW_CAPACITY_BONUS", amount: 1 }),
+      reward({ type: "SKILL_POINTS", amount: 1 }),
+    ],
+    prerequisites: ["wolf_help"],
+    requiresUnique: { uniqueId: "wolf", minLifecycle: "RECRUITED" },
+  },
+  {
     id: "debut",
     name: "FIRST BLOOD",
     desc: "Kill 25 scavs.",
@@ -165,6 +333,7 @@ export const QUEST_SPECS: QuestSpec[] = [
       reward({ type: "UNLOCK", itemId: "a_grip" }),
       reward({ type: "UNLOCK", itemId: "m_ifak" }),
       reward({ type: "UNLOCK", itemId: "ar_paca" }),
+      reward({ type: "CREW_CAPACITY_BONUS", amount: 1 }),
     ],
     prerequisites: [],
   },
@@ -268,7 +437,7 @@ export type QuestProgressEvent =
   | { type: "EXTRACT"; mapId: string; items: { itemId: string; count: number }[] };
 
 export type QuestEvalSource =
-  | { kind: "meta"; progress: QuestProgress }
+  | { kind: "meta"; progress: QuestProgress | QuestTracker }
   | { kind: "events"; events: readonly QuestProgressEvent[] };
 
 export type ObjectiveProgress = {
@@ -575,6 +744,41 @@ export function validateReward(r: QuestReward, index: number): QuestIssue[] {
     if (!r.itemId) out.push(issue("error", "MISSING_UNLOCK", `${prefix}: missing item ID`));
     else if (!ITEM_BY_ID[r.itemId]) out.push(issue("error", "BAD_UNLOCK", `${prefix}: unknown item ${r.itemId}`));
   }
+  if (r.type === "SET_RADIO_STATE") {
+    if (!["BROKEN", "POWERED_STATIC", "SIGNAL_RESTORED", "NETWORKED"].includes(r.state)) {
+      out.push(issue("error", "BAD_RADIO_STATE", `${prefix}: unknown radio state`));
+    }
+  }
+  if (
+    r.type === "RECRUITMENT_SLOT_BONUS" ||
+    r.type === "RECRUITMENT_QUALITY_BONUS" ||
+    r.type === "CREW_CAPACITY_BONUS"
+  ) {
+    if (!Number.isFinite(r.amount) || r.amount < 1) {
+      out.push(issue("error", "BAD_REWARD", `${prefix}: amount must be ≥ 1`));
+    }
+  }
+  if (r.type === "UNLOCK_RECRUITMENT_PROFILE" && !r.profileId) {
+    out.push(issue("error", "BAD_REWARD", `${prefix}: missing profileId`));
+  }
+  if (r.type === "UNLOCK_UNIQUE_CONTACT" && !r.uniqueId) {
+    out.push(issue("error", "BAD_REWARD", `${prefix}: missing uniqueId`));
+  }
+  if (r.type === "SET_UNIQUE_CONTACT_STATE") {
+    if (!r.uniqueId) out.push(issue("error", "BAD_REWARD", `${prefix}: missing uniqueId`));
+    const lives = [
+      "HIDDEN",
+      "DISTRESS_SIGNAL",
+      "IDENTIFIED",
+      "REQUIREMENTS_VISIBLE",
+      "CONTACTABLE",
+      "RECRUITABLE",
+      "RECRUITED",
+    ];
+    if (!lives.includes(r.lifecycle)) {
+      out.push(issue("error", "BAD_REWARD", `${prefix}: unknown unique lifecycle`));
+    }
+  }
   return out;
 }
 
@@ -588,15 +792,34 @@ export function validateQuest(spec: QuestSpec, catalog: readonly QuestSpec[]): Q
   if (spec.mapId && !MAP_BY_ID[spec.mapId]) {
     errors.push(issue("error", "BAD_MAP", `Unknown map ${spec.mapId}`));
   }
-  if (!spec.mapId) warnings.push(issue("warning", "NO_MAP", "Quest has no map requirement"));
+  if (spec.minLevel != null) {
+    if (!Number.isInteger(spec.minLevel) || spec.minLevel < 1) {
+      errors.push(issue("error", "BAD_MIN_LEVEL", "minLevel must be an integer ≥ 1 when set"));
+    }
+  }
+  // No map / no prereq are valid for introductory / map-agnostic quests — do not warn.
   if (spec.objectives.length === 0) errors.push(issue("error", "NO_OBJECTIVES", "Quest has no objectives"));
   spec.objectives.forEach((o, i) => errors.push(...validateObjective(spec, o, i)));
   spec.rewards.forEach((r, i) => errors.push(...validateReward(r, i)));
-  if (spec.rewards.length === 0 || (questRoubles(spec) === 0 && questSkillPoints(spec) === 0 && questUnlocks(spec).length === 0)) {
+  if (
+    spec.rewards.length === 0 ||
+    (questRoubles(spec) === 0 &&
+      questSkillPoints(spec) === 0 &&
+      questUnlocks(spec).length === 0 &&
+      !spec.rewards.some((r) =>
+        [
+          "SET_RADIO_STATE",
+          "RECRUITMENT_SLOT_BONUS",
+          "RECRUITMENT_QUALITY_BONUS",
+          "CREW_CAPACITY_BONUS",
+          "UNLOCK_RETRANSMISSION",
+          "UNLOCK_RECRUITMENT_PROFILE",
+          "UNLOCK_UNIQUE_CONTACT",
+          "SET_UNIQUE_CONTACT_STATE",
+        ].includes(r.type),
+      ))
+  ) {
     warnings.push(issue("warning", "NO_REWARD", "Quest has no reward"));
-  }
-  if (spec.prerequisites.length === 0) {
-    warnings.push(issue("warning", "NO_PREREQ", "Quest has no prerequisite"));
   }
   for (const pre of spec.prerequisites) {
     if (pre === spec.id) errors.push(issue("error", "SELF_PREREQ", "Quest cannot require itself"));
@@ -720,6 +943,240 @@ export function defaultObjective(): QuestObjective {
 
 export function defaultReward(): QuestReward {
   return { type: "ROUBLES", amount: 0 };
+}
+
+const UNIQUE_LIFECYCLE_ORDER = [
+  "HIDDEN",
+  "DISTRESS_SIGNAL",
+  "IDENTIFIED",
+  "REQUIREMENTS_VISIBLE",
+  "CONTACTABLE",
+  "RECRUITABLE",
+  "RECRUITED",
+] as const;
+
+/** True when quest has no unique gate, or the contact has reached the required lifecycle. */
+export function questUniqueGateMet(
+  spec: QuestSpec,
+  uniqueContacts: Record<string, { lifecycle: string }> | undefined,
+): boolean {
+  if (!spec.requiresUnique) return true;
+  const life = uniqueContacts?.[spec.requiresUnique.uniqueId]?.lifecycle ?? "HIDDEN";
+  const have = UNIQUE_LIFECYCLE_ORDER.indexOf(life as (typeof UNIQUE_LIFECYCLE_ORDER)[number]);
+  const need = UNIQUE_LIFECYCLE_ORDER.indexOf(spec.requiresUnique.minLifecycle);
+  if (need < 0) return false;
+  return have >= need;
+}
+
+function radioOrd(state: string): number {
+  const order = ["BROKEN", "POWERED_STATIC", "SIGNAL_RESTORED", "NETWORKED"];
+  return order.indexOf(state);
+}
+
+/**
+ * Unlock gate only (prerequisites / level / radio / unique).
+ * Does not consider objective completion.
+ */
+export function isQuestUnlocked(spec: QuestSpec, ctx: QuestUnlockContext): boolean {
+  for (const pre of spec.prerequisites) {
+    if (!ctx.claimedQuestIds.includes(pre)) return false;
+  }
+  if (spec.minLevel != null && spec.minLevel > 0 && ctx.playerLevel < spec.minLevel) {
+    return false;
+  }
+  if (spec.minRadioState && radioOrd(ctx.radioState) < radioOrd(spec.minRadioState)) {
+    return false;
+  }
+  if (!questUniqueGateMet(spec, ctx.uniqueContacts)) return false;
+  return true;
+}
+
+/**
+ * Four-state quest lifecycle.
+ * COMPLETED = claimed/redeemed.
+ * READY_TO_REDEEM = unlocked + all objectives met, rewards NOT granted.
+ * ACTIVE = unlocked, objectives incomplete.
+ * LOCKED = unlock requirements unmet (no objective progress).
+ */
+export function getQuestLifecycle(
+  spec: QuestSpec,
+  ctx: QuestUnlockContext,
+  progress?: QuestProgress,
+): QuestLifecycle {
+  if (ctx.claimedQuestIds.includes(spec.id)) return "COMPLETED";
+  if (!isQuestUnlocked(spec, ctx)) return "LOCKED";
+  if (progress) {
+    const done = evaluateQuest(spec, {
+      kind: "meta",
+      progress: getQuestTracker(progress, spec.id),
+    }).complete;
+    if (done) return "READY_TO_REDEEM";
+  }
+  return "ACTIVE";
+}
+
+/** @deprecated Prefer getQuestLifecycle */
+export function getQuestAvailability(
+  spec: QuestSpec,
+  ctx: QuestUnlockContext,
+  progress?: QuestProgress,
+): QuestLifecycle {
+  return getQuestLifecycle(spec, ctx, progress);
+}
+
+/** Quests that may receive raid objective progress (ACTIVE + READY_TO_REDEEM). */
+export function listAvailableQuestIds(
+  catalog: readonly QuestSpec[],
+  ctx: QuestUnlockContext,
+  progress?: QuestProgress,
+): string[] {
+  return catalog
+    .filter((q) => {
+      const life = getQuestLifecycle(q, ctx, progress);
+      return life === "ACTIVE" || life === "READY_TO_REDEEM";
+    })
+    .map((q) => q.id);
+}
+
+export function listNewlyUnlockedQuestIds(
+  catalog: readonly QuestSpec[],
+  before: QuestUnlockContext,
+  after: QuestUnlockContext,
+): string[] {
+  return catalog
+    .filter((q) => {
+      const was = getQuestLifecycle(q, before);
+      const now = getQuestLifecycle(q, after);
+      return was === "LOCKED" && (now === "ACTIVE" || now === "READY_TO_REDEEM");
+    })
+    .map((q) => q.id);
+}
+
+export type RaidQuestDelta = {
+  scavKills: number;
+  bossKills: number;
+  wave: number;
+  mapId: string;
+  /** Successful extract (keep backpack). */
+  extracted: boolean;
+};
+
+/**
+ * Apply one raid's progress.
+ * - Lifetime counters always update (recruitment / stats).
+ * - Per-quest trackers update ONLY for quests in `availableAtSettlementStart`
+ *   (snapshot before this settlement). Newly unlocked successors do not receive
+ *   this raid's already-settled events.
+ */
+export function applyRaidQuestProgress(
+  progress: QuestProgress,
+  availableAtSettlementStart: readonly string[],
+  delta: RaidQuestDelta,
+): QuestProgress {
+  const next: QuestProgress = {
+    ...progress,
+    scavKills: progress.scavKills + delta.scavKills,
+    bossKills: progress.bossKills + delta.bossKills,
+    bestWave: Math.max(progress.bestWave, delta.wave),
+    extracts: progress.extracts + (delta.extracted ? 1 : 0),
+    killsByMap: { ...(progress.killsByMap ?? {}) },
+    wavesCompletedByMap: { ...(progress.wavesCompletedByMap ?? {}) },
+    bossKillsById: { ...(progress.bossKillsById ?? {}) },
+    trackers: { ...(progress.trackers ?? {}) },
+  };
+
+  const mapEntry = { ...(next.killsByMap![delta.mapId] ?? {}) };
+  mapEntry.scav = (mapEntry.scav ?? 0) + delta.scavKills;
+  mapEntry.boss = (mapEntry.boss ?? 0) + delta.bossKills;
+  next.killsByMap![delta.mapId] = mapEntry;
+  if (delta.bossKills > 0) {
+    next.bossKillsById!["boss"] = (next.bossKillsById!["boss"] ?? 0) + delta.bossKills;
+  }
+  if (delta.extracted) {
+    next.wavesCompletedByMap![delta.mapId] =
+      (next.wavesCompletedByMap![delta.mapId] ?? 0) + delta.wave;
+  }
+
+  for (const id of availableAtSettlementStart) {
+    const prev = next.trackers![id] ?? emptyQuestTracker();
+    const t: QuestTracker = {
+      scavKills: prev.scavKills + delta.scavKills,
+      bossKills: prev.bossKills + delta.bossKills,
+      bestWave: Math.max(prev.bestWave, delta.wave),
+      extracts: prev.extracts + (delta.extracted ? 1 : 0),
+      killsByMap: { ...(prev.killsByMap ?? {}) },
+      wavesCompletedByMap: { ...(prev.wavesCompletedByMap ?? {}) },
+      bossKillsById: { ...(prev.bossKillsById ?? {}) },
+      raiderKills: prev.raiderKills ?? 0,
+    };
+    const tMap = { ...(t.killsByMap![delta.mapId] ?? {}) };
+    tMap.scav = (tMap.scav ?? 0) + delta.scavKills;
+    tMap.boss = (tMap.boss ?? 0) + delta.bossKills;
+    t.killsByMap![delta.mapId] = tMap;
+    if (delta.bossKills > 0) {
+      t.bossKillsById!["boss"] = (t.bossKillsById!["boss"] ?? 0) + delta.bossKills;
+    }
+    if (delta.extracted) {
+      t.wavesCompletedByMap![delta.mapId] = (t.wavesCompletedByMap![delta.mapId] ?? 0) + delta.wave;
+    }
+    next.trackers![id] = t;
+  }
+
+  return next;
+}
+
+export type UnlockCheckRow = { label: string; met: boolean; detail?: string };
+
+/** DEV-readable unlock checklist for Quest Editor. */
+export function describeQuestUnlock(
+  spec: QuestSpec,
+  ctx: QuestUnlockContext,
+  catalog: readonly QuestSpec[],
+  progress?: QuestProgress,
+): { availability: QuestLifecycle; rows: UnlockCheckRow[] } {
+  const availability = getQuestLifecycle(spec, ctx, progress);
+  const rows: UnlockCheckRow[] = [];
+  if (availability === "COMPLETED") {
+    return { availability, rows: [{ label: "Redeemed / completed", met: true }] };
+  }
+  for (const pre of spec.prerequisites) {
+    const name = catalog.find((q) => q.id === pre)?.name ?? pre;
+    rows.push({
+      label: `${name} completed`,
+      met: ctx.claimedQuestIds.includes(pre),
+    });
+  }
+  if (spec.minLevel != null && spec.minLevel > 0) {
+    rows.push({
+      label: `Level ${spec.minLevel} required`,
+      met: ctx.playerLevel >= spec.minLevel,
+      detail: `Current: ${ctx.playerLevel}`,
+    });
+  }
+  if (spec.minRadioState) {
+    rows.push({
+      label: `Radio ${spec.minRadioState}`,
+      met: radioOrd(ctx.radioState) >= radioOrd(spec.minRadioState),
+      detail: `Current: ${ctx.radioState}`,
+    });
+  }
+  if (spec.requiresUnique) {
+    const life = ctx.uniqueContacts?.[spec.requiresUnique.uniqueId]?.lifecycle ?? "HIDDEN";
+    rows.push({
+      label: `${spec.requiresUnique.uniqueId} ≥ ${spec.requiresUnique.minLifecycle}`,
+      met: questUniqueGateMet(spec, ctx.uniqueContacts),
+      detail: `Current: ${life}`,
+    });
+  }
+  if (rows.length === 0) {
+    rows.push({ label: "No unlock requirements", met: true });
+  }
+  if (availability === "READY_TO_REDEEM") {
+    rows.push({ label: "Objectives complete — awaiting REDEEM", met: true });
+  } else if (availability === "ACTIVE") {
+    rows.push({ label: "Objectives in progress", met: false, detail: "ACTIVE" });
+  }
+  return { availability, rows };
 }
 
 export function newQuestSpec(id: string): QuestSpec {

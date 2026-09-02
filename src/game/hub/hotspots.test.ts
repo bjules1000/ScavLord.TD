@@ -15,15 +15,16 @@ describe("camp hub hotspots", () => {
     }
   });
 
-  it("keeps radio reserved without an action", () => {
+  it("activates radio for recruitment", () => {
     const radio = HUB_HOTSPOTS.find((h) => h.id === "radio");
-    expect(radio?.enabled).toBe(false);
-    expect(radio?.action).toBeUndefined();
+    expect(radio?.enabled).toBe(true);
+    expect(radio?.action).toBe("radio");
+    expect(radio?.label).toBe("RADIO");
   });
 
   it("maps enabled stations to their overlays", () => {
     const enabled = HUB_HOTSPOTS.filter((h) => h.enabled);
-    expect(enabled.map((h) => h.action).sort()).toEqual(["gear", "region", "skills", "supplies"]);
+    expect(enabled.map((h) => h.action).sort()).toEqual(["gear", "radio", "region", "skills", "supplies"]);
     for (const h of enabled) {
       expect(h.action).toBeDefined();
       expect(h.action as string).toBe(h.id);
@@ -47,9 +48,9 @@ describe("camp hub hotspots", () => {
     }
   });
 
-  it("does not give the reserved radio a normal hover cue", () => {
+  it("gives the radio a normal hover cue", () => {
     const radio = HUB_HOTSPOTS.find((h) => h.id === "radio");
-    expect(radio?.cue).toBeUndefined();
-    expect(radio?.labelPos).toBeUndefined();
+    expect(radio?.cue).toBeDefined();
+    expect(radio?.labelPos).toBeDefined();
   });
 });

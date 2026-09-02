@@ -1,5 +1,7 @@
 import { BACKPACKS, ITEM_BY_ID, WEAPONS, makeItem, type Item } from "./gear";
-import { QUESTS, type QuestProgress } from "./quests";
+import { freshCrewState, migrateV5ToV6, normalizeMetaV6 } from "./operators";
+import { STARTING_OPERATOR } from "./operators/startingOperator";
+import { QUESTS, emptyQuestProgress, type QuestProgress } from "./quests";
 
 export type { QuestDef, QuestProgress } from "./quests";
 export { QUESTS } from "./quests";
@@ -81,7 +83,7 @@ export interface PmcState {
 
 export function freshPmc(): PmcState {
   return {
-    name: "ASH-01",
+    name: STARTING_OPERATOR.defaultName,
     level: 1,
     xp: 0,
     debuffs: [],
@@ -102,10 +104,15 @@ export function rollDebuff(current: string[]): DebuffDef | null {
   return pool[Math.floor(Math.random() * pool.length)]!;
 }
 
+export interface StashEntry {
+  defId: string;
+  installed?: string[];
+}
+
 export interface Meta {
   bank: number;
   claimed: string[];
-  stash: Array<{ defId: string }>;
+  stash: StashEntry[];
   quests: QuestProgress;
   runs: number;
   pmc: PmcState;
@@ -113,58 +120,115 @@ export interface Meta {
   skillPoints: number;
   /** owned backpack id from gear.ts BACKPACKS */
   backpack: string;
+  crew: import("./operators").CrewState;
 }
 
-const KEY = "kolkhoz-meta-v5";
+const KEY_V6 = "kolkhoz-meta-v6";
+const KEY_V5 = "kolkhoz-meta-v5";
 
 export function freshMeta(): Meta {
   return {
     bank: 0,
     claimed: [],
     stash: [{ defId: "a_grip" }, { defId: "m_ifak" }],
-    quests: { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0 },
+    quests: emptyQuestProgress(),
     runs: 0,
     pmc: freshPmc(),
     skills: [],
     skillPoints: 0,
     backpack: "sling",
+    crew: freshCrewState(0),
   };
+}
+
+function normalizeLegacyMeta(p: Partial<Meta>): Meta {
+  const base = freshPmc();
+  const runs = Number(p.runs) || 0;
+  const emptyQuests = emptyQuestProgress();
+  const meta: Meta = {
+    bank: Number(p.bank) || 0,
+    claimed: Array.isArray(p.claimed) ? p.claimed.filter((c) => typeof c === "string") : [],
+    stash: Array.isArray(p.stash)
+      ? p.stash
+          .filter((s) => s && !!ITEM_BY_ID[s.defId])
+          .map((s) => {
+            const entry: StashEntry = { defId: s.defId };
+            if (Array.isArray(s.installed) && s.installed.length) entry.installed = [...s.installed];
+            return entry;
+          })
+      : [],
+    quests: {
+      scavKills: Number(p.quests?.scavKills) || 0,
+      bossKills: Number(p.quests?.bossKills) || 0,
+      bestWave: Number(p.quests?.bestWave) || 0,
+      extracts: Number(p.quests?.extracts) || 0,
+      wavesCompletedByMap:
+        p.quests?.wavesCompletedByMap && typeof p.quests.wavesCompletedByMap === "object"
+          ? { ...p.quests.wavesCompletedByMap }
+          : { ...emptyQuests.wavesCompletedByMap },
+      killsByMap:
+        p.quests?.killsByMap && typeof p.quests.killsByMap === "object"
+          ? { ...p.quests.killsByMap }
+          : { ...emptyQuests.killsByMap },
+      raiderKills: Number(p.quests?.raiderKills) || 0,
+      bossKillsById:
+        p.quests?.bossKillsById && typeof p.quests.bossKillsById === "object"
+          ? { ...p.quests.bossKillsById }
+          : { ...emptyQuests.bossKillsById },
+      trackers:
+        p.quests?.trackers && typeof p.quests.trackers === "object"
+          ? Object.fromEntries(
+              Object.entries(p.quests.trackers).map(([id, t]) => [
+                id,
+                {
+                  scavKills: Number(t?.scavKills) || 0,
+                  bossKills: Number(t?.bossKills) || 0,
+                  bestWave: Number(t?.bestWave) || 0,
+                  extracts: Number(t?.extracts) || 0,
+                  wavesCompletedByMap:
+                    t?.wavesCompletedByMap && typeof t.wavesCompletedByMap === "object"
+                      ? { ...t.wavesCompletedByMap }
+                      : {},
+                  killsByMap:
+                    t?.killsByMap && typeof t.killsByMap === "object" ? { ...t.killsByMap } : {},
+                  raiderKills: Number(t?.raiderKills) || 0,
+                  bossKillsById:
+                    t?.bossKillsById && typeof t.bossKillsById === "object"
+                      ? { ...t.bossKillsById }
+                      : {},
+                },
+              ]),
+            )
+          : {},
+    },
+    runs,
+    pmc: {
+      name: p.pmc?.name && p.pmc.name !== "BEAR-01" ? p.pmc.name : base.name,
+      level: Math.max(1, Number(p.pmc?.level) || 1),
+      xp: Math.max(0, Number(p.pmc?.xp) || 0),
+      debuffs: Array.isArray(p.pmc?.debuffs) ? p.pmc.debuffs.filter((d) => !!DEBUFF_BY_ID[d]) : [],
+      weapon: WEAPONS[p.pmc?.weapon ?? ""] ? p.pmc!.weapon : base.weapon,
+      attachments: Array.isArray(p.pmc?.attachments) ? p.pmc.attachments : [],
+      armor: p.pmc?.armor ?? null,
+      deaths: Number(p.pmc?.deaths) || 0,
+    },
+    skills: Array.isArray(p.skills) ? p.skills.filter((x) => !!SKILL_BY_ID[x]) : [],
+    skillPoints: Math.max(0, Number(p.skillPoints) || 0),
+    backpack: BACKPACKS[p.backpack ?? ""] ? p.backpack! : "sling",
+    // Always normalize through normalizeMetaV6 so crew.radio is present.
+    crew: p.crew ?? freshCrewState(runs),
+  };
+  return normalizeMetaV6(meta, runs);
 }
 
 export function loadMeta(): Meta {
   if (typeof window === "undefined") return freshMeta();
   try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return freshMeta();
-    const p = JSON.parse(raw) as Meta;
-    const base = freshPmc();
-    return {
-      bank: Number(p.bank) || 0,
-      claimed: Array.isArray(p.claimed) ? p.claimed.filter((c) => typeof c === "string") : [],
-      stash: Array.isArray(p.stash) ? p.stash.filter((s) => !!ITEM_BY_ID[s.defId]) : [],
-      quests: {
-        scavKills: Number(p.quests?.scavKills) || 0,
-        bossKills: Number(p.quests?.bossKills) || 0,
-        bestWave: Number(p.quests?.bestWave) || 0,
-        extracts: Number(p.quests?.extracts) || 0,
-      },
-      runs: Number(p.runs) || 0,
-      pmc: {
-        name: p.pmc?.name && p.pmc.name !== "BEAR-01" ? p.pmc.name : base.name,
-        level: Math.max(1, Number(p.pmc?.level) || 1),
-        xp: Math.max(0, Number(p.pmc?.xp) || 0),
-        debuffs: Array.isArray(p.pmc?.debuffs)
-          ? p.pmc.debuffs.filter((d) => !!DEBUFF_BY_ID[d])
-          : [],
-        weapon: WEAPONS[p.pmc?.weapon ?? ""] ? p.pmc.weapon : base.weapon,
-        attachments: Array.isArray(p.pmc?.attachments) ? p.pmc.attachments : [],
-        armor: p.pmc?.armor ?? null,
-        deaths: Number(p.pmc?.deaths) || 0,
-      },
-      skills: Array.isArray(p.skills) ? p.skills.filter((x) => !!SKILL_BY_ID[x]) : [],
-      skillPoints: Math.max(0, Number(p.skillPoints) || 0),
-      backpack: BACKPACKS[p.backpack ?? ""] ? p.backpack : "sling",
-    };
+    const rawV6 = window.localStorage.getItem(KEY_V6);
+    if (rawV6) return normalizeLegacyMeta(JSON.parse(rawV6) as Meta);
+    const rawV5 = window.localStorage.getItem(KEY_V5);
+    if (rawV5) return migrateV5ToV6(normalizeLegacyMeta(JSON.parse(rawV5) as Meta));
+    return freshMeta();
   } catch {
     return freshMeta();
   }
@@ -173,7 +237,7 @@ export function loadMeta(): Meta {
 export function saveMeta(m: Meta) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(KEY, JSON.stringify(m));
+    window.localStorage.setItem(KEY_V6, JSON.stringify(m));
   } catch {
     /* ignore */
   }
@@ -188,6 +252,10 @@ export function unlockedIds(claimed: string[]): string[] {
 
 export function stashItems(m: Meta, uidStart: number): Item[] {
   return m.stash
-    .map((s, i) => makeItem(s.defId, uidStart + i))
+    .map((s, i) => {
+      const item = makeItem(s.defId, uidStart + i);
+      if (item && s.installed?.length) item.installed = [...s.installed];
+      return item;
+    })
     .filter((x): x is Item => x !== null);
 }

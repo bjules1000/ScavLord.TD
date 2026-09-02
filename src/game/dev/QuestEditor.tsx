@@ -6,12 +6,14 @@ import {
   SUPPORTED_OBJECTIVE_TYPES,
   defaultObjective,
   defaultReward,
+  describeQuestUnlock,
   evaluateQuest,
   mapSpecialZones,
   validateQuest,
   type QuestObjective,
   type QuestReward,
   type QuestSpec,
+  type QuestUnlockContext,
   type SupportedObjectiveType,
 } from "../quests";
 import type { EnemyKind } from "../types";
@@ -30,14 +32,19 @@ import {
   questSummary,
   resetQuestItem,
   setQuestField,
+  setQuestMinLevel,
+  setQuestMinRadioState,
   setQuestObjectives,
   setQuestPrerequisites,
+  setQuestRequiresUnique,
   setQuestRewards,
   subscribeQuestTest,
   testEventsFor,
   type QuestLabOverrides,
   type QuestLabView,
 } from "./questLab";
+import { RADIO_STATES, UNIQUE_CONTACT_LIFECYCLES } from "../operators/radioProgression";
+import { CANONICAL_UNIQUE_OPERATORS } from "../operators/uniqueOperators";
 
 function snapshotTest() {
   return getQuestTestState();
@@ -50,6 +57,7 @@ export default function QuestEditor({
   onApplied,
   onTestQuest,
   onResetTestProgress,
+  unlockContext,
 }: {
   enabled: boolean;
   inRaid: boolean;
@@ -57,6 +65,8 @@ export default function QuestEditor({
   onApplied: (overrides: QuestLabOverrides) => void;
   onTestQuest: (questId: string) => { ok: true } | { ok: false; reason: string };
   onResetTestProgress: (questId: string) => void;
+  /** Live meta unlock snapshot for AVAILABILITY preview (DEV). */
+  unlockContext?: QuestUnlockContext;
 }) {
   const [view, setView] = useState<QuestLabView>("quests");
   const [query, setQuery] = useState("");
@@ -262,6 +272,7 @@ export default function QuestEditor({
                   progress={progress}
                   testActive={testSnap.activeId === selected.id}
                   testMsg={testMsg}
+                  {...(unlockContext ? { unlockContext } : {})}
                 />
               )}
             </div>
@@ -337,6 +348,7 @@ function QuestDetails({
   progress,
   testActive,
   testMsg,
+  unlockContext,
 }: {
   spec: QuestSpec;
   catalog: QuestSpec[];
@@ -347,9 +359,13 @@ function QuestDetails({
   progress: ReturnType<typeof evaluateQuest> | null;
   testActive: boolean;
   testMsg: string | null;
+  unlockContext?: QuestUnlockContext;
 }) {
   const canonical = isCanonicalQuestId(spec.id);
   const zones = spec.mapId ? mapSpecialZones(spec.mapId) : [];
+  const unlockPreview = unlockContext
+    ? describeQuestUnlock(spec, unlockContext, catalog, undefined)
+    : null;
 
   return (
     <>
@@ -494,6 +510,116 @@ function QuestDetails({
       >
         ADD PREREQUISITE
       </button>
+
+      <div className="mt-5 font-display text-[11px] text-primary">UNLOCK REQUIREMENTS</div>
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        <label className="block font-mono text-[11px] uppercase text-muted-foreground">
+          MIN LEVEL
+          <input
+            type="number"
+            min={0}
+            value={spec.minLevel ?? 0}
+            className="mt-1 w-full border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              onDraft(setQuestMinLevel(draft, spec.id, !Number.isFinite(n) || n < 1 ? null : Math.round(n)));
+            }}
+          />
+          <span className="mt-1 block normal-case text-[10px] text-muted-foreground">0 = none</span>
+        </label>
+        <label className="block font-mono text-[11px] uppercase text-muted-foreground">
+          MIN RADIO STATE
+          <select
+            value={spec.minRadioState ?? ""}
+            className="mt-1 w-full border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+            onChange={(e) => {
+              const v = e.target.value;
+              onDraft(
+                setQuestMinRadioState(
+                  draft,
+                  spec.id,
+                  v ? (v as (typeof RADIO_STATES)[number]) : null,
+                ),
+              );
+            }}
+          >
+            <option value="">(none)</option>
+            {RADIO_STATES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <label className="block font-mono text-[11px] uppercase text-muted-foreground">
+          UNIQUE CONTACT
+          <select
+            value={spec.requiresUnique?.uniqueId ?? ""}
+            className="mt-1 w-full border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+            onChange={(e) => {
+              const id = e.target.value;
+              if (!id) {
+                onDraft(setQuestRequiresUnique(draft, spec.id, null));
+                return;
+              }
+              onDraft(
+                setQuestRequiresUnique(draft, spec.id, {
+                  uniqueId: id,
+                  minLifecycle: spec.requiresUnique?.minLifecycle ?? "RECRUITED",
+                }),
+              );
+            }}
+          >
+            <option value="">(none)</option>
+            {CANONICAL_UNIQUE_OPERATORS.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name} ({u.id})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block font-mono text-[11px] uppercase text-muted-foreground">
+          MIN LIFECYCLE
+          <select
+            value={spec.requiresUnique?.minLifecycle ?? ""}
+            disabled={!spec.requiresUnique}
+            className="mt-1 w-full border-2 border-border bg-background px-2 py-1 font-mono text-sm disabled:opacity-50"
+            onChange={(e) => {
+              if (!spec.requiresUnique) return;
+              onDraft(
+                setQuestRequiresUnique(draft, spec.id, {
+                  uniqueId: spec.requiresUnique.uniqueId,
+                  minLifecycle: e.target.value as (typeof UNIQUE_CONTACT_LIFECYCLES)[number],
+                }),
+              );
+            }}
+          >
+            {UNIQUE_CONTACT_LIFECYCLES.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {unlockPreview && (
+        <div className="mt-4 border-2 border-border bg-secondary/20 p-3 font-mono text-[11px]">
+          <div className="font-display text-[11px] text-primary">
+            LIFECYCLE · {unlockPreview.availability}
+          </div>
+          <ul className="mt-2 space-y-1">
+            {unlockPreview.rows.map((row) => (
+              <li key={row.label} className={row.met ? "text-accent" : "text-destructive"}>
+                {row.met ? "✓" : "✕"} {row.label}
+                {row.detail ? <span className="text-muted-foreground"> — {row.detail}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {zones.length > 0 && (
         <div className="mt-5 font-mono text-[11px] text-muted-foreground">
@@ -710,12 +836,30 @@ function RewardCard({
           const t = e.target.value;
           if (t === "UNLOCK") onChange({ type: "UNLOCK", itemId: ITEMS[0]?.id ?? "m_ifak" });
           else if (t === "SKILL_POINTS") onChange({ type: "SKILL_POINTS", amount: 1 });
+          else if (t === "SET_RADIO_STATE") onChange({ type: "SET_RADIO_STATE", state: "POWERED_STATIC" });
+          else if (t === "RECRUITMENT_SLOT_BONUS") onChange({ type: "RECRUITMENT_SLOT_BONUS", amount: 1 });
+          else if (t === "RECRUITMENT_QUALITY_BONUS") onChange({ type: "RECRUITMENT_QUALITY_BONUS", amount: 1 });
+          else if (t === "CREW_CAPACITY_BONUS") onChange({ type: "CREW_CAPACITY_BONUS", amount: 1 });
+          else if (t === "UNLOCK_RETRANSMISSION") onChange({ type: "UNLOCK_RETRANSMISSION" });
+          else if (t === "UNLOCK_RECRUITMENT_PROFILE")
+            onChange({ type: "UNLOCK_RECRUITMENT_PROFILE", profileId: "rifleman" });
+          else if (t === "UNLOCK_UNIQUE_CONTACT") onChange({ type: "UNLOCK_UNIQUE_CONTACT", uniqueId: "wolf" });
+          else if (t === "SET_UNIQUE_CONTACT_STATE")
+            onChange({ type: "SET_UNIQUE_CONTACT_STATE", uniqueId: "wolf", lifecycle: "IDENTIFIED" });
           else onChange({ type: "ROUBLES", amount: 0 });
         }}
       >
         <option value="ROUBLES">ROUBLES</option>
         <option value="SKILL_POINTS">SKILL POINTS</option>
         <option value="UNLOCK">UNLOCK ITEM</option>
+        <option value="SET_RADIO_STATE">SET RADIO STATE</option>
+        <option value="RECRUITMENT_SLOT_BONUS">+ RECRUITMENT SLOT</option>
+        <option value="RECRUITMENT_QUALITY_BONUS">+ RECRUITMENT QUALITY</option>
+        <option value="CREW_CAPACITY_BONUS">+ CREW CAPACITY</option>
+        <option value="UNLOCK_RETRANSMISSION">UNLOCK RETRANSMISSION</option>
+        <option value="UNLOCK_RECRUITMENT_PROFILE">UNLOCK PROFILE</option>
+        <option value="UNLOCK_UNIQUE_CONTACT">UNLOCK UNIQUE CONTACT</option>
+        <option value="SET_UNIQUE_CONTACT_STATE">SET UNIQUE CONTACT STATE</option>
       </select>
       {(reward.type === "ROUBLES" || reward.type === "SKILL_POINTS") && (
         <input
@@ -742,6 +886,87 @@ function RewardCard({
             </option>
           ))}
         </select>
+      )}
+      {reward.type === "SET_RADIO_STATE" && (
+        <select
+          value={reward.state}
+          className="border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+          onChange={(e) =>
+            onChange({
+              type: "SET_RADIO_STATE",
+              state: e.target.value as "BROKEN" | "POWERED_STATIC" | "SIGNAL_RESTORED" | "NETWORKED",
+            })
+          }
+        >
+          <option value="BROKEN">BROKEN</option>
+          <option value="POWERED_STATIC">POWERED_STATIC</option>
+          <option value="SIGNAL_RESTORED">SIGNAL_RESTORED</option>
+          <option value="NETWORKED">NETWORKED</option>
+        </select>
+      )}
+      {(reward.type === "RECRUITMENT_SLOT_BONUS" ||
+        reward.type === "RECRUITMENT_QUALITY_BONUS" ||
+        reward.type === "CREW_CAPACITY_BONUS") && (
+        <input
+          type="number"
+          min={1}
+          value={reward.amount}
+          className="w-20 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (!Number.isFinite(n) || n < 1) return;
+            onChange({ type: reward.type, amount: Math.round(n) });
+          }}
+        />
+      )}
+      {reward.type === "UNLOCK_RECRUITMENT_PROFILE" && (
+        <input
+          value={reward.profileId}
+          className="w-36 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+          onChange={(e) => onChange({ type: "UNLOCK_RECRUITMENT_PROFILE", profileId: e.target.value })}
+        />
+      )}
+      {reward.type === "UNLOCK_UNIQUE_CONTACT" && (
+        <input
+          value={reward.uniqueId}
+          className="w-36 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+          onChange={(e) => onChange({ type: "UNLOCK_UNIQUE_CONTACT", uniqueId: e.target.value })}
+        />
+      )}
+      {reward.type === "SET_UNIQUE_CONTACT_STATE" && (
+        <>
+          <input
+            value={reward.uniqueId}
+            className="w-28 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+            onChange={(e) =>
+              onChange({
+                type: "SET_UNIQUE_CONTACT_STATE",
+                uniqueId: e.target.value,
+                lifecycle: reward.lifecycle,
+              })
+            }
+            placeholder="uniqueId"
+          />
+          <select
+            value={reward.lifecycle}
+            className="border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+            onChange={(e) =>
+              onChange({
+                type: "SET_UNIQUE_CONTACT_STATE",
+                uniqueId: reward.uniqueId,
+                lifecycle: e.target.value as typeof reward.lifecycle,
+              })
+            }
+          >
+            <option value="HIDDEN">HIDDEN</option>
+            <option value="DISTRESS_SIGNAL">DISTRESS_SIGNAL</option>
+            <option value="IDENTIFIED">IDENTIFIED</option>
+            <option value="REQUIREMENTS_VISIBLE">REQUIREMENTS_VISIBLE</option>
+            <option value="CONTACTABLE">CONTACTABLE</option>
+            <option value="RECRUITABLE">RECRUITABLE</option>
+            <option value="RECRUITED">RECRUITED</option>
+          </select>
+        </>
       )}
       <button type="button" className="pixel-btn ml-auto px-2 py-1 text-[9px]" onClick={onRemove}>
         REMOVE

@@ -4,7 +4,7 @@ export const CAMP_IMAGE_SRC = "/game/hub/camp-base.png";
 export const CAMP_IMAGE_W = 1448;
 export const CAMP_IMAGE_H = 1086;
 
-export type HubAction = "supplies" | "region" | "gear" | "skills";
+export type HubAction = "supplies" | "region" | "gear" | "skills" | "radio";
 export type HubStationId = HubAction | "radio";
 
 /** Visual cue region as % of the interaction box — not the hitbox itself. */
@@ -49,7 +49,7 @@ export interface HubHotspot {
  * region       — paper map on the workbench → Destinations / Deploy
  * radio        — portable radio on the workbench (reserved: Contacts / Acolytes)
  * gear         — pack / armor on the right of the table → Equipment / Raid Prep
- * skills       — seated ScavLord → Skills / Operator / Quests
+ * skills       — seated operator figure → Skills / Operator / Quests
  *
  * Rear left/right forest is intentionally empty (future systems).
  */
@@ -68,7 +68,7 @@ export const HUB_HOTSPOTS: HubHotspot[] = [
   },
   {
     id: "skills",
-    label: "SCAVLORD",
+    label: "OPERATOR",
     xPercent: 47,
     yPercent: 40,
     widthPercent: 16,
@@ -92,12 +92,15 @@ export const HUB_HOTSPOTS: HubHotspot[] = [
   },
   {
     id: "radio",
-    label: "RESERVED",
+    label: "RADIO",
     xPercent: 67,
     yPercent: 43,
     widthPercent: 11,
     heightPercent: 10,
-    enabled: false,
+    enabled: true,
+    action: "radio",
+    cue: { x: 18, y: 18, w: 64, h: 64 },
+    labelPos: { x: 50, y: 6, side: "above" },
   },
   {
     id: "gear",

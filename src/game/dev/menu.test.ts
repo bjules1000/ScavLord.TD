@@ -33,7 +33,9 @@ describe("DEV tools menu", () => {
     expect(devToolEntries(true).some((e) => e.id === "wave-lab" && e.label === "Wave Lab")).toBe(true);
   });
 
-  it("menu exposes Quest Editor", () => {
-    expect(devToolEntries(true).some((e) => e.id === "quest-editor" && e.label === "Quest Editor")).toBe(true);
+  it("menu exposes Recruitment Lab", () => {
+    expect(devToolEntries(true).some((e) => e.id === "recruitment-lab" && e.label === "Recruitment Lab")).toBe(
+      true,
+    );
   });
 });
