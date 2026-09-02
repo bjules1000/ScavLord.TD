@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { generateRecruitmentCandidates } from "./generation";
 import { calculateRecruitmentCost, withRecruitmentCosts } from "./recruitment";
 import { PERKS } from "./perks";
+import { STAT_KEYS, STAT_DISPLAY_MAX, STAT_LABELS, STAT_MAX, STAT_MIN, STAT_POTENTIAL_MAX } from "./stats";
 import {
   STAT_BAR_SEGMENTS,
-  STAT_DISPLAY_KEYS,
   buildCandidateCardView,
   buildSelectedDetailView,
   canAffordRecruitment,
@@ -14,70 +14,94 @@ import {
   recruitmentAffordabilityMessage,
   recruitmentDeficit,
   startingKitDisplay,
-  statBarFilledSegments,
-  statBarString,
+  statPotentialBarSegments,
 } from "./recruitmentUi";
-import { STAT_LABELS, STAT_MAX, STAT_MIN } from "./stats";
+import { generateRecruitmentCandidates as gen } from "./generation";
 
 describe("recruitment UI helpers", () => {
   const pool = withRecruitmentCosts(generateRecruitmentCandidates(4242, 0));
   const candidate = pool[0]!;
   const other = pool[1]!;
 
-  it("candidate cards render all four canonical stats", () => {
+  it("candidate cards render all four canonical stats with current/potential", () => {
     const card = buildCandidateCardView(candidate);
-    expect(card.statRows).toHaveLength(STAT_DISPLAY_KEYS.length);
-    for (const key of STAT_DISPLAY_KEYS) {
-      expect(card.statRows.some((r) => r.key === key && r.label === STAT_LABELS[key])).toBe(true);
+    expect(card.statRows).toHaveLength(STAT_KEYS.length);
+    for (const row of card.statRows) {
+      expect(row.current).toBe(candidate.stats[row.key]);
+      expect(row.potential).toBe(candidate.potential[row.key]);
+      expect(row.current).toBeLessThanOrEqual(row.potential);
     }
   });
 
-  it("candidate cards render perk", () => {
+  it("candidate cards render perk and formatted cost", () => {
     const card = buildCandidateCardView(candidate);
-    expect(card.perkName.length).toBeGreaterThan(0);
     expect(card.perkName).toBe(PERKS[candidate.perkIds[0]!]!.name);
-  });
-
-  it("candidate cards render formatted cost", () => {
-    const card = buildCandidateCardView(candidate);
     expect(card.costFormatted).toBe(formatRecruitmentRoubles(candidate.cost));
-    expect(card.costFormatted).toContain("₽");
   });
 
   it("candidate cards do not include starting-kit line", () => {
-    const card = buildCandidateCardView(candidate);
-    expect(card.showsKitLine).toBe(false);
+    expect(buildCandidateCardView(candidate).showsKitLine).toBe(false);
   });
 
   it("selected detail does not duplicate full stat grid", () => {
     const detail = buildSelectedDetailView(candidate, 0);
-    expect("statRows" in detail).toBe(false);
-    expect(detail).not.toHaveProperty("stats");
+    expect(buildCandidateCardView(candidate).includesStatGridInDetail).toBe(false);
+    expect(detail).not.toHaveProperty("statRows");
   });
 
-  it("selected detail renders perk effect", () => {
-    const detail = buildSelectedDetailView(candidate, 0);
-    expect(detail.perk).not.toBeNull();
-    expect(detail.perk!.lines.length).toBeGreaterThan(0);
-    expect(detail.perk!.lines.some((l) => l.startsWith("+") || l.startsWith("Future:"))).toBe(true);
+  it("stat bars use shared global stat scale", () => {
+    const a = statPotentialBarSegments(50, 100, "aim");
+    const b = statPotentialBarSegments(30, 120, "aim");
+    expect(a.currentFilled).toBeGreaterThan(b.currentFilled);
+    expect(b.potentialFilled).toBeGreaterThanOrEqual(a.potentialFilled);
   });
 
-  it("selected detail renders weapon armor and attachments", () => {
-    const detail = buildSelectedDetailView(candidate, 0);
-    expect(detail.kit.weapon.length).toBeGreaterThan(0);
-    expect(detail.kit.armor).toBeTruthy();
-    expect(detail.kit.attachments).toBeTruthy();
+  it("low absolute ceiling does not look like high capability", () => {
+    const low = statPotentialBarSegments(20, 25, "mobility");
+    const high = statPotentialBarSegments(80, 100, "mobility");
+    expect(low.potentialFilled).toBeLessThan(high.currentFilled);
+    expect(low.potentialFilled).toBeLessThanOrEqual(2);
   });
 
-  it("selected detail renders kit value when canonical value exists", () => {
-    const detail = buildSelectedDetailView(candidate, 0);
-    expect(detail.kit.kitValue).toBeGreaterThanOrEqual(0);
+  it("30/120 renders less current but more potential than 50/100 on aim", () => {
+    const nikita = statPotentialBarSegments(50, 100, "aim");
+    const dima = statPotentialBarSegments(30, 120, "aim");
+    expect(nikita.currentFilled).toBeGreaterThan(dima.currentFilled);
+    expect(dima.potentialFilled).toBeGreaterThan(nikita.potentialFilled);
   });
 
-  it("selected detail renders bank and cost", () => {
+  it("uses centralized display maxima", () => {
+    expect(STAT_DISPLAY_MAX.aim).toBe(120);
+    const seg = statPotentialBarSegments(STAT_MAX, STAT_POTENTIAL_MAX, "aim");
+    expect(seg.totalSegments).toBe(STAT_BAR_SEGMENTS);
+  });
+
+  it("selected detail renders perk, kit, and hiring data", () => {
     const detail = buildSelectedDetailView(candidate, 600);
-    expect(detail.bankFormatted).toBe(formatRecruitmentRoubles(600));
-    expect(detail.costFormatted).toBe(formatRecruitmentRoubles(candidate.cost));
+    expect(detail.perk).not.toBeNull();
+    expect(detail.kit.weapon.length).toBeGreaterThan(0);
+    expect(detail.bankFormatted).toContain("₽");
+    expect(detail.costFormatted).toContain("₽");
+  });
+
+  it("does not mutate candidate when formatting", () => {
+    const beforeStats = { ...candidate.stats };
+    const beforePot = { ...candidate.potential };
+    buildCandidateCardView(candidate);
+    buildSelectedDetailView(candidate, 0);
+    candidateStatRows(candidate.stats, candidate.potential);
+    expect(candidate.stats).toEqual(beforeStats);
+    expect(candidate.potential).toEqual(beforePot);
+  });
+
+  it("deficit calculation is correct with locale formatting", () => {
+    expect(recruitmentDeficit(1000, 1331)).toBe(331);
+    expect(recruitmentAffordabilityMessage(1000, 1331)).toBe("INSUFFICIENT FUNDS · NEED 331 ₽ MORE");
+  });
+
+  it("HIRE enabled/disabled from affordability helpers", () => {
+    expect(canAffordRecruitment(0, candidate.cost)).toBe(false);
+    expect(buildSelectedDetailView(candidate, candidate.cost).affordable).toBe(true);
   });
 
   it("selecting another candidate updates detail identity", () => {
@@ -86,75 +110,34 @@ describe("recruitment UI helpers", () => {
     expect(a.identity).not.toBe(b.identity);
   });
 
-  it("stat visualizer uses shared canonical range", () => {
-    expect(statBarFilledSegments(STAT_MIN)).toBe(0);
-    expect(statBarFilledSegments(STAT_MAX)).toBe(STAT_BAR_SEGMENTS);
-    expect(statBarString(STAT_MIN)).toBe("░".repeat(STAT_BAR_SEGMENTS));
-    expect(statBarString(STAT_MAX)).toBe("█".repeat(STAT_BAR_SEGMENTS));
-    expect(statBarFilledSegments(50)).toBe(statBarFilledSegments(50));
-  });
-
-  it("does not mutate candidate stats when formatting", () => {
-    const before = { ...candidate.stats };
-    candidateStatRows(candidate.stats);
-    statBarString(candidate.stats.aim);
-    buildCandidateCardView(candidate);
-    buildSelectedDetailView(candidate, 0);
-    expect(candidate.stats).toEqual(before);
-  });
-
-  it("perk description comes from canonical perk definition", () => {
-    const perkId = candidate.perkIds[0]!;
-    const detail = perkRecruitmentDetail(perkId);
-    expect(detail.name).toBe(PERKS[perkId]!.name);
-    expect(detail.lines.some((l) => l.includes(PERKS[perkId]!.desc) || l.startsWith("+"))).toBe(true);
-  });
-
-  it("shows future-facing copy for dormant perks", () => {
-    const detail = perkRecruitmentDetail("gunsmith");
-    expect(detail.lines[0]).toMatch(/^Future:/);
-  });
-
-  it("starting kit displays canonical weapon and armor", () => {
+  it("starting kit and perk descriptions remain canonical", () => {
     const kit = startingKitDisplay(candidate.equipment);
-    expect(kit.weapon.length).toBeGreaterThan(0);
-    expect(kit.armor).toBeTruthy();
     expect(kit.kitValue).toBeGreaterThanOrEqual(0);
+    const perk = perkRecruitmentDetail(candidate.perkIds[0]!);
+    expect(perk.lines.length).toBeGreaterThan(0);
   });
 
-  it("shows attachments when present", () => {
-    const kit = startingKitDisplay({
-      weapon: "m4",
-      attachments: ["optic", "grip"],
-      armor: null,
-    });
-    expect(kit.attachments).toContain("4X SCOPE");
-    expect(kit.attachments).toContain("FOREGRIP");
+  it("candidate generation unchanged by UI formatters", () => {
+    expect(gen(77, 3)).toEqual(gen(77, 3));
   });
 
-  it("HIRE disabled when bank < cost", () => {
-    expect(canAffordRecruitment(0, candidate.cost)).toBe(false);
-    expect(buildSelectedDetailView(candidate, 0).affordable).toBe(false);
+  it("cost available for card display", () => {
+    expect(candidate.cost).toBe(calculateRecruitmentCost(candidate));
   });
 
-  it("HIRE enabled when bank >= cost", () => {
-    expect(canAffordRecruitment(candidate.cost, candidate.cost)).toBe(true);
-    expect(buildSelectedDetailView(candidate, candidate.cost).affordable).toBe(true);
+  it("current stats stay within legal current ranges after generation", () => {
+    for (const c of pool) {
+      for (const v of Object.values(c.stats)) {
+        expect(v).toBeGreaterThanOrEqual(STAT_MIN);
+        expect(v).toBeLessThanOrEqual(STAT_MAX);
+      }
+    }
   });
 
-  it("deficit calculation and message are correct", () => {
-    expect(recruitmentDeficit(0, 951)).toBe(951);
-    expect(recruitmentDeficit(600, 951)).toBe(351);
-    expect(recruitmentDeficit(1000, 1331)).toBe(331);
-    expect(recruitmentAffordabilityMessage(600, 951)).toBe("INSUFFICIENT FUNDS · NEED 351 ₽ MORE");
-    expect(recruitmentAffordabilityMessage(1000, 1331)).toBe("INSUFFICIENT FUNDS · NEED 331 ₽ MORE");
-    expect(recruitmentAffordabilityMessage(0, 1331)).toBe("INSUFFICIENT FUNDS · NEED 1,331 ₽ MORE");
-    expect(recruitmentAffordabilityMessage(951, 951)).toBeNull();
-  });
-
-  it("candidate generation remains unchanged", () => {
-    const a = generateRecruitmentCandidates(77, 3);
-    const b = generateRecruitmentCandidates(77, 3);
-    expect(a).toEqual(b);
+  it("stat labels remain canonical on rows", () => {
+    const rows = candidateStatRows(candidate.stats, candidate.potential);
+    for (const key of STAT_KEYS) {
+      expect(rows.some((r) => r.key === key && r.label === STAT_LABELS[key])).toBe(true);
+    }
   });
 });

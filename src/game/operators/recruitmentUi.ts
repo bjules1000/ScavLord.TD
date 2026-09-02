@@ -2,33 +2,50 @@ import { ARMORS, ATTACHMENTS, WEAPONS } from "../gear";
 import { kitEquipmentValue } from "./generation";
 import { PERKS } from "./perks";
 import {
+  STAT_DISPLAY_MAX,
+  STAT_KEYS,
   STAT_LABELS,
-  STAT_MAX,
-  STAT_MIN,
-  clampStat,
-  type OperatorBaseStats,
+  growthGap,
+  growthGaps,
 } from "./stats";
+import type { OperatorBaseStats } from "./types";
 import type { OperatorEquipment, RecruitCandidate } from "./types";
 
 export const RECRUITMENT_SUBTITLE =
   "Incoming transmissions. Stats, perks and kit affect hiring cost.";
 
-export const STAT_DISPLAY_KEYS = ["aim", "toughness", "handling", "mobility"] as const satisfies ReadonlyArray<
-  keyof OperatorBaseStats
->;
+export const STAT_BAR_SEGMENTS = 8;
 
-export const STAT_BAR_SEGMENTS = 6;
-
-/** Shared scale for all candidates — normalized against canonical stat bounds. */
-export function statBarFilledSegments(value: number): number {
-  const clamped = clampStat(value);
-  const ratio = (clamped - STAT_MIN) / (STAT_MAX - STAT_MIN);
-  return Math.max(0, Math.min(STAT_BAR_SEGMENTS, Math.round(ratio * STAT_BAR_SEGMENTS)));
+export interface StatBarModel {
+  currentFilled: number;
+  potentialFilled: number;
+  totalSegments: number;
+  bar: string;
 }
 
-export function statBarString(value: number): string {
-  const filled = statBarFilledSegments(value);
-  return `${"█".repeat(filled)}${"░".repeat(STAT_BAR_SEGMENTS - filled)}`;
+/** Absolute-scale bar: solid = current, ▒ = unrealized potential, ░ = empty. */
+export function statPotentialBarSegments(
+  current: number,
+  potential: number,
+  statKey: keyof OperatorBaseStats,
+): StatBarModel {
+  const displayMax = STAT_DISPLAY_MAX[statKey];
+  const totalSegments = STAT_BAR_SEGMENTS;
+  const currentFilled = Math.max(
+    0,
+    Math.min(totalSegments, Math.round((current / displayMax) * totalSegments)),
+  );
+  const potentialFilled = Math.max(
+    currentFilled,
+    Math.min(totalSegments, Math.round((potential / displayMax) * totalSegments)),
+  );
+  let bar = "";
+  for (let i = 0; i < totalSegments; i++) {
+    if (i < currentFilled) bar += "█";
+    else if (i < potentialFilled) bar += "▒";
+    else bar += "░";
+  }
+  return { currentFilled, potentialFilled, totalSegments, bar };
 }
 
 export function recruitmentDeficit(bank: number, cost: number): number {
@@ -61,10 +78,10 @@ export function perkRecruitmentDetail(perkId: string): { name: string; lines: st
   if (!perk) return { name: perkId.toUpperCase(), lines: [] };
   const lines: string[] = [];
   const combat = perk.combat;
-  if (combat.aim) lines.push(`+${combat.aim} ${PERK_STAT_EFFECT_LABELS.aim}`);
-  if (combat.toughness) lines.push(`+${combat.toughness} ${PERK_STAT_EFFECT_LABELS.toughness}`);
-  if (combat.handling) lines.push(`+${combat.handling} ${PERK_STAT_EFFECT_LABELS.handling}`);
-  if (combat.mobility) lines.push(`+${combat.mobility} ${PERK_STAT_EFFECT_LABELS.mobility}`);
+  if (combat.aim) lines.push(`+${combat.aim} ${PERK_STAT_EFFECT_LABELS["aim"]}`);
+  if (combat.toughness) lines.push(`+${combat.toughness} ${PERK_STAT_EFFECT_LABELS["toughness"]}`);
+  if (combat.handling) lines.push(`+${combat.handling} ${PERK_STAT_EFFECT_LABELS["handling"]}`);
+  if (combat.mobility) lines.push(`+${combat.mobility} ${PERK_STAT_EFFECT_LABELS["mobility"]}`);
   if (lines.length) lines.push(perk.desc);
   else lines.push(`Future: ${perk.desc}`);
   return { name: perk.name, lines };
@@ -88,23 +105,45 @@ export function startingKitDisplay(equipment: OperatorEquipment): StartingKitDis
   };
 }
 
-export function compactKitLine(equipment: OperatorEquipment): string {
-  return `KIT · ${WEAPONS[equipment.weapon]?.name ?? equipment.weapon.toUpperCase()}`;
-}
-
-/** Read-only stat rows for cards — does not mutate candidate stats. */
-export function candidateStatRows(stats: OperatorBaseStats): Array<{
+export function candidateStatRows(
+  stats: OperatorBaseStats,
+  potential: OperatorBaseStats,
+): Array<{
   key: keyof OperatorBaseStats;
   label: string;
-  value: number;
+  current: number;
+  potential: number;
+  growthGap: number;
   bar: string;
 }> {
-  return STAT_DISPLAY_KEYS.map((key) => ({
-    key,
-    label: STAT_LABELS[key],
-    value: stats[key],
-    bar: statBarString(stats[key]),
-  }));
+  return STAT_KEYS.map((key) => {
+    const barModel = statPotentialBarSegments(stats[key], potential[key], key);
+    return {
+      key,
+      label: STAT_LABELS[key],
+      current: stats[key],
+      potential: potential[key],
+      growthGap: growthGap(stats[key], potential[key]),
+      bar: barModel.bar,
+    };
+  });
+}
+
+export function largestGrowthGapLabel(
+  stats: OperatorBaseStats,
+  potential: OperatorBaseStats,
+): string | null {
+  const gaps = growthGaps(stats, potential);
+  let best: keyof OperatorBaseStats | null = null;
+  let bestGap = 0;
+  for (const key of STAT_KEYS) {
+    if (gaps[key] > bestGap) {
+      bestGap = gaps[key];
+      best = key;
+    }
+  }
+  if (!best || bestGap <= 0) return null;
+  return `DEVELOPMENT: +${bestGap} ${STAT_LABELS[best]} AVAILABLE`;
 }
 
 export function primaryPerkId(candidate: Pick<RecruitCandidate, "perkIds">): string | null {
@@ -118,6 +157,7 @@ export interface CandidateCardView {
   perkName: string;
   costFormatted: string;
   showsKitLine: false;
+  includesStatGridInDetail: false;
 }
 
 export function buildCandidateCardView(candidate: RecruitCandidate): CandidateCardView {
@@ -125,10 +165,11 @@ export function buildCandidateCardView(candidate: RecruitCandidate): CandidateCa
   return {
     name: candidate.name,
     archetype: candidate.roleLabel,
-    statRows: candidateStatRows(candidate.stats),
+    statRows: candidateStatRows(candidate.stats, candidate.potential),
     perkName: perkId ? (PERKS[perkId]?.name ?? perkId) : "—",
     costFormatted: formatRecruitmentRoubles(candidate.cost),
     showsKitLine: false,
+    includesStatGridInDetail: false,
   };
 }
 
@@ -140,9 +181,9 @@ export interface SelectedDetailView {
   costFormatted: string;
   affordMsg: string | null;
   affordable: boolean;
+  developmentLine: string | null;
 }
 
-/** Detail panel content — intentionally excludes stat comparison (shown on cards only). */
 export function buildSelectedDetailView(candidate: RecruitCandidate, bank: number): SelectedDetailView {
   const perkId = primaryPerkId(candidate);
   return {
@@ -153,5 +194,14 @@ export function buildSelectedDetailView(candidate: RecruitCandidate, bank: numbe
     costFormatted: formatRecruitmentRoubles(candidate.cost),
     affordMsg: recruitmentAffordabilityMessage(bank, candidate.cost),
     affordable: canAffordRecruitment(bank, candidate.cost),
+    developmentLine: largestGrowthGapLabel(candidate.stats, candidate.potential),
   };
+}
+
+export function formatCrewStatLine(
+  key: keyof OperatorBaseStats,
+  current: number,
+  potential: number,
+): string {
+  return `${STAT_LABELS[key]} ${current} / ${potential}`;
 }

@@ -189,7 +189,7 @@ import {
   stashEntriesFromItems,
   unequipOperatorSlot,
 } from "./operators/equipment";
-import { PERKS, STAT_LABELS, type PersistentOperator } from "./operators";
+import { PERKS, formatCrewStatLine, STAT_LABELS, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import {
   operatorAccuracyBonus,
@@ -2554,7 +2554,7 @@ export default function TarkovTD() {
                             <div className="mt-1 grid grid-cols-2 gap-1 text-[9px]">
                               {(Object.keys(STAT_LABELS) as (keyof typeof STAT_LABELS)[]).map((k) => (
                                 <div key={k}>
-                                  {STAT_LABELS[k]} {op.stats[k]}
+                                  {formatCrewStatLine(k, op.stats[k], op.potential[k])}
                                 </div>
                               ))}
                             </div>
