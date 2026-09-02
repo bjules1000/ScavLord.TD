@@ -219,13 +219,16 @@ import {
 import { freshRadioProgression, radioStatePresentation } from "./operators/radioProgression";
 import { evaluateRequirement } from "./operators/recruitmentRequirements";
 import {
-  applyOperatorEquipToMeta,
-  equipArmorOnOperator,
-  equipAttachmentOnOperator,
-  equipWeaponOnOperator,
   stashEntriesFromItems,
-  unequipOperatorSlot,
 } from "./operators/equipment";
+import {
+  LEADER_EQUIPMENT_OWNER_ID,
+  coerceEquipmentOwnerId,
+  equipOnEquipmentOwner,
+  unequipFromEquipmentOwner,
+  type EquipmentOwnerId,
+} from "./operators/crewEquipment";
+import CrewEquipmentPanel from "./CrewEquipmentPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import {
@@ -239,7 +242,7 @@ import {
 import { operatorSpeedMultiplier, OPERATOR_MOVE_SPEED_TILES } from "./movement";
 import CampHub from "./hub/CampHub";
 import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
-import { raidPrepActions, type RaidPrepAction } from "./hub/prep";
+
 import { RAID_SCRAP_MULT } from "./loot";
 import { DEV_TOOLS_ENABLED } from "./dev/tools";
 import { confirmLeaveRaidForMapBuilder, type DevToolId } from "./dev/menu";
@@ -592,6 +595,9 @@ export default function TarkovTD() {
   const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew">("overview");
   const [selectedRecruitId, setSelectedRecruitId] = useState<string | null>(null);
   const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
+  const [selectedEquipOwnerId, setSelectedEquipOwnerId] = useState<EquipmentOwnerId>(
+    LEADER_EQUIPMENT_OWNER_ID,
+  );
   const [deployOperatorIds, setDeployOperatorIds] = useState<string[]>(() =>
     aliveOperators(loadMeta()).map((o) => o.id),
   );
@@ -944,79 +950,36 @@ export default function TarkovTD() {
 
   /* ---------------- operator equipment (hideout) ---------------- */
 
-  const pmcSlots = () => WEAPONS[metaRef.current.pmc.weapon]?.slots ?? 1;
-
-  const equipOnPmc = useCallback(
+  const equipOnSelectedOwner = useCallback(
     (uid: number) => {
       const m = metaRef.current;
-      const item = stash.find((i) => i.uid === uid);
-      if (!item) return;
-      let ns = stash.filter((i) => i.uid !== uid);
-      const back: Item[] = [];
-      if (item.kind === "weapon" && item.ref) {
-        const oldId = weaponItemId(m.pmc.weapon);
-        if (oldId) back.push(makeItem(oldId, newUid())!);
-        m.pmc.weapon = item.ref;
-        const slots = WEAPONS[item.ref]?.slots ?? 1;
-        m.pmc.attachments = [...(item.installed ?? [])].slice(0, slots);
-        while (m.pmc.attachments.length > slots) {
-          const popped = m.pmc.attachments.pop()!;
-          const aid = attachItemId(popped);
-          if (aid) back.push(makeItem(aid, newUid())!);
-        }
-      } else if (item.kind === "attachment" && item.ref) {
-        if (m.pmc.attachments.length >= pmcSlots()) return pushLog("No free mod slots on that gun.");
-        if (m.pmc.attachments.includes(item.ref)) return pushLog("That mod is already fitted.");
-        m.pmc.attachments.push(item.ref);
-      } else if (item.kind === "armor" && item.ref) {
-        const oldId = m.pmc.armor ? armorItemId(m.pmc.armor) : null;
-        if (oldId) back.push(makeItem(oldId, newUid())!);
-        m.pmc.armor = item.ref;
-      } else {
-        return pushLog("Your operator can only wear guns, mods and armor.");
-      }
-      ns = [...ns, ...back].slice(0, stashSlots);
+      const ownerId = coerceEquipmentOwnerId(m, selectedEquipOwnerId);
+      const result = equipOnEquipmentOwner(m, ownerId, stash, newUid(), uid, stashSlots);
+      if (!result.ok) return pushLog(result.reason);
+      const ns = result.stash.slice(0, stashSlots);
       setStash(ns);
       m.stash = stashEntriesFromItems([...ns, ...loadout]);
       saveMeta(m);
-      pushLog(`${item.name} fitted to ${m.pmc.name}.`);
+      pushLog(result.message);
       rerender();
     },
-    [loadout, pushLog, rerender, stash, stashSlots],
+    [loadout, pushLog, rerender, selectedEquipOwnerId, stash, stashSlots],
   );
 
-  const unequipPmc = useCallback(
+  const unequipSelectedOwner = useCallback(
     (slot: "weapon" | "armor" | number) => {
       const m = metaRef.current;
-      let back: Item | null = null;
-      if (slot === "weapon") {
-        if (m.pmc.weapon === STARTER_WEAPON_ID) return pushLog("They keep a sidearm as a fallback.");
-        const wid = weaponItemId(m.pmc.weapon);
-        back = wid ? makeItem(wid, newUid()) : null;
-        if (back && m.pmc.attachments.length) back.installed = [...m.pmc.attachments];
-        m.pmc.weapon = STARTER_WEAPON_ID;
-        m.pmc.attachments = [];
-      } else if (slot === "armor") {
-        if (!m.pmc.armor) return;
-        const aid = armorItemId(m.pmc.armor);
-        back = aid ? makeItem(aid, newUid()) : null;
-        m.pmc.armor = null;
-      } else {
-        const att = m.pmc.attachments[slot];
-        if (!att) return;
-        m.pmc.attachments.splice(slot, 1);
-        const aid = attachItemId(att);
-        back = aid ? makeItem(aid, newUid()) : null;
-      }
-      setStash((cur) => {
-        const ns = (back ? [...cur, back] : cur).slice(0, stashSlots);
-        m.stash = stashEntriesFromItems([...ns, ...loadout]);
-        saveMeta(m);
-        return ns;
-      });
+      const ownerId = coerceEquipmentOwnerId(m, selectedEquipOwnerId);
+      const result = unequipFromEquipmentOwner(m, ownerId, stash, newUid(), slot, stashSlots);
+      if (!result.ok) return pushLog(result.reason);
+      const ns = result.stash.slice(0, stashSlots);
+      setStash(ns);
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
+      saveMeta(m);
+      pushLog(result.message);
       rerender();
     },
-    [loadout, pushLog, rerender, stashSlots],
+    [loadout, pushLog, rerender, selectedEquipOwnerId, stash, stashSlots],
   );
 
   const hireRecruit = useCallback(
@@ -1062,40 +1025,31 @@ export default function TarkovTD() {
   const equipOnCrew = useCallback(
     (operatorId: string, uid: number) => {
       const m = metaRef.current;
-      const op = findOperator(m, operatorId);
-      if (!op || op.status !== "alive") return;
-      const item = stash.find((i) => i.uid === uid);
-      if (!item) return;
-      let result;
-      if (item.kind === "weapon") result = equipWeaponOnOperator(op, stash, newUid(), uid);
-      else if (item.kind === "armor") result = equipArmorOnOperator(op, stash, newUid(), uid);
-      else if (item.kind === "attachment") result = equipAttachmentOnOperator(op, stash, newUid(), uid);
-      else return pushLog("Operators can only wear guns, mods and armor.");
+      const result = equipOnEquipmentOwner(m, operatorId, stash, newUid(), uid, stashSlots);
       if (!result.ok) return pushLog(result.reason);
-      const applied = applyOperatorEquipToMeta(m, operatorId, result, stashSlots);
-      if (!applied.ok) return pushLog(applied.reason);
-      setStash(applied.stash.slice(0, stashSlots));
+      const ns = result.stash.slice(0, stashSlots);
+      setStash(ns);
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
       saveMeta(m);
-      pushLog(applied.message);
+      pushLog(result.message);
       rerender();
     },
-    [pushLog, rerender, stash, stashSlots],
+    [loadout, pushLog, rerender, stash, stashSlots],
   );
 
   const unequipCrew = useCallback(
     (operatorId: string, slot: "weapon" | "armor" | number) => {
       const m = metaRef.current;
-      const op = findOperator(m, operatorId);
-      if (!op) return;
-      const result = unequipOperatorSlot(op, stash, newUid(), slot);
+      const result = unequipFromEquipmentOwner(m, operatorId, stash, newUid(), slot, stashSlots);
       if (!result.ok) return pushLog(result.reason);
-      const applied = applyOperatorEquipToMeta(m, operatorId, result, stashSlots);
-      if (!applied.ok) return pushLog(applied.reason);
-      setStash(applied.stash.slice(0, stashSlots));
+      const ns = result.stash.slice(0, stashSlots);
+      setStash(ns);
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
       saveMeta(m);
+      pushLog(result.message);
       rerender();
     },
-    [pushLog, rerender, stash, stashSlots],
+    [loadout, pushLog, rerender, stash, stashSlots],
   );
 
 
@@ -2436,10 +2390,6 @@ export default function TarkovTD() {
     .reduce((a, i) => a + saleValueOf(i), 0);
 
   const campScar = meta.pmc.debuffs[0] ? DEBUFF_BY_ID[meta.pmc.debuffs[0]] : null;
-  const kitActions = {
-    attachments: meta.pmc.attachments,
-    attachmentSlots: WEAPONS[meta.pmc.weapon]?.slots ?? 1,
-  };
 
   return (
     <div className="relative min-h-[100dvh] bg-background text-foreground">
@@ -2658,7 +2608,20 @@ export default function TarkovTD() {
                             <div className="mt-1 text-[9px] text-muted-foreground">
                               PERKS: {op.perkIds.map((id) => PERKS[id]?.name ?? id).join(", ") || "—"}
                             </div>
+                            <div className="mt-2 text-[9px] text-muted-foreground">
+                              Full kit editing: open Equipment / Raid Prep and select this operator.
+                            </div>
                             <div className="mt-2 grid gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedEquipOwnerId(op.id);
+                                  setScreen("gear");
+                                }}
+                                className="pixel-btn w-full"
+                              >
+                                OPEN EQUIPMENT
+                              </button>
                               <button onClick={() => unequipCrew(op.id, "weapon")} className="pixel-card text-left">
                                 WEAPON: {WEAPONS[op.equipment.weapon]?.name ?? "SIDEARM"}
                               </button>
@@ -2671,7 +2634,7 @@ export default function TarkovTD() {
                                 </button>
                               ))}
                             </div>
-                            <div className="mt-2 text-[9px] text-muted-foreground">EQUIP FROM STASH</div>
+                            <div className="mt-2 text-[9px] text-muted-foreground">QUICK EQUIP FROM STASH</div>
                             <div className="mt-1 max-h-[100px] space-y-1 overflow-auto">
                               {stash
                                 .filter((i) => i.kind === "weapon" || i.kind === "armor" || i.kind === "attachment")
@@ -2974,125 +2937,26 @@ export default function TarkovTD() {
               {s.phase === "hideout" && screen === "gear" && (
                 <Overlay
                   title="EQUIPMENT / RAID PREP"
-                  subtitle="Worn kit · carried loadout · owned stash. EQUIP and PACK are chosen per item."
+                  subtitle="Crew kits · shared stash · raid loadout. Select an operator, then EQUIP / INSTALL / PACK."
                   layout="fill"
                 >
-                  <div className="flex h-full min-h-0 flex-col gap-2">
-                    <div className="grid min-h-0 flex-1 gap-3 text-left sm:grid-cols-2 lg:grid-cols-[minmax(190px,0.28fr)_minmax(150px,0.22fr)_minmax(0,1fr)] lg:items-stretch">
-                    <div className="pixel-card lg:self-start">
-                      <div className="font-display text-[10px] text-primary">SCAVLORD KIT</div>
-                      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Worn · tap a slot to return it to stash</p>
-                      <div className="mt-2 grid gap-2 font-mono text-[10px]">
-                        <button
-                          onClick={() => unequipPmc("weapon")}
-                          className="pixel-card text-left hover:-translate-y-[2px]"
-                        >
-                          <div className="text-muted-foreground">PRIMARY</div>
-                          <div className="text-primary">{WEAPONS[meta.pmc.weapon]?.name ?? "SIDEARM"}</div>
-                        </button>
-                        <button
-                          onClick={() => unequipPmc("armor")}
-                          className="pixel-card text-left hover:-translate-y-[2px]"
-                        >
-                          <div className="text-muted-foreground">BODY ARMOR</div>
-                          <div className={meta.pmc.armor ? "text-primary" : "text-muted-foreground"}>
-                            {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "EMPTY"}
-                          </div>
-                        </button>
-                        <div>
-                          <div className="text-muted-foreground">
-                            MODS {meta.pmc.attachments.length}/{WEAPONS[meta.pmc.weapon]?.slots ?? 1}
-                          </div>
-                          <div className="mt-1 grid grid-cols-2 gap-1">
-                            {Array.from({ length: WEAPONS[meta.pmc.weapon]?.slots ?? 1 }).map((_, i) => {
-                              const att = meta.pmc.attachments[i];
-                              if (!att)
-                                return (
-                                  <div
-                                    key={`pa-${i}`}
-                                    className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                                  />
-                                );
-                              return (
-                                <button
-                                  key={`pa-${i}-${att}`}
-                                  onClick={() => unequipPmc(i)}
-                                  title={ATTACHMENTS[att]?.name}
-                                  className="h-[42px] overflow-hidden border-2 border-accent bg-background/70 p-1 text-left font-mono text-[8px] leading-tight text-accent hover:-translate-y-[2px]"
-                                >
-                                  {ATTACHMENTS[att]?.name ?? att}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pixel-card lg:self-start">
-                      <div className="font-display text-[10px] text-primary">
-                        RAID LOADOUT {loadout.length}/{loadoutSlots}
-                      </div>
-                      <p className="mt-1 font-mono text-[9px] text-muted-foreground">Carried in · tap a slot to return it to stash</p>
-                      <div className="mt-2 grid grid-cols-3 gap-1">
-                        {Array.from({ length: loadoutSlots }).map((_, i) => {
-                          const item = loadout[i];
-                          if (!item)
-                            return (
-                              <div
-                                key={`empty-${i}`}
-                                className="h-[42px] border border-dashed border-border/60 bg-background/40"
-                              />
-                            );
-                          return <ItemCell key={item.uid} item={item} onClick={() => fromLoadout(item.uid)} />;
-                        })}
-                      </div>
-                    </div>
-                    <div className="pixel-card flex min-h-0 flex-col sm:col-span-2 lg:col-span-1 lg:h-full">
-                      <div className="shrink-0">
-                        <div className="font-display text-[10px] text-primary">
-                          STASH {stash.length}/{stashSlots}
-                        </div>
-                        <p className="mt-1 font-mono text-[9px] text-muted-foreground">
-                          EQUIP → ScavLord kit · PACK → raid loadout
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
-                            <button
-                              key={t}
-                              onClick={() => setStashTab(t)}
-                              className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                                stashTab === t
-                                  ? "border-primary text-primary"
-                                  : "border-border/60 text-muted-foreground"
-                              }`}
-                            >
-                              {t === "all" ? "all" : t + "s"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="pixel-scrollbar mt-2 min-h-0 flex-1 overflow-y-auto max-h-[36vh] lg:max-h-none">
-                        {sortedStash.length === 0 ? (
-                          <div className="font-mono text-[9px] text-muted-foreground">Nothing in this category.</div>
-                        ) : (
-                          sortedStash.map((item) => (
-                            <PrepItemRow
-                              key={item.uid}
-                              item={item}
-                              actions={raidPrepActions(item, kitActions)}
-                              onEquip={() => equipOnPmc(item.uid)}
-                              onPack={() => toLoadout(item.uid)}
-                            />
-                          ))
-                        )}
-                      </div>
-                    </div>
-                    </div>
-                    <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary w-full shrink-0">
-                      BACK TO CAMP
-                    </button>
-                  </div>
+                  <CrewEquipmentPanel
+                    meta={meta}
+                    selectedOwnerId={coerceEquipmentOwnerId(meta, selectedEquipOwnerId)}
+                    onSelectOwner={setSelectedEquipOwnerId}
+                    stash={stash}
+                    stashSlots={stashSlots}
+                    stashTab={stashTab}
+                    setStashTab={setStashTab}
+                    sortedStash={sortedStash}
+                    loadout={loadout}
+                    loadoutSlots={loadoutSlots}
+                    onEquip={equipOnSelectedOwner}
+                    onUnequip={unequipSelectedOwner}
+                    onPack={toLoadout}
+                    onUnpack={fromLoadout}
+                    onBack={() => setScreen("hideout")}
+                  />
                 </Overlay>
               )}
 
@@ -3962,37 +3826,6 @@ function useLongPress(onLong?: () => void, ms = 450) {
   };
 }
 
-function PrepItemRow({
-  item,
-  actions,
-  onEquip,
-  onPack,
-}: {
-  item: Item;
-  actions: RaidPrepAction[];
-  onEquip: () => void;
-  onPack: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-1 border-b border-border/40 py-1">
-      <div className="min-w-0 flex-1 text-left font-mono text-[9px] leading-tight" style={{ color: RARITY_COLOR[item.rarity] }}>
-        <div className="truncate">{item.name}</div>
-        <div className="uppercase text-muted-foreground">{item.kind}</div>
-      </div>
-      {actions.includes("equip") && (
-        <button type="button" onClick={onEquip} className="pixel-btn shrink-0 px-1 py-1 text-[8px]">
-          EQUIP
-        </button>
-      )}
-      {actions.includes("pack") && (
-        <button type="button" onClick={onPack} className="pixel-btn shrink-0 px-1 py-1 text-[8px]">
-          PACK
-        </button>
-      )}
-    </div>
-  );
-}
-
 type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable";
 type ShopKindTab = "weapon" | "attachment" | "armor" | "backpack" | "meds";
 
@@ -4200,7 +4033,7 @@ function Overlay({
       <div
         className={`w-full ${
           fill
-            ? "flex min-h-0 flex-1 flex-col overflow-hidden max-w-6xl"
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden max-w-7xl"
             : wide
               ? "flex min-h-0 w-[min(80vw,72rem)] max-w-[80vw] flex-1 flex-col"
               : "max-w-4xl"
