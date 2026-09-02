@@ -188,16 +188,21 @@ import {
   regenerateRecruitmentPool,
   requestNewTransmission,
 } from "./operators/crew";
-import { applyQuestRewardsToRadio } from "./operators/questRadioRewards";
 import {
   QUEST_SPEC_BY_ID,
   QUEST_SPECS,
   applyRaidQuestProgress,
-  getQuestAvailability,
   listAvailableQuestIds,
+  listNewlyUnlockedQuestIds,
   type QuestUnlockContext,
 } from "./quests";
 import PlayerQuestsPanel, { type PlayerQuestFilter } from "./PlayerQuestsPanel";
+import ProgressionNoticeModal from "./ProgressionNoticeModal";
+import { redeemQuest, unlockContextFromMeta } from "./questRedeem";
+import {
+  buildNewQuestsNotice,
+  type ProgressionNotice,
+} from "./progressionNotifications";
 import { nextRetransmissionCashCost, CANONICAL_RETRANSMISSION } from "./operators/retransmission";
 import {
   advanceUniqueLifecycle,
@@ -595,6 +600,7 @@ export default function TarkovTD() {
     "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
   >("all");
   const [questFilter, setQuestFilter] = useState<PlayerQuestFilter>("active");
+  const [progressionNotices, setProgressionNotices] = useState<ProgressionNotice[]>([]);
   const [devPickerOpen, setDevPickerOpen] = useState(false);
   const [balanceLabOpen, setBalanceLabOpen] = useState(false);
   const [economyLabOpen, setEconomyLabOpen] = useState(false);
@@ -758,7 +764,7 @@ export default function TarkovTD() {
           uniqueContacts: m.crew.radio?.uniqueContacts,
         };
         // Snapshot AVAILABLE before applying this raid — newly unlocked quests get 0 from this event.
-        const availableAtStart = listAvailableQuestIds(QUEST_SPECS, unlockCtx);
+        const availableAtStart = listAvailableQuestIds(QUEST_SPECS, unlockCtx, m.quests);
         const mapKey = mapRef.current.def.id;
         m.quests = applyRaidQuestProgress(m.quests, availableAtStart, {
           scavKills: s.scavKills,
@@ -886,41 +892,27 @@ export default function TarkovTD() {
     [pushLog, rerender],
   );
 
+  const enqueueNotices = useCallback((...notices: (ProgressionNotice | null | undefined)[]) => {
+    const next = notices.filter((n): n is ProgressionNotice => !!n);
+    if (!next.length) return;
+    setProgressionNotices((cur) => [...cur, ...next]);
+  }, []);
+
+  const dismissProgressionNotice = useCallback(() => {
+    setProgressionNotices((cur) => cur.slice(1));
+  }, []);
+
   const redeem = useCallback(
     (questId: string) => {
       const m = metaRef.current;
-      const q = QUESTS.find((x) => x.id === questId);
-      const spec = QUEST_SPEC_BY_ID[questId];
-      if (!q || !spec || m.claimed.includes(q.id)) return;
-      const unlockCtx: QuestUnlockContext = {
-        claimedQuestIds: m.claimed,
-        playerLevel: m.pmc.level,
-        radioState: (m.crew.radio ?? freshRadioProgression()).radioState,
-        uniqueContacts: m.crew.radio?.uniqueContacts,
-      };
-      if (getQuestAvailability(spec, unlockCtx) !== "AVAILABLE") return;
-      if (!q.done(m.quests)) return;
-      m.claimed = [...m.claimed, q.id];
-      m.bank += q.reward;
-      m.skillPoints += q.skillPoints ?? 0;
-      ensureRadio(m);
-      m.crew.radio = applyQuestRewardsToRadio(m.crew.radio, questId, spec.rewards);
-      m.crew.radio = syncUniqueEligibility(
-        m.crew.radio,
-        "wolf",
-        progressionFactsFromMeta(m),
-      );
-      const cap = capabilityFromMeta(m);
-      if (cap.slots.effective > 0 && m.crew.recruitment.candidates.length === 0) {
-        regenerateRecruitmentPool(m);
-      }
+      const result = redeemQuest(m, questId, QUEST_SPECS);
+      if (!result.ok) return pushLog(result.reason);
+      if (result.alreadySettled) return;
       saveMeta(m);
-      pushLog(
-        `${q.name} redeemed: +${q.reward}₽${q.skillPoints ? `, +${q.skillPoints} skill point(s)` : ""}.`,
-      );
+      enqueueNotices(result.notice);
       rerender();
     },
-    [pushLog, rerender],
+    [pushLog, rerender, enqueueNotices],
   );
 
   const toLoadout = useCallback(
@@ -2738,7 +2730,6 @@ export default function TarkovTD() {
                         uniqueContacts: meta.crew.radio?.uniqueContacts,
                       }}
                       questProgress={meta.quests}
-                      claimed={meta.claimed}
                       filter={questFilter}
                       onFilter={setQuestFilter}
                       onRedeem={redeem}
@@ -2788,8 +2779,9 @@ export default function TarkovTD() {
                           wolfProg.transmissionSettled
                         ? "CURRENT SIGNAL TASK · OPEN FREQUENCIES — unlock the scav network."
                         : radio.radioState === "SIGNAL_RESTORED" &&
-                            wolfProg.lifecycle !== "HIDDEN" &&
-                            wolfProg.lifecycle !== "RECRUITED"
+                            (wolfProg.lifecycle === "REQUIREMENTS_VISIBLE" ||
+                              wolfProg.lifecycle === "CONTACTABLE" ||
+                              wolfProg.lifecycle === "RECRUITABLE")
                           ? "CURRENT SIGNAL TASK · HELP WOLF — prove you can hold a line."
                           : null;
 
@@ -2809,32 +2801,60 @@ export default function TarkovTD() {
                             ? () => {
                                 const cur = metaRef.current;
                                 ensureRadio(cur);
+                                const before = unlockContextFromMeta(cur);
                                 const life =
                                   wolfProg.lifecycle === "IDENTIFIED"
                                     ? ("REQUIREMENTS_VISIBLE" as const)
                                     : advanceUniqueLifecycle(wolfProg.lifecycle);
                                 cur.crew.radio = setUniqueLifecycle(cur.crew.radio!, "wolf", life);
+                                const after = unlockContextFromMeta(cur);
+                                const unlockedIds = listNewlyUnlockedQuestIds(QUEST_SPECS, before, after);
+                                const unlocked = unlockedIds
+                                  .map((id) => QUEST_SPEC_BY_ID[id])
+                                  .filter((q): q is NonNullable<typeof q> => !!q);
                                 saveMeta(cur);
+                                if (unlocked.length) {
+                                  enqueueNotices(buildNewQuestsNotice(unlocked));
+                                }
                                 rerender();
                               }
                             : wolfProg.lifecycle === "RECRUITED"
                               ? () => {
                                   const cur = metaRef.current;
                                   ensureRadio(cur);
+                                  const before = unlockContextFromMeta(cur);
                                   cur.crew.radio = settleUniqueTransmission(cur.crew.radio!, "wolf");
+                                  const after = unlockContextFromMeta(cur);
+                                  const unlockedIds = listNewlyUnlockedQuestIds(QUEST_SPECS, before, after);
+                                  const unlocked = unlockedIds
+                                    .map((id) => QUEST_SPEC_BY_ID[id])
+                                    .filter((q): q is NonNullable<typeof q> => !!q);
                                   saveMeta(cur);
-                                  pushLog("Wolf cleared the channel.");
+                                  if (unlocked.length) {
+                                    enqueueNotices(buildNewQuestsNotice(unlocked));
+                                  } else {
+                                    pushLog("Wolf cleared the channel.");
+                                  }
                                   rerender();
                                 }
                               : null,
                         onRecruit: wolfCanRecruit
                           ? () => {
                               const cur = metaRef.current;
+                              const before = unlockContextFromMeta(cur);
                               const result = hireUniqueContact(cur, "wolf");
                               if (!result.ok) return pushLog(result.reason);
+                              const after = unlockContextFromMeta(cur);
+                              const unlockedIds = listNewlyUnlockedQuestIds(QUEST_SPECS, before, after);
+                              const unlocked = unlockedIds
+                                .map((id) => QUEST_SPEC_BY_ID[id])
+                                .filter((q): q is NonNullable<typeof q> => !!q);
                               saveMeta(cur);
                               setDeployOperatorIds((ids) => [...ids, result.operator.id]);
                               pushLog(`${result.operator.name} joined the crew.`);
+                              if (unlocked.length) {
+                                enqueueNotices(buildNewQuestsNotice(unlocked));
+                              }
                               rerender();
                             }
                           : null,
@@ -3784,6 +3804,9 @@ export default function TarkovTD() {
             rerender();
           }}
         />
+      )}
+      {progressionNotices[0] && (
+        <ProgressionNoticeModal notice={progressionNotices[0]} onContinue={dismissProgressionNotice} />
       )}
     </div>
   );
