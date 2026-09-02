@@ -69,12 +69,12 @@ export default function CrewEquipmentPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="grid min-h-0 flex-1 gap-2 text-left lg:grid-cols-[minmax(148px,0.22fr)_minmax(200px,0.32fr)_minmax(0,1fr)] lg:items-stretch">
+      <div className="grid min-h-0 flex-1 gap-2 text-left lg:grid-cols-[minmax(160px,0.2fr)_minmax(220px,0.34fr)_minmax(0,1fr)] lg:items-stretch">
         {/* CREW */}
         <div className="pixel-card flex min-h-0 flex-col lg:max-h-none">
           <div className="font-display text-[10px] text-primary">CREW</div>
           <p className="mt-1 font-mono text-[9px] text-muted-foreground">Select who to kit</p>
-          <div className="pixel-scrollbar mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto max-h-[22vh] lg:max-h-none">
+          <div className="pixel-scrollbar mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto max-h-[22vh] lg:max-h-none">
             {rows.map((row) => {
               const active = row.ownerId === ownerId;
               return (
@@ -82,15 +82,15 @@ export default function CrewEquipmentPanel({
                   key={row.ownerId}
                   type="button"
                   onClick={() => onSelectOwner(row.ownerId)}
-                  className={`w-full border px-2 py-1.5 text-left font-mono ${
+                  className={`w-full border px-2 py-2 text-left font-mono ${
                     active ? "border-primary text-primary" : "border-border/50 text-foreground"
                   }`}
                 >
                   <div className="flex items-baseline justify-between gap-1">
-                    <span className="truncate text-[10px] font-display tracking-wide">{row.name}</span>
+                    <span className="truncate text-[11px] font-display tracking-wide">{row.name}</span>
                     <span className="shrink-0 text-[8px] uppercase text-muted-foreground">{row.roleLabel}</span>
                   </div>
-                  <div className="mt-0.5 truncate text-[8px] text-muted-foreground">
+                  <div className="mt-1 truncate text-[8px] text-muted-foreground">
                     {weaponDisplayName(row.weaponId)} · {armorDisplayName(row.armorId)}
                   </div>
                 </button>
