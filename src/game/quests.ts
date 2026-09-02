@@ -304,6 +304,8 @@ export const QUEST_SPECS: QuestSpec[] = [
       }),
     ],
     prerequisites: ["radio_signal"],
+    /** Unlocks only after Wolf lore ACKNOWLEDGE → REQUIREMENTS_VISIBLE. */
+    requiresUnique: { uniqueId: "wolf", minLifecycle: "REQUIREMENTS_VISIBLE" },
   },
   {
     id: "radio_network",
