@@ -14,7 +14,7 @@ export const OPERATOR_BASE_HP = 110;
 
 /** Resolve live combat modifiers from base stats + perks. */
 export function resolveCombatMods(
-  op: Pick<PersistentOperator, "stats" | "perkIds" | "negativeTraitIds">,
+  op: Pick<PersistentOperator, "stats" | "traitIds" | "perkIds" | "negativeTraitIds">,
 ): OperatorCombatMods {
   let aimBonus = op.stats.aim - STAT_NEUTRAL;
   let toughnessBonus = op.stats.toughness - STAT_NEUTRAL;
@@ -33,7 +33,7 @@ export function resolveCombatMods(
 
 /** Max HP from persistent operator base stats. Equipment does not change max HP. */
 export function operatorMaxHp(
-  op: Pick<PersistentOperator, "stats" | "perkIds">,
+  op: Pick<PersistentOperator, "stats" | "traitIds" | "perkIds" | "negativeTraitIds">,
   debuffHpMult = 1,
 ): number {
   const mods = resolveCombatMods(op);

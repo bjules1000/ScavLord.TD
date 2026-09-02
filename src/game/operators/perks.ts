@@ -129,6 +129,13 @@ export function isNegativeTraitId(id: string): boolean {
   return traitPolarity(id) === "NEGATIVE";
 }
 
-export function allTraitIds(candidate: { perkIds: string[]; negativeTraitIds?: string[] }): string[] {
-  return [...candidate.perkIds, ...(candidate.negativeTraitIds ?? [])];
+export function allTraitIds(candidate: {
+  traitIds?: string[];
+  perkIds?: string[];
+  negativeTraitIds?: string[];
+}): string[] {
+  if (Array.isArray(candidate.traitIds) && candidate.traitIds.length) {
+    return [...candidate.traitIds];
+  }
+  return [...(candidate.perkIds ?? []), ...(candidate.negativeTraitIds ?? [])];
 }

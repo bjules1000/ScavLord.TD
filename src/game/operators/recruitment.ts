@@ -1,5 +1,5 @@
 import { kitEquipmentValue } from "./generation";
-import { PERKS } from "./perks";
+import { allTraitIds, PERKS } from "./perks";
 import { potentialUpsideScore, statQualityScore } from "./stats";
 import type { RecruitCandidate } from "./types";
 
@@ -7,11 +7,10 @@ import type { RecruitCandidate } from "./types";
  * Recruitment economics — tune in Recruitment Lab.
  *
  * Cost = base
- *      + currentQuality × currentStatFactor   (realized capability — strongest)
- *      + potentialUpside × potentialStatFactor  (unrealized ceiling — weaker)
+ *      + currentQuality × currentStatFactor
+ *      + potentialUpside × potentialStatFactor
  *      + kitValue × equipmentFactor
- *      + perkWeights × perkFactor
- *      + negative trait discounts
+ *      + traitWeights × perkFactor
  */
 export const RECRUITMENT_COST = {
   base: 650,
@@ -43,21 +42,15 @@ export function potentialStatCostContribution(
   return potentialUpsideScore(stats, potential) * RECRUITMENT_COST.potentialStatFactor;
 }
 
-export function traitCostContribution(candidate: Pick<RecruitCandidate, "perkIds" | "negativeTraitIds">): {
-  positive: number;
-  negative: number;
-} {
+export function traitCostContribution(
+  candidate: Pick<RecruitCandidate, "traitIds" | "perkIds" | "negativeTraitIds">,
+): { positive: number; negative: number } {
   let positive = 0;
   let negative = 0;
-  for (const id of candidate.perkIds) {
+  for (const id of allTraitIds(candidate)) {
     const w = PERKS[id]?.costWeight ?? 0;
     if (w >= 0) positive += w * RECRUITMENT_COST.perkFactor;
     else negative += w * RECRUITMENT_COST.perkFactor;
-  }
-  for (const id of candidate.negativeTraitIds ?? []) {
-    const w = PERKS[id]?.costWeight ?? 0;
-    if (w < 0) negative += w * RECRUITMENT_COST.perkFactor;
-    else positive += w * RECRUITMENT_COST.perkFactor;
   }
   return { positive, negative };
 }

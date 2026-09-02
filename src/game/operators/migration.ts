@@ -9,7 +9,7 @@ import {
   isValidStats,
 } from "./stats";
 import { WEAPONS } from "../gear";
-import type { OperatorBaseStats, PersistentOperator, RecruitCandidate } from "./types";
+import { resolveTraitIds, type OperatorBaseStats, type PersistentOperator, type RecruitCandidate } from "./types";
 
 export function migrateV5ToV6(v5: Meta): Meta {
   const base = { ...v5 };
@@ -50,10 +50,17 @@ export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentO
   const potential = resolvePotential(stats, raw.potential, raw.archetypeId ?? "rifleman", raw.id);
   if (!isValidStatPair(stats, potential)) return null;
   const weapon = raw.equipment?.weapon && WEAPONS[raw.equipment.weapon] ? raw.equipment.weapon : "pm";
-  const perkIds = Array.isArray(raw.perkIds) ? raw.perkIds.filter(isCanonicalPerkId) : [];
-  const negativeTraitIds = Array.isArray(raw.negativeTraitIds)
-    ? raw.negativeTraitIds.filter(isCanonicalPerkId)
-    : [];
+  const traitInput: {
+    traitIds?: string[];
+    perkIds?: string[];
+    negativeTraitIds?: string[];
+  } = {};
+  if (Array.isArray(raw.traitIds)) traitInput.traitIds = raw.traitIds.filter(isCanonicalPerkId);
+  if (Array.isArray(raw.perkIds)) traitInput.perkIds = raw.perkIds.filter(isCanonicalPerkId);
+  if (Array.isArray(raw.negativeTraitIds)) {
+    traitInput.negativeTraitIds = raw.negativeTraitIds.filter(isCanonicalPerkId);
+  }
+  const traits = resolveTraitIds(traitInput);
   const op: PersistentOperator = {
     id: raw.id,
     name: raw.name,
@@ -61,7 +68,8 @@ export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentO
     archetypeId: raw.archetypeId ?? "rifleman",
     stats: { ...stats },
     potential: { ...potential },
-    perkIds,
+    traitIds: traits.traitIds,
+    perkIds: traits.perkIds,
     equipment: {
       weapon,
       attachments: Array.isArray(raw.equipment?.attachments) ? [...raw.equipment.attachments] : [],
@@ -76,7 +84,8 @@ export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentO
     },
     status: raw.status === "dead" ? "dead" : "alive",
   };
-  if (negativeTraitIds.length) op.negativeTraitIds = negativeTraitIds;
+  if (raw.uniqueId) op.uniqueId = String(raw.uniqueId);
+  if (traits.negativeTraitIds.length) op.negativeTraitIds = traits.negativeTraitIds;
   return op;
 }
 

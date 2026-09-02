@@ -18,10 +18,18 @@ export interface StatRange {
   max: number;
 }
 
+export interface WeightedGearEntry {
+  id: string | null;
+  enabled: boolean;
+  weight: number;
+}
+
 export interface RecruitmentProfileKit {
-  weaponPool: readonly string[];
-  armorPool: readonly (string | null)[];
-  attachTierWeights: { low: number; mid: number; high: number };
+  weapons: WeightedGearEntry[];
+  armors: WeightedGearEntry[];
+  attachments: WeightedGearEntry[];
+  /** Chance to roll an attachment when pool is non-empty (0–1). */
+  attachmentChance: number;
 }
 
 /** Canonical recruitment profile — generation rules, not a specific person. */
@@ -31,12 +39,14 @@ export interface RecruitmentProfile {
   roleLabel: string;
   enabled: boolean;
   weight: number;
+  /** Minimum effective recruitment quality to enter the pool. */
+  minQuality: number;
   currentRanges: Record<keyof OperatorBaseStats, StatRange>;
   potentialRanges: Record<keyof OperatorBaseStats, StatRange>;
   positivePerkPool: readonly string[];
   negativeTraitPool: readonly string[];
-  /** 0–1 probability of rolling one negative trait. */
-  negativeTraitChance: number;
+  /** Profile-local override for negative trait chance; quality tiers also apply. */
+  negativeTraitChance?: number;
   kit: RecruitmentProfileKit;
   requirements: readonly RecruitmentRequirement[];
 }
@@ -118,31 +128,40 @@ const PROFILE_RANGES: Record<
   },
 };
 
+function w(id: string | null, weight: number, enabled = true): WeightedGearEntry {
+  return { id, enabled, weight };
+}
+
 const KIT_BY_ARCHETYPE: Record<string, RecruitmentProfileKit> = {
   marksman: {
-    weaponPool: ["adar", "pm"],
-    armorPool: [null, "paca"],
-    attachTierWeights: { low: 0.35, mid: 0.4, high: 0.25 },
+    weapons: [w("adar", 40), w("pm", 25)],
+    armors: [w(null, 55), w("paca", 45)],
+    attachments: [w("grip", 20), w("brake", 15), w("optic", 25)],
+    attachmentChance: 0.4,
   },
   runner: {
-    weaponPool: ["pm", "toz"],
-    armorPool: [null],
-    attachTierWeights: { low: 0.5, mid: 0.35, high: 0.15 },
+    weapons: [w("pm", 45), w("toz", 30)],
+    armors: [w(null, 100)],
+    attachments: [w("grip", 20), w("brake", 10)],
+    attachmentChance: 0.25,
   },
   bruiser: {
-    weaponPool: ["toz", "mp133"],
-    armorPool: [null, "paca"],
-    attachTierWeights: { low: 0.3, mid: 0.45, high: 0.25 },
+    weapons: [w("toz", 40), w("mp133", 35)],
+    armors: [w(null, 40), w("paca", 60)],
+    attachments: [w("grip", 25), w("brake", 20)],
+    attachmentChance: 0.35,
   },
   rifleman: {
-    weaponPool: ["adar", "ak74"],
-    armorPool: [null, "paca"],
-    attachTierWeights: { low: 0.35, mid: 0.4, high: 0.25 },
+    weapons: [w("adar", 35), w("ak74", 30), w("pm", 15)],
+    armors: [w(null, 50), w("paca", 50)],
+    attachments: [w("grip", 25), w("optic", 20), w("brake", 15)],
+    attachmentChance: 0.4,
   },
   scrapper: {
-    weaponPool: ["toz", "pm"],
-    armorPool: [null, "paca"],
-    attachTierWeights: { low: 0.4, mid: 0.4, high: 0.2 },
+    weapons: [w("toz", 40), w("pm", 35)],
+    armors: [w(null, 55), w("paca", 45)],
+    attachments: [w("grip", 20), w("brake", 15)],
+    attachmentChance: 0.3,
   },
 };
 
@@ -176,11 +195,11 @@ export const CANONICAL_RECRUITMENT_PROFILES: RecruitmentProfile[] = ARCHETYPES.m
     roleLabel: arch.roleLabel,
     enabled: true,
     weight: arch.weight,
+    minQuality: 1,
     currentRanges: ranges.current,
     potentialRanges: ranges.potential,
     positivePerkPool: [...RECRUITABLE_PERK_IDS],
     negativeTraitPool: [...RECRUITABLE_NEGATIVE_TRAIT_IDS],
-    negativeTraitChance: 0.12,
     kit: KIT_BY_ARCHETYPE[arch.id] ?? KIT_BY_ARCHETYPE["rifleman"]!,
     requirements: [],
   };
@@ -224,16 +243,43 @@ export function rollStatInRange(rng: () => number, range: StatRange, clamp: (n: 
 export function generateStatsFromProfile(
   profile: Pick<RecruitmentProfile, "currentRanges" | "potentialRanges">,
   rng: () => number,
+  qualityBias = { current: 0, potential: 0 },
 ): { stats: OperatorBaseStats; potential: OperatorBaseStats } {
   const stats = {} as OperatorBaseStats;
   const potential = {} as OperatorBaseStats;
   for (const key of STAT_KEYS) {
-    stats[key] = rollStatInRange(rng, profile.currentRanges[key], clampStat);
+    const cRange = profile.currentRanges[key];
+    const cSpan = Math.max(0, cRange.max - cRange.min);
+    const cShift = Math.round(cSpan * qualityBias.current * (rng() * 0.5 + 0.5));
+    stats[key] = clampStat(cRange.min + Math.round(rng() * cSpan) + cShift);
+
     const potMin = Math.max(profile.potentialRanges[key].min, stats[key]);
     const potMax = Math.max(potMin, profile.potentialRanges[key].max);
-    potential[key] = rollStatInRange(rng, { min: potMin, max: potMax }, clampPotential);
+    const pSpan = Math.max(0, potMax - potMin);
+    const pShift = Math.round(pSpan * qualityBias.potential * (rng() * 0.5 + 0.5));
+    potential[key] = clampPotential(potMin + Math.round(rng() * pSpan) + pShift);
   }
   return { stats, potential: enforceCurrentPotentialInvariant(stats, potential) };
+}
+
+export function pickWeightedGear(
+  rng: () => number,
+  entries: readonly WeightedGearEntry[],
+  weightMult = 1,
+): string | null {
+  const enabled = entries.filter((e) => e.enabled && e.weight > 0);
+  if (!enabled.length) return null;
+  const weighted = enabled.map((e) => ({
+    ...e,
+    weight: e.id == null ? e.weight : e.weight * weightMult,
+  }));
+  const total = weighted.reduce((s, e) => s + e.weight, 0);
+  let roll = rng() * total;
+  for (const e of weighted) {
+    roll -= e.weight;
+    if (roll <= 0) return e.id;
+  }
+  return weighted[weighted.length - 1]!.id;
 }
 
 export function profileWeightShare(
@@ -241,9 +287,7 @@ export function profileWeightShare(
 ): Record<string, number> {
   const total = profiles.reduce((sum, p) => sum + Math.max(0, p.weight), 0);
   if (total <= 0) return Object.fromEntries(profiles.map((p) => [p.id, 0]));
-  return Object.fromEntries(
-    profiles.map((p) => [p.id, Math.max(0, p.weight) / total]),
-  );
+  return Object.fromEntries(profiles.map((p) => [p.id, Math.max(0, p.weight) / total]));
 }
 
 /** Profile after DEV Recruitment Lab merge. */

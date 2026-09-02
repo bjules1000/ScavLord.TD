@@ -1,22 +1,32 @@
+/**
+ * Candidate generation from recruitment profiles.
+ *
+ * Order: eligible profiles → weighted pick → stats/potential (quality bias)
+ * → stackable traits → kit (weighted pools) → cost
+ */
+
 import { ITEM_BY_ID } from "../gear";
 import { armorItemId, attachItemId, weaponItemId } from "../raidGear";
-import { ARCHETYPES } from "./archetypes";
 import { OPERATOR_NAMES } from "./names";
-import { isNegativeTraitId, isPositivePerkId, RECRUITABLE_NEGATIVE_TRAIT_IDS, RECRUITABLE_PERK_IDS } from "./perks";
-import { CANONICAL_RECRUITMENT_PROFILES } from "./recruitmentProfiles";
-import type { EffectiveRecruitmentProfile } from "./recruitmentProfiles";
-import { generateStatsFromProfile } from "./recruitmentProfiles";
+import {
+  isNegativeTraitId,
+  isPositivePerkId,
+  RECRUITABLE_NEGATIVE_TRAIT_IDS,
+  RECRUITABLE_PERK_IDS,
+} from "./perks";
+import {
+  CANONICAL_RECRUITMENT_PROFILES,
+  generateStatsFromProfile,
+  pickWeightedGear,
+  type EffectiveRecruitmentProfile,
+} from "./recruitmentProfiles";
+import { getQualityTier, rollNegativeTraitCount, rollPositiveTraitCount } from "./recruitmentQuality";
+import type { RecruitmentQuality } from "./radioProgression";
 import { mulberry32, pickOne, pickWeighted, seedFromParts } from "./rng";
 import type { OperatorAppearance, OperatorEquipment, RecruitCandidate } from "./types";
 
-/** @deprecated Use getRecruitmentSlotCount() — kept for backward compat in tests. */
-export const RECRUITMENT_POOL_SIZE = 3;
-
-const ATTACH_BY_TIER: Record<string, string[]> = {
-  low: [],
-  mid: ["grip", "brake"],
-  high: ["grip", "optic"],
-};
+/** @deprecated Prefer resolveRecruitmentCapability().slots.effective */
+export const RECRUITMENT_POOL_SIZE = 0;
 
 export function kitEquipmentValue(equipment: OperatorEquipment): number {
   let total = 0;
@@ -31,21 +41,6 @@ export function kitEquipmentValue(equipment: OperatorEquipment): number {
     if (ar) total += ITEM_BY_ID[ar]?.value ?? 0;
   }
   return total;
-}
-
-function pickAttachTier(rng: () => number, weights: { low: number; mid: number; high: number }): string {
-  const roll = rng();
-  if (roll < weights.low) return "low";
-  if (roll < weights.low + weights.mid) return "mid";
-  return "high";
-}
-
-function pickKitFromProfile(profile: EffectiveRecruitmentProfile, rng: () => number): OperatorEquipment {
-  const weapon = pickOne(rng, [...profile.kit.weaponPool]);
-  const tier = pickAttachTier(rng, profile.kit.attachTierWeights);
-  const attachments = [...(ATTACH_BY_TIER[tier] ?? [])].slice(0, 1);
-  const armor = pickOne(rng, [...profile.kit.armorPool]);
-  return { weapon, attachments, armor };
 }
 
 function pickAppearance(rng: () => number): OperatorAppearance {
@@ -64,19 +59,46 @@ function uniqueName(rng: () => number, used: Set<string>): string {
   return `OPERATOR-${i}`;
 }
 
-function pickPositivePerk(rng: () => number, pool: readonly string[]): string {
-  const eligible = pool.filter((id) => isPositivePerkId(id));
-  const fallback = RECRUITABLE_PERK_IDS.filter((id) => isPositivePerkId(id));
-  return pickOne(rng, eligible.length ? eligible : fallback);
+function pickDistinctTraits(
+  rng: () => number,
+  pool: readonly string[],
+  count: number,
+  filter: (id: string) => boolean,
+  used: Set<string>,
+): string[] {
+  const eligible = pool.filter((id) => filter(id) && !used.has(id));
+  const out: string[] = [];
+  for (let i = 0; i < count && eligible.length; i++) {
+    const pick = pickOne(rng, eligible);
+    out.push(pick);
+    used.add(pick);
+    const idx = eligible.indexOf(pick);
+    if (idx >= 0) eligible.splice(idx, 1);
+  }
+  return out;
 }
 
-function pickNegativeTrait(rng: () => number, pool: readonly string[], chance: number): string[] {
-  if (rng() >= chance) return [];
-  const eligible = pool.filter((id) => isNegativeTraitId(id));
-  const fallback = RECRUITABLE_NEGATIVE_TRAIT_IDS.filter((id) => isNegativeTraitId(id));
-  const pick = eligible.length ? eligible : fallback;
-  if (!pick.length) return [];
-  return [pickOne(rng, pick)];
+function pickKitFromProfile(
+  profile: EffectiveRecruitmentProfile,
+  rng: () => number,
+  quality: RecruitmentQuality,
+): OperatorEquipment {
+  const tier = getQualityTier(quality);
+  const weapon =
+    pickWeightedGear(rng, profile.kit.weapons) ??
+    profile.kit.weapons.find((w) => w.enabled)?.id ??
+    "pm";
+  let armor = pickWeightedGear(rng, profile.kit.armors, tier.armorWeightMult);
+  // None stays null; armor ids as-is
+  if (armor === undefined) armor = null;
+
+  const attachments: string[] = [];
+  const attachChance = Math.min(1, Math.max(0, profile.kit.attachmentChance + tier.attachHighBias));
+  if (rng() < attachChance) {
+    const att = pickWeightedGear(rng, profile.kit.attachments);
+    if (att) attachments.push(att);
+  }
+  return { weapon: weapon ?? "pm", attachments, armor };
 }
 
 export function generateCandidateFromProfile(
@@ -85,28 +107,61 @@ export function generateCandidateFromProfile(
   generation: number,
   index: number,
   usedNames: Set<string>,
+  quality: RecruitmentQuality = 1,
 ): RecruitCandidate {
-  const rng = mulberry32(seedFromParts(seed, generation, index, profile.id));
-  const { stats, potential } = generateStatsFromProfile(profile, rng);
-  const perkIds = [pickPositivePerk(rng, profile.positivePerkPool)];
-  const negativeTraitIds = pickNegativeTrait(rng, profile.negativeTraitPool, profile.negativeTraitChance);
-  const equipment = pickKitFromProfile(profile, rng);
+  const rng = mulberry32(seedFromParts(seed, generation, index, profile.id, quality));
+  const tier = getQualityTier(quality);
+  const { stats, potential } = generateStatsFromProfile(profile, rng, {
+    current: tier.currentBias,
+    potential: tier.potentialBias,
+  });
+
+  const usedTraits = new Set<string>();
+  const positivePool = profile.positivePerkPool.length
+    ? profile.positivePerkPool
+    : RECRUITABLE_PERK_IDS;
+  const negativePool = profile.negativeTraitPool.length
+    ? profile.negativeTraitPool
+    : RECRUITABLE_NEGATIVE_TRAIT_IDS;
+
+  const posCount = rollPositiveTraitCount(rng, tier.traits);
+  const perkIds = pickDistinctTraits(rng, positivePool, posCount, isPositivePerkId, usedTraits);
+
+  let negChance = tier.traits.negativeAtLeast1;
+  if (typeof profile.negativeTraitChance === "number") {
+    negChance = Math.min(negChance, profile.negativeTraitChance);
+  }
+  const negCount = rollNegativeTraitCount(rng, { ...tier.traits, negativeAtLeast1: negChance });
+  const negativeTraitIds = pickDistinctTraits(
+    rng,
+    negativePool,
+    negCount,
+    isNegativeTraitId,
+    usedTraits,
+  );
+
+  const traitIds = [...perkIds, ...negativeTraitIds];
+  const equipment = pickKitFromProfile(profile, rng, quality);
   const name = uniqueName(rng, usedNames);
   usedNames.add(name);
   const candidateId = `cand_${generation}_${index}_${seed.toString(16)}`;
-  return {
+
+  const candidate: RecruitCandidate = {
     candidateId,
     name,
     roleLabel: profile.roleLabel,
     archetypeId: profile.id,
     stats,
     potential,
+    traitIds,
     perkIds,
-    negativeTraitIds,
     equipment,
     appearance: pickAppearance(rng),
     cost: 0,
+    generationQuality: quality,
   };
+  if (negativeTraitIds.length) candidate.negativeTraitIds = negativeTraitIds;
+  return candidate;
 }
 
 export type GeneratePoolOptions = {
@@ -115,25 +170,22 @@ export type GeneratePoolOptions = {
   count: number;
   existingNames?: readonly string[];
   profiles: EffectiveRecruitmentProfile[];
+  quality?: RecruitmentQuality;
 };
 
-/**
- * Candidate generation order:
- * eligible profiles -> weighted profile pick -> stats/potential -> traits -> kit -> cost
- */
 export function generateRecruitmentPool(options: GeneratePoolOptions): RecruitCandidate[] {
-  const { seed, generation, count, existingNames = [], profiles } = options;
+  const { seed, generation, count, existingNames = [], profiles, quality = 1 } = options;
   const used = new Set(existingNames);
   const out: RecruitCandidate[] = [];
-  const eligible = profiles.filter((p) => p.enabled);
-  if (!eligible.length) return out;
+  const eligible = profiles.filter((p) => p.enabled && (p.minQuality ?? 1) <= quality);
+  if (!eligible.length || count <= 0) return out;
   for (let i = 0; i < count; i++) {
-    const rng = mulberry32(seedFromParts(seed, generation, i, "profile-pick"));
+    const rng = mulberry32(seedFromParts(seed, generation, i, "profile-pick", quality));
     const profile = pickWeighted(
       rng,
       eligible.map((p) => ({ ...p, weight: Math.max(0, p.weight) })),
     );
-    out.push(generateCandidateFromProfile(profile, seed, generation, i, used));
+    out.push(generateCandidateFromProfile(profile, seed, generation, i, used, quality));
   }
   return out;
 }
@@ -151,18 +203,19 @@ export function generateCandidate(
     CANONICAL_RECRUITMENT_PROFILES.map((p) => ({ ...p, weight: p.weight })),
   );
   const profile: EffectiveRecruitmentProfile = { ...profilePick, hasOverride: false };
-  return generateCandidateFromProfile(profile, seed, generation, index, usedNames);
+  return generateCandidateFromProfile(profile, seed, generation, index, usedNames, 1);
 }
 
 export function generateRecruitmentCandidates(
   seed: number,
   generation: number,
-  count = RECRUITMENT_POOL_SIZE,
+  count = 1,
   existingNames: readonly string[] = [],
   profiles?: EffectiveRecruitmentProfile[],
+  quality: RecruitmentQuality = 1,
 ): RecruitCandidate[] {
   if (profiles?.length) {
-    return generateRecruitmentPool({ seed, generation, count, existingNames, profiles });
+    return generateRecruitmentPool({ seed, generation, count, existingNames, profiles, quality });
   }
   const used = new Set(existingNames);
   const out: RecruitCandidate[] = [];
