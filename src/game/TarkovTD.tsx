@@ -161,7 +161,6 @@ import {
   wallAlongLimit,
 } from "./los";
 import {
-  SLOT_LABEL,
   armorItemId,
   detachArmor,
   detachAttachment,
@@ -170,10 +169,9 @@ import {
   equipArmor,
   equipAttachment,
   expandPackedWeapon,
-  slotOf,
   swapRaidWeapon,
-  type AttachSlot,
 } from "./raidGear";
+import { mountRowsForWeapon } from "./weaponAttachments";
 import {
   aliveOperators,
   capabilityFromMeta,
@@ -3431,43 +3429,23 @@ export default function TarkovTD() {
                   </div>
                   <div className="pt-1">
                     <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">ATTACHMENTS</div>
-                    {(["optic", "barrel", "magazine"] as AttachSlot[]).map((slot) => {
-                      const fitted = selected.attachments.find((a) => slotOf(a) === slot);
-                      return (
-                        <div key={slot} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
-                          <span className="text-muted-foreground">{SLOT_LABEL[slot]}</span>
-                          <span className="flex items-center gap-1 text-foreground">
-                            {fitted ? (ATTACHMENTS[fitted]?.name ?? fitted) : "EMPTY"}
-                            {fitted && (
-                              <button
-                                type="button"
-                                className="pixel-btn px-1 py-0 text-[8px]"
-                                onClick={() => detachFromTower(selected.id, fitted)}
-                              >
-                                DETACH
-                              </button>
-                            )}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {selected.attachments
-                      .filter((a) => slotOf(a) === "mod")
-                      .map((a) => (
-                        <div key={a} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
-                          <span className="text-muted-foreground">MOD</span>
-                          <span className="flex items-center gap-1 text-foreground">
-                            {ATTACHMENTS[a]?.name ?? a}
+                    {mountRowsForWeapon(selected.weapon, selected.attachments).map((row) => (
+                      <div key={row.mount} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
+                        <span className="text-muted-foreground">{row.label}</span>
+                        <span className="flex items-center gap-1 text-foreground">
+                          {row.attachmentId ? (ATTACHMENTS[row.attachmentId]?.name ?? row.attachmentId) : "EMPTY"}
+                          {row.attachmentId && (
                             <button
                               type="button"
                               className="pixel-btn px-1 py-0 text-[8px]"
-                              onClick={() => detachFromTower(selected.id, a)}
+                              onClick={() => detachFromTower(selected.id, row.attachmentId!)}
                             >
                               DETACH
                             </button>
-                          </span>
-                        </div>
-                      ))}
+                          )}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                   {selected.pmc ? (
                     <p className="text-[10px] text-destructive">

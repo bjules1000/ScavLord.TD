@@ -8,8 +8,14 @@ import {
 import {
   attachItemId,
   armorItemId,
+  weaponAttachmentCapacity,
   weaponItemId,
 } from "../raidGear";
+import {
+  installAttachmentInMounts,
+  mountRowsForWeapon,
+  normalizeInstalledAttachments,
+} from "../weaponAttachments";
 import type { Meta, StashEntry } from "../meta";
 import type { OperatorEquipment, PersistentOperator } from "./types";
 
@@ -24,7 +30,7 @@ export function stashEntriesFromItems(items: readonly Item[]): StashEntry[] {
 }
 
 function weaponSlots(weaponId: string): number {
-  return WEAPONS[weaponId]?.slots ?? 1;
+  return weaponAttachmentCapacity(weaponId);
 }
 
 export type EquipOperatorResult =
@@ -50,7 +56,7 @@ export function equipWeaponOnOperator(
       back.push(old);
     }
   }
-  const installed = [...(item.installed ?? [])].slice(0, weaponSlots(item.ref));
+  const installed = normalizeInstalledAttachments(item.ref, [...(item.installed ?? [])]);
   const nextOp: PersistentOperator = {
     ...op,
     equipment: { weapon: item.ref, attachments: installed, armor: op.equipment.armor },
@@ -96,15 +102,21 @@ export function equipAttachmentOnOperator(
   const item = stash.find((i) => i.uid === itemUid);
   if (!item || item.kind !== "attachment" || !item.ref || !ATTACHMENTS[item.ref])
     return { ok: false, reason: "Not an attachment." };
-  const slots = weaponSlots(op.equipment.weapon);
-  if (op.equipment.attachments.length >= slots)
-    return { ok: false, reason: "No free mod slots on that gun." };
-  if (op.equipment.attachments.includes(item.ref))
-    return { ok: false, reason: "That mod is already fitted." };
-  const nextStash = stash.filter((i) => i.uid !== itemUid);
+
+  const install = installAttachmentInMounts(op.equipment.weapon, op.equipment.attachments, item.ref);
+  if (!install.ok) return { ok: false, reason: install.reason };
+
+  let nextStash = stash.filter((i) => i.uid !== itemUid);
+  if (install.replaced) {
+    const oldAid = attachItemId(install.replaced);
+    const oldItem = oldAid ? makeItem(oldAid, uid) : null;
+    if (!oldItem) return { ok: false, reason: "Unknown attachment." };
+    nextStash = [...nextStash, oldItem];
+  }
+
   const nextOp: PersistentOperator = {
     ...op,
-    equipment: { ...op.equipment, attachments: [...op.equipment.attachments, item.ref] },
+    equipment: { ...op.equipment, attachments: install.attachments },
   };
   return { ok: true, stash: nextStash, operator: nextOp, message: `${item.name} installed on ${op.name}.` };
 }
@@ -134,12 +146,14 @@ export function unequipOperatorSlot(
     if (ar) back.push(ar);
     eq.armor = null;
   } else {
-    const att = eq.attachments[slot];
-    if (!att) return { ok: false, reason: "Empty mod slot." };
+    const rows = mountRowsForWeapon(eq.weapon, eq.attachments);
+    const row = rows[slot as number];
+    if (!row?.attachmentId) return { ok: false, reason: "Empty mod slot." };
+    const att = row.attachmentId;
     const aid = attachItemId(att);
     const item = aid ? makeItem(aid, uid) : null;
     if (item) back.push(item);
-    eq.attachments = eq.attachments.filter((_, i) => i !== slot);
+    eq.attachments = eq.attachments.filter((id) => id !== att);
   }
   return {
     ok: true,

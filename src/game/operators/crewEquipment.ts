@@ -15,8 +15,16 @@ import { STARTER_WEAPON_ID } from "../weapons";
 import {
   armorItemId,
   attachItemId,
+  weaponAttachmentCapacity,
   weaponItemId,
 } from "../raidGear";
+import {
+  canInstallAttachmentOnWeapon,
+  installAttachmentInMounts,
+  mountRowsForWeapon,
+  normalizeInstalledAttachments,
+  slotOf,
+} from "../weaponAttachments";
 import { aliveOperators, findOperator } from "./crew";
 import {
   applyOperatorEquipToMeta,
@@ -241,8 +249,7 @@ function equipOnLeader(
         }
       }
     }
-    const slots = WEAPONS[item.ref]?.slots ?? 1;
-    const installed = [...(item.installed ?? [])].slice(0, slots);
+    const installed = normalizeInstalledAttachments(item.ref, [...(item.installed ?? [])]);
     const nextEq: OperatorEquipment = { weapon: item.ref, attachments: installed, armor: eq.armor };
     nextStash = [...nextStash, ...back];
     return {
@@ -272,15 +279,21 @@ function equipOnLeader(
   }
 
   if (item.kind === "attachment" && item.ref && ATTACHMENTS[item.ref]) {
-    const slots = WEAPONS[eq.weapon]?.slots ?? 1;
-    if (eq.attachments.length >= slots) return { ok: false, reason: "No free mod slots on that gun." };
-    if (eq.attachments.includes(item.ref)) return { ok: false, reason: "That mod is already fitted." };
+    const install = installAttachmentInMounts(eq.weapon, eq.attachments, item.ref);
+    if (!install.ok) return { ok: false, reason: install.reason };
+    let resultStash = nextStash;
+    if (install.replaced) {
+      const oldAid = attachItemId(install.replaced);
+      const oldItem = oldAid ? makeItem(oldAid, uid) : null;
+      if (!oldItem) return { ok: false, reason: "Unknown attachment." };
+      resultStash = [...resultStash, oldItem];
+    }
     return {
       ok: true,
-      stash: nextStash,
-      pmc: writePmcEquipment(pmc, { ...eq, attachments: [...eq.attachments, item.ref] }),
+      stash: resultStash,
+      pmc: writePmcEquipment(pmc, { ...eq, attachments: install.attachments }),
       message: `${item.name} installed on ${pmc.name}.`,
-      change: changeEvent(LEADER_EQUIPMENT_OWNER_ID, "attachment", null, item.ref),
+      change: changeEvent(LEADER_EQUIPMENT_OWNER_ID, "attachment", install.replaced, item.ref),
     };
   }
 
@@ -328,8 +341,10 @@ function unequipLeaderSlot(
       change: changeEvent(LEADER_EQUIPMENT_OWNER_ID, "armor", prev, null),
     };
   }
-  const att = eq.attachments[slot];
-  if (!att) return { ok: false, reason: "Empty mod slot." };
+  const rows = mountRowsForWeapon(eq.weapon, eq.attachments);
+  const row = rows[slot as number];
+  if (!row?.attachmentId) return { ok: false, reason: "Empty mod slot." };
+  const att = row.attachmentId;
   const aid = attachItemId(att);
   const item = aid ? makeItem(aid, uid) : null;
   if (item) back.push(item);
@@ -338,7 +353,7 @@ function unequipLeaderSlot(
     stash: [...stash, ...back],
     pmc: writePmcEquipment(pmc, {
       ...eq,
-      attachments: eq.attachments.filter((_, i) => i !== slot),
+      attachments: eq.attachments.filter((id) => id !== att),
     }),
     message: "Gear returned to stash.",
     change: changeEvent(LEADER_EQUIPMENT_OWNER_ID, "attachment", att, null),
@@ -477,12 +492,22 @@ export function unequipFromEquipmentOwner(
 export function kitActionsForOwner(
   meta: Meta,
   ownerId: EquipmentOwnerId,
-): { attachments: string[]; attachmentSlots: number } {
+): {
+  attachments: string[];
+  attachmentSlots: number;
+  weaponId: string;
+  mountRows: ReturnType<typeof mountRowsForWeapon>;
+} {
   const eq = getOwnerEquipment(meta, ownerId);
-  if (!eq) return { attachments: [], attachmentSlots: 1 };
+  if (!eq) {
+    return { attachments: [], attachmentSlots: 1, weaponId: "pm", mountRows: [] };
+  }
+  const rows = mountRowsForWeapon(eq.weapon, eq.attachments);
   return {
     attachments: [...eq.attachments],
-    attachmentSlots: WEAPONS[eq.weapon]?.slots ?? 1,
+    attachmentSlots: rows.length,
+    weaponId: eq.weapon,
+    mountRows: rows,
   };
 }
 
