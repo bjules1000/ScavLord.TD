@@ -11,10 +11,26 @@ export const RARITY_COLOR: Record<Rarity, string> = {
 export type WeaponClass = "shotgun" | "pistolCarbine" | "rifle" | "lmg" | "sniper" | "launcher";
 export type ReloadType = "MAGAZINE" | "PER_ROUND";
 
+/** Canonical attachment mount names — one attachment per mount on a weapon. */
+export type AttachMount = "optic" | "muzzle" | "magazine" | "underbarrel";
+
+/** Weapon families used for attachment compatibility. */
+export type WeaponCategory = "pistol" | "shotgun" | "ar" | "lmg" | "sniper" | "launcher";
+
+export interface AttachmentCompatibility {
+  weaponCategories?: WeaponCategory[];
+  weaponIds?: string[];
+  excludedWeaponIds?: string[];
+}
+
 export interface WeaponDef {
   id: string;
   name: string;
   cls: WeaponClass;
+  /** Compatibility family for attachment rules. */
+  category?: WeaponCategory;
+  /** Supported attachment mounts — capacity is mounts.length. */
+  attachmentSlots?: AttachMount[];
   damage: number;
   range: number; // in 32px art units, scaled at runtime
   cooldown: number; // ms
@@ -45,6 +61,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "pm",
     name: "SIDEARM",
     cls: "pistolCarbine",
+    category: "pistol",
+    attachmentSlots: ["optic", "magazine"],
     damage: 15,
     range: 92,
     cooldown: 400,
@@ -63,6 +81,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "toz",
     name: "SAWED-OFF",
     cls: "shotgun",
+    category: "shotgun",
+    attachmentSlots: ["muzzle"],
     damage: 7,
     range: 56,
     cooldown: 720,
@@ -85,6 +105,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "mp133",
     name: "PUMP 12",
     cls: "shotgun",
+    category: "shotgun",
+    attachmentSlots: ["muzzle", "optic"],
     damage: 11,
     range: 74,
     cooldown: 760,
@@ -107,6 +129,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "adar",
     name: "SPORT CARBINE",
     cls: "rifle",
+    category: "ar",
+    attachmentSlots: ["optic", "muzzle", "magazine"],
     damage: 22,
     range: 108,
     cooldown: 620,
@@ -125,6 +149,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "ak74",
     name: "KALASH RIFLE",
     cls: "rifle",
+    category: "ar",
+    attachmentSlots: ["optic", "muzzle", "magazine", "underbarrel"],
     damage: 19,
     range: 100,
     cooldown: 380,
@@ -143,6 +169,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "m4",
     name: "SERVICE CARBINE",
     cls: "rifle",
+    category: "ar",
+    attachmentSlots: ["optic", "muzzle", "magazine", "underbarrel"],
     damage: 24,
     range: 122,
     cooldown: 330,
@@ -161,6 +189,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "pkm",
     name: "SQUAD LMG",
     cls: "lmg",
+    category: "lmg",
+    attachmentSlots: ["optic", "muzzle"],
     damage: 17,
     range: 104,
     cooldown: 155,
@@ -179,6 +209,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "sv98",
     name: "BOLT RIFLE",
     cls: "sniper",
+    category: "sniper",
+    attachmentSlots: ["optic", "muzzle", "underbarrel"],
     damage: 78,
     range: 205,
     cooldown: 1550,
@@ -197,6 +229,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "m700",
     name: "HUNTING BOLT",
     cls: "sniper",
+    category: "sniper",
+    attachmentSlots: ["optic", "muzzle", "underbarrel"],
     damage: 105,
     range: 228,
     cooldown: 2000,
@@ -215,6 +249,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "dvl10",
     name: "LONG RIFLE",
     cls: "sniper",
+    category: "sniper",
+    attachmentSlots: ["optic", "muzzle", "magazine", "underbarrel"],
     damage: 150,
     range: 255,
     cooldown: 2700,
@@ -233,6 +269,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     id: "m32",
     name: "ROTARY GL",
     cls: "launcher",
+    category: "launcher",
+    attachmentSlots: ["muzzle"],
     damage: 52,
     range: 132,
     cooldown: 1700,
@@ -252,6 +290,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
 export interface AttachmentDef {
   id: string;
   name: string;
+  slot?: AttachMount;
+  compatibility?: AttachmentCompatibility;
   damageMult: number;
   rangeMult: number;
   rofMult: number;
@@ -264,14 +304,40 @@ export interface AttachmentDef {
 }
 
 export const ATTACHMENTS: Record<string, AttachmentDef> = {
-  optic: { id: "optic", name: "4x SCOPE", damageMult: 1, rangeMult: 1.18, rofMult: 1, accuracy: 0.12, pen: 0, weight: 0.25 },
-  thermal: { id: "thermal", name: "THERMAL SIGHT", damageMult: 1, rangeMult: 1.3, rofMult: 1, accuracy: 0.2, pen: 0, weight: 0.5 },
-  grip: { id: "grip", name: "FOREGRIP", damageMult: 1, rangeMult: 1, rofMult: 1, accuracy: 0.14, pen: 0, weight: 0.25 },
-  brake: { id: "brake", name: "MUZZLE BRAKE", damageMult: 1, rangeMult: 1.04, rofMult: 1.05, accuracy: 0.1, pen: 0, weight: 0.25 },
-  mag: { id: "mag", name: "DRUM MAG", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0, magSizeAdd: 4, weight: 0.75 },
-  supp: { id: "supp", name: "SUPPRESSOR", damageMult: 1.12, rangeMult: 1.06, rofMult: 1, accuracy: 0.07, pen: 0, weight: 0.5 },
-  m995: { id: "m995", name: "AP ROUNDS", damageMult: 1.1, rangeMult: 1, rofMult: 1, accuracy: 0, pen: 6, weight: 0.25 },
-  laser: { id: "laser", name: "TAC LASER", damageMult: 1, rangeMult: 1, rofMult: 1.08, accuracy: 0.13, pen: 0, weight: 0.25 },
+  optic: { id: "optic", name: "4x SCOPE", slot: "optic", damageMult: 1, rangeMult: 1.18, rofMult: 1, accuracy: 0.12, pen: 0, weight: 0.25 },
+  thermal: { id: "thermal", name: "THERMAL SIGHT", slot: "optic", damageMult: 1, rangeMult: 1.3, rofMult: 1, accuracy: 0.2, pen: 0, weight: 0.5 },
+  grip: { id: "grip", name: "FOREGRIP", slot: "underbarrel", damageMult: 1, rangeMult: 1, rofMult: 1, accuracy: 0.14, pen: 0, weight: 0.25 },
+  brake: { id: "brake", name: "MUZZLE BRAKE", slot: "muzzle", damageMult: 1, rangeMult: 1.04, rofMult: 1.05, accuracy: 0.1, pen: 0, weight: 0.25 },
+  mag: { id: "mag", name: "DRUM MAG", slot: "magazine", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0, magSizeAdd: 4, weight: 0.75 },
+  supp: { id: "supp", name: "SUPPRESSOR", slot: "muzzle", damageMult: 1.12, rangeMult: 1.06, rofMult: 1, accuracy: 0.07, pen: 0, weight: 0.5 },
+  m995: { id: "m995", name: "AP ROUNDS", slot: "underbarrel", damageMult: 1.1, rangeMult: 1, rofMult: 1, accuracy: 0, pen: 6, weight: 0.25 },
+  laser: { id: "laser", name: "TAC LASER", slot: "underbarrel", damageMult: 1, rangeMult: 1, rofMult: 1.08, accuracy: 0.13, pen: 0, weight: 0.25 },
+  ar_drum: {
+    id: "ar_drum",
+    name: "AR DRUM MAG",
+    slot: "magazine",
+    compatibility: { weaponCategories: ["ar"] },
+    damageMult: 1,
+    rangeMult: 1,
+    rofMult: 1,
+    accuracy: -0.03,
+    pen: 0,
+    magSizeAdd: 30,
+    weight: 2.2,
+  },
+  pistol_ext: {
+    id: "pistol_ext",
+    name: "EXTENDED MAG",
+    slot: "magazine",
+    compatibility: { weaponCategories: ["pistol"] },
+    damageMult: 1,
+    rangeMult: 1,
+    rofMult: 1,
+    accuracy: 0,
+    pen: 0,
+    magSizeAdd: 8,
+    weight: 0.4,
+  },
 };
 
 /** Canonical attachment folding. Combat and the operator sidebar both read this. */
@@ -388,6 +454,8 @@ export const ITEMS: ItemDef[] = [
   { id: "a_laser", kind: "attachment", ref: "laser", name: "TAC LASER", rarity: "rare", value: 260, desc: "+13% hit chance, +8% ROF.", price: 1000 },
   { id: "a_m995", kind: "attachment", ref: "m995", name: "AP ROUNDS", rarity: "epic", value: 420, desc: "+6 armor pen, +10% damage.", price: 1800 },
   { id: "a_thermal", kind: "attachment", ref: "thermal", name: "THERMAL SIGHT", rarity: "epic", value: 560, desc: "+30% range, +20% hit chance.", price: 2400 },
+  { id: "a_ar_drum", kind: "attachment", ref: "ar_drum", name: "AR DRUM MAG", rarity: "rare", value: 380, desc: "+30 magazine capacity. AR rifles only. Heavy.", price: 1400 },
+  { id: "a_pistol_ext", kind: "attachment", ref: "pistol_ext", name: "EXTENDED MAG", rarity: "common", value: 120, desc: "+8 magazine capacity. Pistols only.", price: 380 },
   // body armor — only your operator can wear it
   { id: "ar_paca", kind: "armor", ref: "paca", name: "SOFT VEST", rarity: "common", value: 220, desc: "-18% incoming, 110 durability.", price: 700 },
   { id: "ar_6b23", kind: "armor", ref: "sixb23", name: "RIOT PLATES", rarity: "rare", value: 480, desc: "-30% incoming, 190 durability.", price: 1600 },
