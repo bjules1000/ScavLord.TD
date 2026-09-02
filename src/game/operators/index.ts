@@ -8,6 +8,7 @@ export * from "./generation";
 export * from "./recruitment";
 export * from "./runtime";
 export * from "./equipment";
+export * from "./crewEquipment";
 export * from "./radioProgression";
 export * from "./recruitmentQuality";
 export * from "./retransmission";
