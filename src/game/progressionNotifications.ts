@@ -5,6 +5,11 @@
 import type { QuestReward, QuestSpec } from "./quests";
 import { ITEM_BY_ID } from "./gear";
 import type { RadioState } from "./operators/radioProgression";
+import {
+  getUniqueOperatorDisplayName,
+  UNIQUE_OPERATOR_BY_ID,
+  type UniqueOperatorDefinition,
+} from "./operators/uniqueOperators";
 
 export type ProgressionNoticeKind = "QUEST_COMPLETE" | "NEW_QUEST" | "PROGRESSION";
 
@@ -45,7 +50,7 @@ export function summarizeQuestReward(r: QuestReward): string | null {
     case "UNLOCK_RECRUITMENT_PROFILE":
       return `Profile unlocked: ${r.profileId}`;
     case "UNLOCK_UNIQUE_CONTACT":
-      return `Unique contact: ${r.uniqueId.toUpperCase()}`;
+      return `Unique contact: ${getUniqueOperatorDisplayName(r.uniqueId)}`;
     case "SET_UNIQUE_CONTACT_STATE":
       return summarizeUniqueState(r.uniqueId, r.lifecycle);
     default:
@@ -68,8 +73,13 @@ export function summarizeRadioState(state: RadioState): string {
   }
 }
 
-export function summarizeUniqueState(uniqueId: string, lifecycle: string): string {
-  const name = uniqueId.toUpperCase();
+/** Lifecycle copy for generic notices — display identity from unique definition, not raw id. */
+export function summarizeUniqueState(
+  uniqueId: string,
+  lifecycle: string,
+  def: UniqueOperatorDefinition | undefined = UNIQUE_OPERATOR_BY_ID[uniqueId],
+): string {
+  const name = getUniqueOperatorDisplayName(uniqueId, def);
   switch (lifecycle) {
     case "DISTRESS_SIGNAL":
       return `Incoming transmission (${name})`;

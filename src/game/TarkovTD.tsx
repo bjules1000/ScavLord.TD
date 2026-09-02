@@ -215,6 +215,7 @@ import {
   uniqueContactRequirementsMet,
   uniqueTransmissionForLifecycle,
   UNIQUE_OPERATOR_BY_ID,
+  getUniqueOperatorDisplayName,
 } from "./operators/uniqueOperators";
 import { freshRadioProgression, radioStatePresentation } from "./operators/radioProgression";
 import { evaluateRequirement } from "./operators/recruitmentRequirements";
@@ -2510,8 +2511,8 @@ export default function TarkovTD() {
 
               {s.phase === "hideout" && screen === "skills" && (
                 <Overlay
-                  title="SCAVLORD"
-                  subtitle={`${meta.pmc.name} · LVL ${meta.pmc.level} · ${meta.skillPoints} skill point(s)`}
+                  title={meta.pmc.name}
+                  subtitle={`LEADER · LVL ${meta.pmc.level} · ${meta.skillPoints} skill point(s)`}
                   layout={scavTab === "quests" ? "wide" : "center"}
                 >
                   <div className="mb-2 flex flex-wrap gap-1">
@@ -2734,18 +2735,18 @@ export default function TarkovTD() {
 
                 const questHint =
                   radio.radioState === "BROKEN"
-                    ? "CURRENT SIGNAL TASK · DEAD CHANNEL — restore power."
+                    ? `CURRENT SIGNAL TASK · ${QUEST_SPEC_BY_ID["radio_power"]?.name ?? "DEAD CHANNEL"} — restore power.`
                     : radio.radioState === "POWERED_STATIC"
-                      ? "CURRENT SIGNAL TASK · RAISE THE TOWER — repair the signal path."
+                      ? `CURRENT SIGNAL TASK · ${QUEST_SPEC_BY_ID["radio_signal"]?.name ?? "RAISE THE TOWER"} — repair the signal path.`
                       : radio.radioState === "SIGNAL_RESTORED" &&
                           wolfProg.lifecycle === "RECRUITED" &&
                           wolfProg.transmissionSettled
-                        ? "CURRENT SIGNAL TASK · OPEN FREQUENCIES — unlock the scav network."
+                        ? `CURRENT SIGNAL TASK · ${QUEST_SPEC_BY_ID["radio_network"]?.name ?? "OPEN FREQUENCIES"} — unlock the scav network.`
                         : radio.radioState === "SIGNAL_RESTORED" &&
                             (wolfProg.lifecycle === "REQUIREMENTS_VISIBLE" ||
                               wolfProg.lifecycle === "CONTACTABLE" ||
                               wolfProg.lifecycle === "RECRUITABLE")
-                          ? "CURRENT SIGNAL TASK · HELP WOLF — prove you can hold a line."
+                          ? `CURRENT SIGNAL TASK · ${QUEST_SPEC_BY_ID["wolf_help"]?.name ?? "HELP WOLF"} — prove you can hold a line.`
                           : null;
 
                 const showWolfTx =
@@ -2796,7 +2797,9 @@ export default function TarkovTD() {
                                   if (unlocked.length) {
                                     enqueueNotices(buildNewQuestsNotice(unlocked));
                                   } else {
-                                    pushLog("Wolf cleared the channel.");
+                                    pushLog(
+                                      `${getUniqueOperatorDisplayName("wolf")} cleared the channel.`,
+                                    );
                                   }
                                   rerender();
                                 }

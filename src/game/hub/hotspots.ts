@@ -49,7 +49,7 @@ export interface HubHotspot {
  * region       — paper map on the workbench → Destinations / Deploy
  * radio        — portable radio on the workbench (reserved: Contacts / Acolytes)
  * gear         — pack / armor on the right of the table → Equipment / Raid Prep
- * skills       — seated ScavLord → Skills / Operator / Quests
+ * skills       — seated operator figure → Skills / Operator / Quests
  *
  * Rear left/right forest is intentionally empty (future systems).
  */
@@ -68,7 +68,7 @@ export const HUB_HOTSPOTS: HubHotspot[] = [
   },
   {
     id: "skills",
-    label: "SCAVLORD",
+    label: "OPERATOR",
     xPercent: 47,
     yPercent: 40,
     widthPercent: 16,

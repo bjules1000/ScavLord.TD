@@ -20,7 +20,7 @@ import {
   progressionFactsFromMeta,
   regenerateRecruitmentPool,
 } from "./operators/crew";
-import { syncUniqueEligibility } from "./operators/uniqueOperators";
+import { syncAllUniqueEligibility } from "./operators/uniqueOperators";
 import { freshRadioProgression, type RadioState } from "./operators/radioProgression";
 import {
   buildQuestCompleteNotice,
@@ -79,11 +79,7 @@ export function redeemQuest(
 
   ensureRadio(meta);
   meta.crew.radio = applyQuestRewardsToRadio(meta.crew.radio, questId, spec.rewards);
-  meta.crew.radio = syncUniqueEligibility(
-    meta.crew.radio,
-    "wolf",
-    progressionFactsFromMeta(meta),
-  );
+  meta.crew.radio = syncAllUniqueEligibility(meta.crew.radio, progressionFactsFromMeta(meta));
 
   const radioAfter = meta.crew.radio.radioState;
   const uniqueAfter = meta.crew.radio.uniqueContacts;

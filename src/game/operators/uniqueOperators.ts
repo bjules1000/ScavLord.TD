@@ -171,6 +171,19 @@ export const UNIQUE_OPERATOR_BY_ID: Record<string, UniqueOperatorDefinition> = O
   CANONICAL_UNIQUE_OPERATORS.map((u) => [u.id, u]),
 );
 
+/**
+ * Player-facing unique-operator identity for generic UI / notifications.
+ * Prefer callsign → name → stable id (never invent Wolf-specific wording here).
+ */
+export function getUniqueOperatorDisplayName(
+  uniqueId: string,
+  def: UniqueOperatorDefinition | undefined = UNIQUE_OPERATOR_BY_ID[uniqueId],
+): string {
+  const fromDef = (def?.callsign ?? def?.name ?? "").trim();
+  if (fromDef) return fromDef;
+  return uniqueId;
+}
+
 export function uniqueTransmissionForLifecycle(
   def: UniqueOperatorDefinition,
   lifecycle: UniqueContactLifecycle,
@@ -338,6 +351,18 @@ export function syncUniqueEligibility(
   return radio;
 }
 
+/** Re-evaluate eligibility for every known unique contact definition. */
+export function syncAllUniqueEligibility(
+  radio: RadioProgressionState,
+  facts: RecruitmentProgressionFacts,
+): RadioProgressionState {
+  let next = radio;
+  for (const id of Object.keys(UNIQUE_OPERATOR_BY_ID)) {
+    next = syncUniqueEligibility(next, id, facts);
+  }
+  return next;
+}
+
 export function uniqueToOperator(
   def: UniqueOperatorDefinition,
   operatorId: string,
@@ -345,7 +370,7 @@ export function uniqueToOperator(
   const traits = resolveTraitIds({ traitIds: def.traitIds, perkIds: def.traitIds });
   const op: PersistentOperator = {
     id: operatorId,
-    name: def.name,
+    name: getUniqueOperatorDisplayName(def.id, def),
     roleLabel: def.roleLabel,
     archetypeId: def.profileId ?? "rifleman",
     uniqueId: def.id,
