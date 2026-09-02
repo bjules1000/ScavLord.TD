@@ -710,12 +710,27 @@ function RewardCard({
           const t = e.target.value;
           if (t === "UNLOCK") onChange({ type: "UNLOCK", itemId: ITEMS[0]?.id ?? "m_ifak" });
           else if (t === "SKILL_POINTS") onChange({ type: "SKILL_POINTS", amount: 1 });
+          else if (t === "SET_RADIO_STATE") onChange({ type: "SET_RADIO_STATE", state: "POWERED_STATIC" });
+          else if (t === "RECRUITMENT_SLOT_BONUS") onChange({ type: "RECRUITMENT_SLOT_BONUS", amount: 1 });
+          else if (t === "RECRUITMENT_QUALITY_BONUS") onChange({ type: "RECRUITMENT_QUALITY_BONUS", amount: 1 });
+          else if (t === "CREW_CAPACITY_BONUS") onChange({ type: "CREW_CAPACITY_BONUS", amount: 1 });
+          else if (t === "UNLOCK_RETRANSMISSION") onChange({ type: "UNLOCK_RETRANSMISSION" });
+          else if (t === "UNLOCK_RECRUITMENT_PROFILE")
+            onChange({ type: "UNLOCK_RECRUITMENT_PROFILE", profileId: "rifleman" });
+          else if (t === "UNLOCK_UNIQUE_CONTACT") onChange({ type: "UNLOCK_UNIQUE_CONTACT", uniqueId: "wolf" });
           else onChange({ type: "ROUBLES", amount: 0 });
         }}
       >
         <option value="ROUBLES">ROUBLES</option>
         <option value="SKILL_POINTS">SKILL POINTS</option>
         <option value="UNLOCK">UNLOCK ITEM</option>
+        <option value="SET_RADIO_STATE">SET RADIO STATE</option>
+        <option value="RECRUITMENT_SLOT_BONUS">+ RECRUITMENT SLOT</option>
+        <option value="RECRUITMENT_QUALITY_BONUS">+ RECRUITMENT QUALITY</option>
+        <option value="CREW_CAPACITY_BONUS">+ CREW CAPACITY</option>
+        <option value="UNLOCK_RETRANSMISSION">UNLOCK RETRANSMISSION</option>
+        <option value="UNLOCK_RECRUITMENT_PROFILE">UNLOCK PROFILE</option>
+        <option value="UNLOCK_UNIQUE_CONTACT">UNLOCK UNIQUE CONTACT</option>
       </select>
       {(reward.type === "ROUBLES" || reward.type === "SKILL_POINTS") && (
         <input
@@ -742,6 +757,52 @@ function RewardCard({
             </option>
           ))}
         </select>
+      )}
+      {reward.type === "SET_RADIO_STATE" && (
+        <select
+          value={reward.state}
+          className="border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+          onChange={(e) =>
+            onChange({
+              type: "SET_RADIO_STATE",
+              state: e.target.value as "BROKEN" | "POWERED_STATIC" | "SIGNAL_RESTORED" | "NETWORKED",
+            })
+          }
+        >
+          <option value="BROKEN">BROKEN</option>
+          <option value="POWERED_STATIC">POWERED_STATIC</option>
+          <option value="SIGNAL_RESTORED">SIGNAL_RESTORED</option>
+          <option value="NETWORKED">NETWORKED</option>
+        </select>
+      )}
+      {(reward.type === "RECRUITMENT_SLOT_BONUS" ||
+        reward.type === "RECRUITMENT_QUALITY_BONUS" ||
+        reward.type === "CREW_CAPACITY_BONUS") && (
+        <input
+          type="number"
+          min={1}
+          value={reward.amount}
+          className="w-20 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (!Number.isFinite(n) || n < 1) return;
+            onChange({ type: reward.type, amount: Math.round(n) });
+          }}
+        />
+      )}
+      {reward.type === "UNLOCK_RECRUITMENT_PROFILE" && (
+        <input
+          value={reward.profileId}
+          className="w-36 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+          onChange={(e) => onChange({ type: "UNLOCK_RECRUITMENT_PROFILE", profileId: e.target.value })}
+        />
+      )}
+      {reward.type === "UNLOCK_UNIQUE_CONTACT" && (
+        <input
+          value={reward.uniqueId}
+          className="w-36 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+          onChange={(e) => onChange({ type: "UNLOCK_UNIQUE_CONTACT", uniqueId: e.target.value })}
+        />
       )}
       <button type="button" className="pixel-btn ml-auto px-2 py-1 text-[9px]" onClick={onRemove}>
         REMOVE

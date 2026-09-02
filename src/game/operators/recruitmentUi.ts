@@ -6,7 +6,7 @@ import {
 } from "./recruitmentPresentation";
 import { ARMORS, ATTACHMENTS, WEAPONS } from "../gear";
 import { kitEquipmentValue } from "./generation";
-import { PERKS } from "./perks";
+import { PERKS, allTraitIds, isNegativeTraitId } from "./perks";
 import { STAT_DISPLAY_MAX, STAT_KEYS, STAT_LABELS } from "./stats";
 import type { OperatorBaseStats } from "./types";
 import type { OperatorEquipment, RecruitCandidate } from "./types";
@@ -115,8 +115,12 @@ export function candidateStatRows(
   return devStatRows(stats, potential);
 }
 
-export function primaryPerkId(candidate: Pick<RecruitCandidate, "perkIds">): string | null {
-  return candidate.perkIds[0] ?? null;
+export function primaryPerkId(
+  candidate: Pick<RecruitCandidate, "perkIds" | "traitIds" | "negativeTraitIds">,
+): string | null {
+  const traits = allTraitIds(candidate);
+  const positive = traits.find((id) => !isNegativeTraitId(id));
+  return positive ?? candidate.perkIds?.[0] ?? null;
 }
 
 export interface CandidateCardView {
@@ -130,12 +134,15 @@ export interface CandidateCardView {
 }
 
 export function buildCandidateCardView(candidate: RecruitCandidate): CandidateCardView {
-  const perkId = primaryPerkId(candidate);
+  const traits = allTraitIds(candidate);
+  const posNames = traits
+    .filter((id) => !isNegativeTraitId(id))
+    .map((id) => PERKS[id]?.name ?? id);
   return {
     name: candidate.name,
     archetype: candidate.roleLabel,
     statRows: playerStatRows(candidate.stats, candidate.potential),
-    perkName: perkId ? (PERKS[perkId]?.name ?? perkId) : "—",
+    perkName: posNames.length ? posNames.join(" · ") : "—",
     costFormatted: formatRecruitmentRoubles(candidate.cost),
     showsKitLine: false,
     includesStatGridInDetail: false,

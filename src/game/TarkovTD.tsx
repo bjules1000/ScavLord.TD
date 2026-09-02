@@ -176,12 +176,24 @@ import {
 } from "./raidGear";
 import {
   aliveOperators,
+  capabilityFromMeta,
+  crewOccupancy,
+  ensureRadio,
   findOperator,
   hireCandidate,
   markOperatorDead,
   refreshRecruitmentPoolIfNeeded,
   regenerateRecruitmentPool,
+  requestNewTransmission,
 } from "./operators/crew";
+import { applyQuestRewardsToRadio } from "./operators/questRadioRewards";
+import { QUEST_SPEC_BY_ID } from "./quests";
+import { nextRetransmissionCashCost, CANONICAL_RETRANSMISSION } from "./operators/retransmission";
+import {
+  CANONICAL_UNIQUE_OPERATORS,
+  uniqueRevealForLifecycle,
+} from "./operators/uniqueOperators";
+import { freshRadioProgression, radioStatePresentation } from "./operators/radioProgression";
 import {
   applyOperatorEquipToMeta,
   equipArmorOnOperator,
@@ -425,7 +437,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
   let accuracy = folded.accuracy;
   let pen = folded.pen;
   const splash = folded.splash * SCALE;
-  const operatorMods = t.operatorId && meta ? resolveCombatMods(findOperator(meta, t.operatorId) ?? { stats: { aim: 50, toughness: 50, handling: 50, mobility: 50 }, perkIds: [] }) : null;
+  const operatorMods = t.operatorId && meta ? resolveCombatMods(findOperator(meta, t.operatorId) ?? { stats: { aim: 50, toughness: 50, handling: 50, mobility: 50 }, traitIds: [], perkIds: [] }) : null;
   if (t.pmc) {
     const lvl = t.level ?? 1;
     damage *= 1 + (lvl - 1) * 0.05;
@@ -723,8 +735,19 @@ export default function TarkovTD() {
         m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
         m.quests.scavKills += s.scavKills;
         m.quests.bossKills += s.bossKills;
+        const mapKey = mapRef.current.def.id;
+        const killsByMap = { ...(m.quests.killsByMap ?? {}) };
+        const mapEntry = { ...(killsByMap[mapKey] ?? {}) };
+        mapEntry.scav = (mapEntry.scav ?? 0) + s.scavKills;
+        mapEntry.boss = (mapEntry.boss ?? 0) + s.bossKills;
+        killsByMap[mapKey] = mapEntry;
+        m.quests.killsByMap = killsByMap;
+        if (s.bossKills > 0) {
+          const byId = { ...(m.quests.bossKillsById ?? {}) };
+          byId["boss"] = (byId["boss"] ?? 0) + s.bossKills;
+          m.quests.bossKillsById = byId;
+        }
         if (keepBackpack) {
-          const mapKey = mapRef.current.def.id;
           const prev = m.quests.wavesCompletedByMap ?? {};
           m.quests.wavesCompletedByMap = {
             ...prev,
@@ -858,9 +881,19 @@ export default function TarkovTD() {
       m.claimed = [...m.claimed, q.id];
       m.bank += q.reward;
       m.skillPoints += q.skillPoints ?? 0;
+      const spec = QUEST_SPEC_BY_ID[questId];
+      if (spec) {
+        ensureRadio(m);
+        m.crew.radio = applyQuestRewardsToRadio(m.crew.radio, questId, spec.rewards);
+        // If signal just restored and pool empty, generate first transmission.
+        const cap = capabilityFromMeta(m);
+        if (cap.slots.effective > 0 && m.crew.recruitment.candidates.length === 0) {
+          regenerateRecruitmentPool(m);
+        }
+      }
       saveMeta(m);
       pushLog(
-        `${q.name} redeemed: +${q.reward}₽${q.skillPoints ? `, +${q.skillPoints} skill point(s)` : ""} and new market stock.`,
+        `${q.name} redeemed: +${q.reward}₽${q.skillPoints ? `, +${q.skillPoints} skill point(s)` : ""}.`,
       );
       rerender();
     },
@@ -2701,18 +2734,71 @@ export default function TarkovTD() {
                 </Overlay>
               )}
 
-              {s.phase === "hideout" && screen === "radio" && (
-                <Overlay title="RADIO — RECRUITMENT" subtitle={RECRUITMENT_SUBTITLE} layout="wide">
-                  <RecruitmentPanel
-                    candidates={meta.crew.recruitment.candidates}
-                    bank={meta.bank}
-                    selectedId={selectedRecruitId}
-                    onSelect={setSelectedRecruitId}
-                    onHire={hireRecruit}
-                    onBack={() => setScreen("hideout")}
-                  />
-                </Overlay>
-              )}
+              {s.phase === "hideout" && screen === "radio" && (() => {
+                const radio = meta.crew.radio ?? freshRadioProgression();
+                const cap = capabilityFromMeta(meta);
+                const crewFull =
+                  crewOccupancy(meta) >= cap.crewCapacity.effective
+                    ? "CREW CAPACITY FULL"
+                    : null;
+                const uniqueId = Object.keys(radio.uniqueContacts)[0];
+                const uniqueDef = uniqueId
+                  ? CANONICAL_UNIQUE_OPERATORS.find((u) => u.id === uniqueId)
+                  : undefined;
+                const uniqueLife = uniqueId ? radio.uniqueContacts[uniqueId]?.lifecycle : undefined;
+                const uniqueReveal =
+                  uniqueDef && uniqueLife ? uniqueRevealForLifecycle(uniqueDef, uniqueLife) : null;
+                const questHint =
+                  radio.radioState === "BROKEN"
+                    ? "Quest: DEAD CHANNEL — restore power to the Radio."
+                    : radio.radioState === "POWERED_STATIC"
+                      ? "Quest: RAISE THE TOWER — repair the signal path."
+                      : null;
+                return (
+                  <Overlay
+                    title="RADIO"
+                    subtitle={
+                      cap.radioState === "SIGNAL_RESTORED" || cap.radioState === "NETWORKED"
+                        ? RECRUITMENT_SUBTITLE
+                        : radioStatePresentation(cap.radioState).subtitle
+                    }
+                    layout="wide"
+                  >
+                    <RecruitmentPanel
+                      candidates={meta.crew.recruitment.candidates}
+                      bank={meta.bank}
+                      selectedId={selectedRecruitId}
+                      onSelect={setSelectedRecruitId}
+                      onHire={hireRecruit}
+                      onBack={() => setScreen("hideout")}
+                      radioState={cap.radioState}
+                      hireBlockedReason={crewFull}
+                      questHint={questHint}
+                      uniqueReveal={uniqueReveal}
+                      retransmission={
+                        cap.retransmissionUnlocked
+                          ? {
+                              unlocked: true,
+                              nextCost: nextRetransmissionCashCost(
+                                CANONICAL_RETRANSMISSION,
+                                radio.retransmissionCount,
+                              ),
+                              onRequest: () => {
+                                const result = requestNewTransmission(metaRef.current);
+                                if (!result.ok) return pushLog(result.reason);
+                                saveMeta(metaRef.current);
+                                pushLog(
+                                  `New transmission — ${result.cost.toLocaleString()} ₽.`,
+                                );
+                                rerender();
+                              },
+                            }
+                          : null
+                      }
+                    />
+                  </Overlay>
+                );
+              })()}
 
               {s.phase === "hideout" && screen === "region" && (
                 <Overlay title="DESTINATIONS" subtitle="Pick your insertion point. Higher threat, better loot.">
@@ -2731,7 +2817,7 @@ export default function TarkovTD() {
                       <div className="text-muted-foreground">CREW DEPLOYMENT</div>
                       <div className="mt-1 space-y-1">
                         <div className="text-primary">
-                          {meta.pmc.name} (ScavLord) — always deploys
+                          {meta.pmc.name} — always deploys
                         </div>
                         {aliveOperators(meta).map((op) => {
                           const on = deployOperatorIds.includes(op.id);
@@ -3589,6 +3675,16 @@ export default function TarkovTD() {
             regenerateRecruitmentPool(metaRef.current);
             saveMeta(metaRef.current);
             pushLog("DEV: Radio pool regenerated");
+            rerender();
+          }}
+          onRequestTransmission={() => {
+            const result = requestNewTransmission(metaRef.current);
+            if (result.ok) {
+              saveMeta(metaRef.current);
+              pushLog(`DEV: Retransmission (-${result.cost}₽)`);
+            } else {
+              pushLog(`DEV: Retransmission failed — ${result.reason}`);
+            }
             rerender();
           }}
         />

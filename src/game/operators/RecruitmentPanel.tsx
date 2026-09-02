@@ -2,8 +2,16 @@ import {
   RECRUITMENT_SUBTITLE,
   buildCandidateCardView,
   buildSelectedDetailView,
+  formatRecruitmentRoubles,
 } from "./recruitmentUi";
 import type { RecruitCandidate } from "./types";
+import {
+  isRecruitmentUnlocked,
+  radioStatePresentation,
+  type RadioState,
+} from "./radioProgression";
+import { PERKS, isNegativeTraitId, allTraitIds } from "./perks";
+import type { UniqueRevealContent } from "./uniqueOperators";
 
 export { RECRUITMENT_SUBTITLE };
 
@@ -27,6 +35,16 @@ function StatRow({
   );
 }
 
+function traitCardLines(candidate: RecruitCandidate): { positives: string; flaws: string | null } {
+  const ids = allTraitIds(candidate);
+  const pos = ids.filter((id) => !isNegativeTraitId(id)).map((id) => PERKS[id]?.name ?? id);
+  const neg = ids.filter((id) => isNegativeTraitId(id)).map((id) => PERKS[id]?.name ?? id);
+  return {
+    positives: pos.length ? pos.join(" · ") : "—",
+    flaws: neg.length ? `FLAW: ${neg.join(" · ")}` : null,
+  };
+}
+
 function CandidateCard({
   candidate,
   selected,
@@ -37,6 +55,7 @@ function CandidateCard({
   onSelect: () => void;
 }) {
   const view = buildCandidateCardView(candidate);
+  const traits = traitCardLines(candidate);
 
   return (
     <button
@@ -55,8 +74,9 @@ function CandidateCard({
         ))}
       </div>
       <div className="mt-2.5 border-t border-border/40 pt-2 text-[11px]">
-        <span className="text-muted-foreground">PERK </span>
-        <span className="text-foreground">{view.perkName}</span>
+        <div className="text-muted-foreground">TRAITS</div>
+        <div className="text-foreground">{traits.positives}</div>
+        {traits.flaws && <div className="mt-0.5 text-[10px] text-destructive/90">{traits.flaws}</div>}
       </div>
       <div className="mt-2 font-display text-[15px] text-accent">{view.costFormatted}</div>
     </button>
@@ -66,13 +86,17 @@ function CandidateCard({
 function SelectedCandidateDetail({
   candidate,
   bank,
+  hireBlockedReason,
   onHire,
 }: {
   candidate: RecruitCandidate;
   bank: number;
+  hireBlockedReason: string | null;
   onHire: () => void;
 }) {
   const view = buildSelectedDetailView(candidate, bank);
+  const traits = traitCardLines(candidate);
+  const blocked = !!hireBlockedReason || !view.affordable;
 
   return (
     <div className="pixel-card mt-3 p-3.5 text-left font-mono sm:p-4">
@@ -80,15 +104,14 @@ function SelectedCandidateDetail({
 
       <div className="mt-3 grid gap-4 lg:grid-cols-2 lg:gap-6">
         <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Traits</div>
+          <div className="mt-1 text-[12px] text-foreground">{traits.positives}</div>
+          {traits.flaws && <div className="mt-0.5 text-[11px] text-destructive/90">{traits.flaws}</div>}
           {view.perk && (
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Perk</div>
-              <div className="mt-1 font-display text-[13px] text-primary">{view.perk.name}</div>
-              <div className="mt-1.5 space-y-0.5 text-[11px] text-muted-foreground">
-                {view.perk.lines.map((line) => (
-                  <div key={line}>{line}</div>
-                ))}
-              </div>
+            <div className="mt-3 space-y-0.5 text-[11px] text-muted-foreground">
+              {view.perk.lines.map((line) => (
+                <div key={line}>{line}</div>
+              ))}
             </div>
           )}
         </div>
@@ -109,9 +132,6 @@ function SelectedCandidateDetail({
                 <span className="text-muted-foreground">ATTACHMENTS</span>
                 <span className="text-foreground">{view.kit.attachments}</span>
               </div>
-              <div className="text-[10px] text-muted-foreground">
-                KIT VALUE: {view.kit.kitValue.toLocaleString()} ₽
-              </div>
             </div>
           </div>
 
@@ -130,20 +150,57 @@ function SelectedCandidateDetail({
             <button
               type="button"
               onClick={onHire}
-              disabled={!view.affordable}
-              aria-disabled={!view.affordable}
+              disabled={blocked}
+              aria-disabled={blocked}
               className="pixel-btn pixel-btn-primary mt-2.5 w-full py-2 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
             >
               HIRE — {view.costFormatted}
             </button>
-            {view.affordMsg && (
+            {(hireBlockedReason || view.affordMsg) && (
               <div className="mt-1.5 text-[10px] font-display uppercase tracking-wide text-destructive" role="status">
-                {view.affordMsg}
+                {hireBlockedReason ?? view.affordMsg}
               </div>
             )}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RadioInactivePanel({
+  radioState,
+  questHint,
+}: {
+  radioState: RadioState;
+  questHint?: string | null;
+}) {
+  const copy = radioStatePresentation(radioState);
+  return (
+    <div className="pixel-card p-4 text-left font-mono">
+      <div className="font-display text-[16px] text-primary">{copy.title}</div>
+      <div className="mt-1 text-[12px] uppercase tracking-wide text-muted-foreground">{copy.subtitle}</div>
+      <div className="mt-3 whitespace-pre-line text-[12px] text-foreground">{copy.body}</div>
+      {questHint && <div className="mt-3 text-[11px] text-accent">{questHint}</div>}
+    </div>
+  );
+}
+
+function UniqueTransmissionPanel({ reveal }: { reveal: UniqueRevealContent }) {
+  return (
+    <div className="pixel-card mt-3 border-accent/50 p-3.5 text-left font-mono">
+      <div className="text-[10px] uppercase tracking-wide text-accent">Incoming transmission</div>
+      <div className="mt-1 font-display text-[14px] text-primary">{reveal.headline}</div>
+      <div className="mt-2 whitespace-pre-line text-[12px] text-foreground">{reveal.body}</div>
+      {reveal.knownRoleHint && (
+        <div className="mt-2 text-[11px] text-muted-foreground">Known: {reveal.knownRoleHint}</div>
+      )}
+      {reveal.knownLocationHint && (
+        <div className="text-[11px] text-muted-foreground">Location: {reveal.knownLocationHint}</div>
+      )}
+      {reveal.knownTraits?.length ? (
+        <div className="mt-1 text-[11px] text-foreground">Traits: {reveal.knownTraits.join(" · ")}</div>
+      ) : null}
     </div>
   );
 }
@@ -155,6 +212,11 @@ export default function RecruitmentPanel({
   onSelect,
   onHire,
   onBack,
+  radioState = "SIGNAL_RESTORED",
+  hireBlockedReason = null,
+  retransmission,
+  uniqueReveal = null,
+  questHint = null,
 }: {
   candidates: RecruitCandidate[];
   bank: number;
@@ -162,32 +224,70 @@ export default function RecruitmentPanel({
   onSelect: (candidateId: string) => void;
   onHire: (candidateId: string) => void;
   onBack?: () => void;
+  radioState?: RadioState;
+  hireBlockedReason?: string | null;
+  retransmission?: {
+    unlocked: boolean;
+    nextCost: number;
+    onRequest: () => void;
+  } | null;
+  uniqueReveal?: UniqueRevealContent | null;
+  questHint?: string | null;
 }) {
-  const selected =
-    candidates.find((c) => c.candidateId === selectedId) ?? candidates[0] ?? null;
+  if (!isRecruitmentUnlocked(radioState)) {
+    return (
+      <div className="flex min-h-0 flex-col text-left font-mono">
+        <RadioInactivePanel radioState={radioState} questHint={questHint} />
+        {onBack && (
+          <button type="button" onClick={onBack} className="pixel-btn mx-auto mt-4 max-w-[10rem] px-4 py-1.5 text-[10px]">
+            BACK TO CAMP
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const selected = candidates.find((c) => c.candidateId === selectedId) ?? candidates[0] ?? null;
 
   return (
     <div className="flex min-h-0 flex-col text-left font-mono">
-      <div className="text-[11px] text-muted-foreground">AVAILABLE OPERATORS</div>
-      <div className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {candidates.map((c) => (
-          <CandidateCard
-            key={c.candidateId}
-            candidate={c}
-            selected={selected?.candidateId === c.candidateId}
-            onSelect={() => onSelect(c.candidateId)}
-          />
-        ))}
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="text-[11px] text-muted-foreground">AVAILABLE OPERATORS</div>
+        {retransmission?.unlocked && (
+          <button
+            type="button"
+            className="pixel-btn px-2 py-1 text-[10px]"
+            onClick={retransmission.onRequest}
+          >
+            REQUEST NEW TRANSMISSION — {formatRecruitmentRoubles(retransmission.nextCost)}
+          </button>
+        )}
       </div>
+
+      {uniqueReveal && <UniqueTransmissionPanel reveal={uniqueReveal} />}
+
+      {candidates.length === 0 ? (
+        <div className="mt-3 text-muted-foreground">No transmissions on this frequency.</div>
+      ) : (
+        <div className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {candidates.map((c) => (
+            <CandidateCard
+              key={c.candidateId}
+              candidate={c}
+              selected={selected?.candidateId === c.candidateId}
+              onSelect={() => onSelect(c.candidateId)}
+            />
+          ))}
+        </div>
+      )}
       {selected ? (
         <SelectedCandidateDetail
           candidate={selected}
           bank={bank}
+          hireBlockedReason={hireBlockedReason}
           onHire={() => onHire(selected.candidateId)}
         />
-      ) : (
-        <div className="mt-3 text-muted-foreground">No transmissions on this frequency.</div>
-      )}
+      ) : null}
       {onBack && (
         <button
           type="button"
