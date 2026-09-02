@@ -33,6 +33,7 @@ export interface PersistentOperator {
   stats: OperatorBaseStats;
   potential: OperatorBaseStats;
   perkIds: string[];
+  negativeTraitIds?: string[];
   equipment: OperatorEquipment;
   appearance: OperatorAppearance;
   progression: OperatorProgression;
@@ -48,6 +49,7 @@ export interface RecruitCandidate {
   stats: OperatorBaseStats;
   potential: OperatorBaseStats;
   perkIds: string[];
+  negativeTraitIds?: string[];
   equipment: OperatorEquipment;
   appearance: OperatorAppearance;
   cost: number;

@@ -23,6 +23,8 @@ export interface QuestProgress {
   bossKills: number;
   bestWave: number;
   extracts: number;
+  /** Cumulative waves completed per map (successful extracts). */
+  wavesCompletedByMap?: Record<string, number>;
 }
 
 export interface QuestDef {

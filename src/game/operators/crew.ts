@@ -1,7 +1,15 @@
 import type { Meta } from "../meta";
-import { generateRecruitmentCandidates } from "./generation";
+import { DEV_TOOLS_ENABLED } from "../dev/tools";
+import {
+  effectiveSlotCount,
+  eligibleProfiles,
+  getRecruitmentLabOverrides,
+  progressionFactsFromMeta,
+} from "./recruitmentLabCore";
+import { generateRecruitmentCandidates, generateRecruitmentPool } from "./generation";
 import { normalizeCandidatePotential } from "./migration";
 import { withRecruitmentCosts } from "./recruitment";
+import { getRecruitmentSlotCount } from "./recruitmentSlots";
 import { seedFromParts } from "./rng";
 import { clearOperatorEquipment } from "./runtime";
 import type {
@@ -18,9 +26,39 @@ export function createOperatorId(): string {
   return `op_${Date.now().toString(36)}_${operatorSeq.toString(36)}`;
 }
 
-export function freshRecruitmentPool(runs: number, generation = 0): RecruitmentPoolState {
+function poolGenerationOptions(meta: Meta) {
+  const overrides = DEV_TOOLS_ENABLED ? getRecruitmentLabOverrides() : { profiles: {}, previewCandidates: {} };
+  const facts = progressionFactsFromMeta(meta);
+  const profiles = DEV_TOOLS_ENABLED ? eligibleProfiles(facts, overrides) : eligibleProfiles(facts, { profiles: {}, previewCandidates: {} });
+  const count = DEV_TOOLS_ENABLED
+    ? effectiveSlotCount(overrides)
+    : getRecruitmentSlotCount({ devToolsEnabled: false });
+  return { profiles, count, overrides };
+}
+
+export function generatePoolForMeta(meta: Meta, generation: number, seed?: number): RecruitCandidate[] {
+  const { profiles, count } = poolGenerationOptions(meta);
+  const poolSeed = seed ?? seedFromParts("radio", meta.runs, generation);
+  const raw =
+    profiles.length > 0
+      ? generateRecruitmentPool({
+          seed: poolSeed,
+          generation,
+          count,
+          existingNames: crewNames(meta),
+          profiles,
+        })
+      : [];
+  return withRecruitmentCosts(raw);
+}
+
+export function freshRecruitmentPool(runs: number, generation = 0, meta?: Meta): RecruitmentPoolState {
   const seed = seedFromParts("radio", runs, generation);
-  const candidates = withRecruitmentCosts(generateRecruitmentCandidates(seed, generation));
+  if (!meta) {
+    const candidates = withRecruitmentCosts(generateRecruitmentCandidates(seed, generation));
+    return { seed, generation, lastRefreshedAtRun: runs, candidates };
+  }
+  const candidates = generatePoolForMeta({ ...meta, runs }, generation, seed);
   return { seed, generation, lastRefreshedAtRun: runs, candidates };
 }
 
@@ -32,7 +70,8 @@ export function freshCrewState(runs = 0): CrewState {
 }
 
 export function crewNames(meta: Meta): string[] {
-  return [...meta.crew.operators.map((o) => o.name), meta.pmc.name];
+  const pmcName = meta.pmc?.name;
+  return [...meta.crew.operators.map((o) => o.name), ...(pmcName ? [pmcName] : [])];
 }
 
 export function aliveOperators(meta: Meta): PersistentOperator[] {
@@ -52,6 +91,7 @@ export function candidateFromOperator(op: PersistentOperator, cost: number): Rec
     stats: { ...op.stats },
     potential: { ...op.potential },
     perkIds: [...op.perkIds],
+    negativeTraitIds: op.negativeTraitIds ? [...op.negativeTraitIds] : [],
     equipment: {
       weapon: op.equipment.weapon,
       attachments: [...op.equipment.attachments],
@@ -63,7 +103,7 @@ export function candidateFromOperator(op: PersistentOperator, cost: number): Rec
 }
 
 export function candidateToOperator(candidate: RecruitCandidate, operatorId: string): PersistentOperator {
-  return {
+  const op: PersistentOperator = {
     id: operatorId,
     name: candidate.name,
     roleLabel: candidate.roleLabel,
@@ -80,6 +120,10 @@ export function candidateToOperator(candidate: RecruitCandidate, operatorId: str
     progression: { level: 1, xp: 0 },
     status: "alive",
   };
+  if (candidate.negativeTraitIds?.length) {
+    op.negativeTraitIds = [...candidate.negativeTraitIds];
+  }
+  return op;
 }
 
 export type HireResult =
@@ -111,9 +155,7 @@ export function refreshRecruitmentPoolIfNeeded(meta: Meta): boolean {
   if (meta.runs <= pool.lastRefreshedAtRun) return false;
   const generation = pool.generation + 1;
   const seed = seedFromParts("radio", meta.runs, generation);
-  const candidates = withRecruitmentCosts(
-    generateRecruitmentCandidates(seed, generation, undefined, crewNames(meta)),
-  );
+  const candidates = generatePoolForMeta(meta, generation, seed);
   meta.crew.recruitment = {
     seed,
     generation,
@@ -121,6 +163,21 @@ export function refreshRecruitmentPoolIfNeeded(meta: Meta): boolean {
     candidates,
   };
   return true;
+}
+
+/** DEV-only: explicitly replace current Radio pool for testing. */
+export function regenerateRecruitmentPool(meta: Meta): RecruitmentPoolState {
+  const pool = meta.crew.recruitment;
+  const generation = pool.generation + 1;
+  const seed = seedFromParts("radio", meta.runs, generation);
+  const candidates = generatePoolForMeta(meta, generation, seed);
+  meta.crew.recruitment = {
+    seed,
+    generation,
+    lastRefreshedAtRun: meta.runs,
+    candidates,
+  };
+  return meta.crew.recruitment;
 }
 
 export function normalizeCrewState(crew: Partial<CrewState> | undefined, runs: number): CrewState {
@@ -136,13 +193,18 @@ export function normalizeCrewState(crew: Partial<CrewState> | undefined, runs: n
         pool.candidates.map((c) => {
           const stats = c.stats ?? { aim: 50, toughness: 50, handling: 50, mobility: 50 };
           const potential = normalizeCandidatePotential({ ...c, stats });
-          return {
+          const next: RecruitCandidate = {
             ...c,
             stats,
             potential,
             perkIds: Array.isArray(c.perkIds) ? c.perkIds : [],
             equipment: c.equipment ?? clearOperatorEquipment(),
+            cost: 0,
           };
+          if (Array.isArray(c.negativeTraitIds) && c.negativeTraitIds.length) {
+            next.negativeTraitIds = [...c.negativeTraitIds];
+          }
+          return next;
         }),
       ),
     },

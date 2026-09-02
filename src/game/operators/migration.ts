@@ -51,7 +51,10 @@ export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentO
   if (!isValidStatPair(stats, potential)) return null;
   const weapon = raw.equipment?.weapon && WEAPONS[raw.equipment.weapon] ? raw.equipment.weapon : "pm";
   const perkIds = Array.isArray(raw.perkIds) ? raw.perkIds.filter(isCanonicalPerkId) : [];
-  return {
+  const negativeTraitIds = Array.isArray(raw.negativeTraitIds)
+    ? raw.negativeTraitIds.filter(isCanonicalPerkId)
+    : [];
+  const op: PersistentOperator = {
     id: raw.id,
     name: raw.name,
     roleLabel: raw.roleLabel ?? "OPERATOR",
@@ -73,6 +76,8 @@ export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentO
     },
     status: raw.status === "dead" ? "dead" : "alive",
   };
+  if (negativeTraitIds.length) op.negativeTraitIds = negativeTraitIds;
+  return op;
 }
 
 export function normalizeMetaV6(raw: Partial<Meta>, runs: number): Meta {

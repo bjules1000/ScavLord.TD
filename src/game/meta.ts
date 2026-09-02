@@ -130,7 +130,7 @@ export function freshMeta(): Meta {
     bank: 0,
     claimed: [],
     stash: [{ defId: "a_grip" }, { defId: "m_ifak" }],
-    quests: { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0 },
+    quests: { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0, wavesCompletedByMap: {} },
     runs: 0,
     pmc: freshPmc(),
     skills: [],
@@ -160,6 +160,10 @@ function normalizeLegacyMeta(p: Partial<Meta>): Meta {
       bossKills: Number(p.quests?.bossKills) || 0,
       bestWave: Number(p.quests?.bestWave) || 0,
       extracts: Number(p.quests?.extracts) || 0,
+      wavesCompletedByMap:
+        p.quests?.wavesCompletedByMap && typeof p.quests.wavesCompletedByMap === "object"
+          ? { ...p.quests.wavesCompletedByMap }
+          : {},
     },
     runs,
     pmc: {

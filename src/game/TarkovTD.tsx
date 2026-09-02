@@ -180,6 +180,7 @@ import {
   hireCandidate,
   markOperatorDead,
   refreshRecruitmentPoolIfNeeded,
+  regenerateRecruitmentPool,
 } from "./operators/crew";
 import {
   applyOperatorEquipToMeta,
@@ -189,7 +190,7 @@ import {
   stashEntriesFromItems,
   unequipOperatorSlot,
 } from "./operators/equipment";
-import { PERKS, formatCrewStatLine, STAT_LABELS, type PersistentOperator } from "./operators";
+import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import {
   operatorAccuracyBonus,
@@ -215,6 +216,8 @@ import BalanceLab from "./dev/BalanceLab";
 import EconomyLab from "./dev/EconomyLab";
 import WaveLab from "./dev/WaveLab";
 import QuestEditor from "./dev/QuestEditor";
+import RecruitmentLab from "./dev/RecruitmentLab";
+import { initRecruitmentLab } from "./operators/recruitmentLabCore";
 import {
   effectiveEnemy,
   effectiveWave,
@@ -566,6 +569,7 @@ export default function TarkovTD() {
   const [economyLabOpen, setEconomyLabOpen] = useState(false);
   const [waveLabOpen, setWaveLabOpen] = useState(false);
   const [questLabOpen, setQuestLabOpen] = useState(false);
+  const [recruitmentLabOpen, setRecruitmentLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
@@ -616,6 +620,10 @@ export default function TarkovTD() {
     const m = metaRef.current;
     m.stash = stashEntriesFromItems([...nextStash, ...nextLoadout]);
     saveMeta(m);
+  }, []);
+
+  useEffect(() => {
+    initRecruitmentLab(DEV_TOOLS_ENABLED);
   }, []);
 
   useEffect(() => {
@@ -715,6 +723,14 @@ export default function TarkovTD() {
         m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
         m.quests.scavKills += s.scavKills;
         m.quests.bossKills += s.bossKills;
+        if (keepBackpack) {
+          const mapKey = mapRef.current.def.id;
+          const prev = m.quests.wavesCompletedByMap ?? {};
+          m.quests.wavesCompletedByMap = {
+            ...prev,
+            [mapKey]: (prev[mapKey] ?? 0) + s.wave,
+          };
+        }
       }
       // Operator bookkeeping: they keep kit on extract, lose it on death / wipe
       const pmc = s.towers.find((t) => t.pmc);
@@ -1047,16 +1063,18 @@ export default function TarkovTD() {
     rerender();
   }, [pushLog, rerender]);
 
-  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "none") => {
+  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "recruitment" | "none") => {
     const balance = which === "balance";
     const economy = which === "economy";
     const wave = which === "wave";
     const quest = which === "quest";
+    const recruitment = which === "recruitment";
     setBalanceLabOpen(balance);
     setEconomyLabOpen(economy);
     setWaveLabOpen(wave);
     setQuestLabOpen(quest);
-    labOpenRef.current = balance || economy || wave || quest;
+    setRecruitmentLabOpen(recruitment);
+    labOpenRef.current = balance || economy || wave || quest || recruitment;
   }, []);
 
   const onDevTool = useCallback(
@@ -1080,6 +1098,10 @@ export default function TarkovTD() {
       }
       if (id === "quest-editor") {
         setLabs("quest");
+        return;
+      }
+      if (id === "recruitment-lab") {
+        setLabs("recruitment");
         return;
       }
       setLabs("balance");
@@ -2551,10 +2573,12 @@ export default function TarkovTD() {
                             <div className="font-display text-[10px] text-primary">
                               {op.name} · {op.roleLabel}
                             </div>
-                            <div className="mt-1 grid grid-cols-2 gap-1 text-[9px]">
-                              {(Object.keys(STAT_LABELS) as (keyof typeof STAT_LABELS)[]).map((k) => (
-                                <div key={k}>
-                                  {formatCrewStatLine(k, op.stats[k], op.potential[k])}
+                            <div className="mt-1 space-y-0.5 text-[9px]">
+                              {crewStatRows(op.stats, op.potential).map((row) => (
+                                <div key={row.key} className="grid grid-cols-[3rem_1.5rem_1fr] items-center gap-1">
+                                  <span className="text-muted-foreground">{row.label}</span>
+                                  <span className="text-foreground">{row.current}</span>
+                                  <span className="font-mono text-[8px] text-primary/90">{row.bar}</span>
                                 </div>
                               ))}
                             </div>
@@ -3551,6 +3575,20 @@ export default function TarkovTD() {
           onResetTestProgress={(questId) => {
             resetQuestTestProgress(questId);
             pushLog(`TEST QUEST progress reset (${questId})`);
+            rerender();
+          }}
+        />
+      )}
+      {DEV_TOOLS_ENABLED && recruitmentLabOpen && (
+        <RecruitmentLab
+          enabled={DEV_TOOLS_ENABLED}
+          meta={metaRef.current}
+          onClose={() => setLabs("none")}
+          onApplied={() => rerender()}
+          onRegeneratePool={() => {
+            regenerateRecruitmentPool(metaRef.current);
+            saveMeta(metaRef.current);
+            pushLog("DEV: Radio pool regenerated");
             rerender();
           }}
         />

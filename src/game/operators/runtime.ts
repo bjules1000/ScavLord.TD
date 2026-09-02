@@ -1,5 +1,5 @@
 import { getEquippedWeight } from "../armor";
-import { PERKS } from "./perks";
+import { allTraitIds, PERKS } from "./perks";
 import { STAT_NEUTRAL } from "./stats";
 import type { OperatorBaseStats, PersistentOperator } from "./types";
 
@@ -13,12 +13,14 @@ export interface OperatorCombatMods {
 export const OPERATOR_BASE_HP = 110;
 
 /** Resolve live combat modifiers from base stats + perks. */
-export function resolveCombatMods(op: Pick<PersistentOperator, "stats" | "perkIds">): OperatorCombatMods {
+export function resolveCombatMods(
+  op: Pick<PersistentOperator, "stats" | "perkIds" | "negativeTraitIds">,
+): OperatorCombatMods {
   let aimBonus = op.stats.aim - STAT_NEUTRAL;
   let toughnessBonus = op.stats.toughness - STAT_NEUTRAL;
   let handlingBonus = op.stats.handling - STAT_NEUTRAL;
   let mobilityBonus = op.stats.mobility - STAT_NEUTRAL;
-  for (const id of op.perkIds) {
+  for (const id of allTraitIds(op)) {
     const perk = PERKS[id];
     if (!perk) continue;
     aimBonus += perk.combat.aim ?? 0;
