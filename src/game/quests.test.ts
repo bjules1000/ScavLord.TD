@@ -62,9 +62,26 @@ describe("quest catalog", () => {
 
   it("specToQuestDef matches camp progress for First Blood", () => {
     const def = specToQuestDef(QUEST_SPECS.find((q) => q.id === "debut")!);
-    expect(def.done({ scavKills: 24, bossKills: 0, bestWave: 0, extracts: 0 })).toBe(false);
-    expect(def.done({ scavKills: 25, bossKills: 0, bestWave: 0, extracts: 0 })).toBe(true);
-    expect(def.progress({ scavKills: 10, bossKills: 0, bestWave: 0, extracts: 0 })).toBe("10/25");
+    const empty = { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0, trackers: {} };
+    expect(def.done(empty)).toBe(false);
+    expect(
+      def.done({
+        ...empty,
+        trackers: { debut: { scavKills: 24, bossKills: 0, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe(false);
+    expect(
+      def.done({
+        ...empty,
+        trackers: { debut: { scavKills: 25, bossKills: 0, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe(true);
+    expect(
+      def.progress({
+        ...empty,
+        trackers: { debut: { scavKills: 10, bossKills: 0, bestWave: 0, extracts: 0 } },
+      }),
+    ).toBe("10/25");
     expect(def.reward).toBe(800);
     expect(def.skillPoints).toBe(1);
     expect(def.unlocks).toContain("w_adar");

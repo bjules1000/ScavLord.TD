@@ -174,6 +174,31 @@ function normalizeLegacyMeta(p: Partial<Meta>): Meta {
         p.quests?.bossKillsById && typeof p.quests.bossKillsById === "object"
           ? { ...p.quests.bossKillsById }
           : { ...emptyQuests.bossKillsById },
+      trackers:
+        p.quests?.trackers && typeof p.quests.trackers === "object"
+          ? Object.fromEntries(
+              Object.entries(p.quests.trackers).map(([id, t]) => [
+                id,
+                {
+                  scavKills: Number(t?.scavKills) || 0,
+                  bossKills: Number(t?.bossKills) || 0,
+                  bestWave: Number(t?.bestWave) || 0,
+                  extracts: Number(t?.extracts) || 0,
+                  wavesCompletedByMap:
+                    t?.wavesCompletedByMap && typeof t.wavesCompletedByMap === "object"
+                      ? { ...t.wavesCompletedByMap }
+                      : {},
+                  killsByMap:
+                    t?.killsByMap && typeof t.killsByMap === "object" ? { ...t.killsByMap } : {},
+                  raiderKills: Number(t?.raiderKills) || 0,
+                  bossKillsById:
+                    t?.bossKillsById && typeof t.bossKillsById === "object"
+                      ? { ...t.bossKillsById }
+                      : {},
+                },
+              ]),
+            )
+          : {},
     },
     runs,
     pmc: {

@@ -65,6 +65,11 @@ export function pruneQuestLabOverrides(src: QuestLabOverrides): QuestLabOverride
       prerequisites: Array.isArray(spec.prerequisites) ? spec.prerequisites : [],
     });
     if (spec.mapId && typeof spec.mapId === "string") next.mapId = spec.mapId;
+    if (typeof spec.minLevel === "number" && spec.minLevel >= 1) next.minLevel = Math.round(spec.minLevel);
+    if (spec.minRadioState) next.minRadioState = spec.minRadioState;
+    if (spec.requiresUnique && typeof spec.requiresUnique === "object") {
+      next.requiresUnique = { ...spec.requiresUnique };
+    }
     if (spec.devCreated) next.devCreated = true;
     quests[next.id] = next;
   }
@@ -131,6 +136,41 @@ export function setQuestField<K extends "name" | "desc" | "mapId" | "id">(
   } else {
     copy[key] = value;
   }
+  return upsertQuest(src, copy);
+}
+
+export function setQuestMinLevel(src: QuestLabOverrides, id: string, minLevel: number | null): QuestLabOverrides {
+  const live = effectiveQuest(id, src, true);
+  if (!live) return src;
+  const copy = cloneQuestSpec(live);
+  if (minLevel == null || minLevel < 1) delete copy.minLevel;
+  else copy.minLevel = Math.round(minLevel);
+  return upsertQuest(src, copy);
+}
+
+export function setQuestMinRadioState(
+  src: QuestLabOverrides,
+  id: string,
+  state: import("../operators/radioProgression").RadioState | null,
+): QuestLabOverrides {
+  const live = effectiveQuest(id, src, true);
+  if (!live) return src;
+  const copy = cloneQuestSpec(live);
+  if (!state) delete copy.minRadioState;
+  else copy.minRadioState = state;
+  return upsertQuest(src, copy);
+}
+
+export function setQuestRequiresUnique(
+  src: QuestLabOverrides,
+  id: string,
+  requiresUnique: QuestSpec["requiresUnique"] | null,
+): QuestLabOverrides {
+  const live = effectiveQuest(id, src, true);
+  if (!live) return src;
+  const copy = cloneQuestSpec(live);
+  if (!requiresUnique) delete copy.requiresUnique;
+  else copy.requiresUnique = { ...requiresUnique };
   return upsertQuest(src, copy);
 }
 

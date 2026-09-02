@@ -228,7 +228,9 @@ describe("recruitment prerequisites", () => {
     const req: RecruitmentRequirement = { type: "QUEST_COMPLETED", questId: "debut" };
     const incomplete = evaluateRequirement(req, facts);
     const completeMeta = freshMeta();
-    completeMeta.quests.scavKills = 25;
+    completeMeta.quests.trackers = {
+      debut: { scavKills: 25, bossKills: 0, bestWave: 0, extracts: 0 },
+    };
     const complete = evaluateRequirement(req, progressionFactsFromMeta(completeMeta));
     expect(incomplete.met).toBe(false);
     expect(complete.met).toBe(true);
