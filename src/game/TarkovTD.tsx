@@ -229,6 +229,7 @@ import {
   unequipFromEquipmentOwner,
   type EquipmentOwnerId,
 } from "./operators/crewEquipment";
+import { getRaidOperatorTitle, getRaidOperatorDisplayName } from "./operators/raidIdentity";
 import CrewEquipmentPanel from "./CrewEquipmentPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
@@ -1711,7 +1712,6 @@ export default function TarkovTD() {
                     return;
                   }
                   if (tw.operatorId) {
-                    const op = findOperator(metaRef.current, tw.operatorId);
                     markOperatorDead(metaRef.current, tw.operatorId);
                     saveMeta(metaRef.current);
                     dropGear(tw, s);
@@ -1727,7 +1727,9 @@ export default function TarkovTD() {
                       text: "KIA — GEAR DROPPED",
                       color: "#ff5a3c",
                     });
-                    pushLog(`${op?.name ?? "Operator"} is KIA. Kit dropped — grab it or it's gone.`);
+                    pushLog(
+                      `${getRaidOperatorDisplayName(tw, metaRef.current)} is KIA. Kit dropped — grab it or it's gone.`,
+                    );
                     rerender();
                     continue;
                   }
@@ -3293,7 +3295,7 @@ export default function TarkovTD() {
 
             <div className="pixel-card">
               <div className="font-display text-[10px] text-primary">
-                {selected?.pmc ? `${meta.pmc.name} · YOUR OPERATOR` : "OPERATOR"}
+                {selected ? getRaidOperatorTitle(selected, meta) : "NO OPERATOR SELECTED"}
               </div>
               {selected ? (
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
