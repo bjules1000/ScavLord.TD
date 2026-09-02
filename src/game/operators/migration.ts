@@ -1,9 +1,15 @@
 import type { Meta } from "../meta";
 import { freshCrewState, normalizeCrewState } from "./crew";
-import { isValidStats } from "./stats";
+import { migratePotentialStats } from "./potentialGeneration";
 import { isCanonicalPerkId } from "./perks";
+import {
+  enforceCurrentPotentialInvariant,
+  isValidPotential,
+  isValidStatPair,
+  isValidStats,
+} from "./stats";
 import { WEAPONS } from "../gear";
-import type { PersistentOperator } from "./types";
+import type { OperatorBaseStats, PersistentOperator, RecruitCandidate } from "./types";
 
 export function migrateV5ToV6(v5: Meta): Meta {
   const base = { ...v5 };
@@ -13,10 +19,36 @@ export function migrateV5ToV6(v5: Meta): Meta {
   };
 }
 
+function resolvePotential(
+  stats: OperatorBaseStats,
+  potential: Partial<OperatorBaseStats> | undefined,
+  archetypeId: string,
+  identityKey: string,
+): OperatorBaseStats {
+  if (potential && isValidPotential(potential as OperatorBaseStats)) {
+    return enforceCurrentPotentialInvariant(stats, potential as OperatorBaseStats);
+  }
+  return migratePotentialStats(stats, archetypeId, identityKey);
+}
+
+export function normalizeCandidatePotential(raw: Partial<RecruitCandidate>): RecruitCandidate["potential"] {
+  const stats = raw.stats;
+  if (!stats || !isValidStats(stats)) {
+    return migratePotentialStats(
+      { aim: 50, toughness: 50, handling: 50, mobility: 50 },
+      raw.archetypeId ?? "rifleman",
+      raw.candidateId ?? "unknown",
+    );
+  }
+  return resolvePotential(stats, raw.potential, raw.archetypeId ?? "rifleman", raw.candidateId ?? raw.name ?? "unknown");
+}
+
 export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentOperator | null {
   if (!raw.id || !raw.name) return null;
   const stats = raw.stats;
   if (!stats || !isValidStats(stats)) return null;
+  const potential = resolvePotential(stats, raw.potential, raw.archetypeId ?? "rifleman", raw.id);
+  if (!isValidStatPair(stats, potential)) return null;
   const weapon = raw.equipment?.weapon && WEAPONS[raw.equipment.weapon] ? raw.equipment.weapon : "pm";
   const perkIds = Array.isArray(raw.perkIds) ? raw.perkIds.filter(isCanonicalPerkId) : [];
   return {
@@ -25,6 +57,7 @@ export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentO
     roleLabel: raw.roleLabel ?? "OPERATOR",
     archetypeId: raw.archetypeId ?? "rifleman",
     stats: { ...stats },
+    potential: { ...potential },
     perkIds,
     equipment: {
       weapon,
@@ -46,11 +79,30 @@ export function normalizeMetaV6(raw: Partial<Meta>, runs: number): Meta {
   const operators = Array.isArray(raw.crew?.operators)
     ? raw.crew.operators.map(normalizeOperator).filter((o): o is PersistentOperator => !!o)
     : [];
+  const crewBase = normalizeCrewState(raw.crew, runs);
+  const candidates = crewBase.recruitment.candidates.map((c) => {
+    const stats = isValidStats(c.stats) ? c.stats : { aim: 50, toughness: 50, handling: 50, mobility: 50 };
+    const potential = normalizeCandidatePotential({ ...c, stats });
+    return { ...c, stats, potential };
+  });
   return {
     ...(raw as Meta),
     crew: {
-      ...normalizeCrewState(raw.crew, runs),
+      ...crewBase,
       operators,
+      recruitment: { ...crewBase.recruitment, candidates },
     },
   };
+}
+
+/** Idempotent migration check for tests. */
+export function migrateOperatorPotentialOnce(
+  stats: OperatorBaseStats,
+  potential: OperatorBaseStats | undefined,
+  archetypeId: string,
+  identityKey: string,
+): OperatorBaseStats {
+  const first = resolvePotential(stats, potential, archetypeId, identityKey);
+  const second = resolvePotential(stats, first, archetypeId, identityKey);
+  return second;
 }

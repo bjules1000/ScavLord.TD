@@ -2,9 +2,9 @@ import { ITEM_BY_ID } from "../gear";
 import { armorItemId, attachItemId, weaponItemId } from "../raidGear";
 import { ARCHETYPES, ARCHETYPE_BY_ID, applyArchetypeBaseline } from "./archetypes";
 import { OPERATOR_NAMES } from "./names";
+import { generateCurrentVariation, generatePotentialStats } from "./potentialGeneration";
 import { RECRUITABLE_PERK_IDS } from "./perks";
 import { mulberry32, pickOne, pickWeighted, seedFromParts } from "./rng";
-import { STAT_NEUTRAL, clampStat } from "./stats";
 import type { OperatorAppearance, OperatorEquipment, RecruitCandidate } from "./types";
 
 export const RECRUITMENT_POOL_SIZE = 3;
@@ -45,11 +45,6 @@ export function kitEquipmentValue(equipment: OperatorEquipment): number {
   return total;
 }
 
-function randomVariation(rng: () => number) {
-  const jitter = () => clampStat(STAT_NEUTRAL + Math.round((rng() - 0.5) * 14));
-  return { aim: jitter(), toughness: jitter(), handling: jitter(), mobility: jitter() };
-}
-
 function pickKit(archetypeId: string, rng: () => number): OperatorEquipment {
   const weapons = WEAPON_POOLS[archetypeId] ?? ["pm", "toz"];
   const weapon = pickOne(rng, weapons);
@@ -84,8 +79,9 @@ export function generateCandidate(
 ): RecruitCandidate {
   const rng = mulberry32(seedFromParts(seed, generation, index));
   const archetype = pickWeighted(rng, ARCHETYPES);
-  const variation = randomVariation(rng);
+  const variation = generateCurrentVariation(rng);
   const stats = applyArchetypeBaseline(archetype.id, variation);
+  const potential = generatePotentialStats(stats, archetype.id, rng);
   const perkIds = [pickOne(rng, RECRUITABLE_PERK_IDS)];
   const equipment = pickKit(archetype.id, rng);
   const name = uniqueName(rng, usedNames);
@@ -97,6 +93,7 @@ export function generateCandidate(
     roleLabel: ARCHETYPE_BY_ID[archetype.id]?.roleLabel ?? archetype.roleLabel,
     archetypeId: archetype.id,
     stats,
+    potential,
     perkIds: [...perkIds],
     equipment,
     appearance: pickAppearance(rng),

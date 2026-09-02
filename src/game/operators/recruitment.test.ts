@@ -7,7 +7,7 @@ import {
   kitEquipmentValue,
 } from "./generation";
 import { calculateRecruitmentCost } from "./recruitment";
-import { isValidStats, STAT_MAX, STAT_MIN } from "./stats";
+import { isValidStats, STAT_MAX, STAT_MIN, isValidStatPair } from "./stats";
 import { isCanonicalPerkId } from "./perks";
 import { WEAPONS } from "../gear";
 
@@ -32,6 +32,7 @@ describe("recruitment generation", () => {
     const pool = generateRecruitmentCandidates(123, 3);
     for (const c of pool) {
       expect(isValidStats(c.stats)).toBe(true);
+      expect(isValidStatPair(c.stats, c.potential)).toBe(true);
       for (const v of Object.values(c.stats)) {
         expect(v).toBeGreaterThanOrEqual(STAT_MIN);
         expect(v).toBeLessThanOrEqual(STAT_MAX);
@@ -83,6 +84,7 @@ describe("recruitment cost", () => {
       roleLabel: "TEST",
       archetypeId: "rifleman",
       stats: { aim: 50, toughness: 50, handling: 50, mobility: 50 },
+      potential: { aim: 80, toughness: 75, handling: 78, mobility: 72 },
       perkIds: ["marksman"],
       equipment: { weapon: "m4", attachments: ["optic"], armor: "paca" },
       appearance: { presetId: "scav_0" },

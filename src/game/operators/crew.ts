@@ -1,5 +1,6 @@
 import type { Meta } from "../meta";
 import { generateRecruitmentCandidates } from "./generation";
+import { normalizeCandidatePotential } from "./migration";
 import { withRecruitmentCosts } from "./recruitment";
 import { seedFromParts } from "./rng";
 import { clearOperatorEquipment } from "./runtime";
@@ -49,6 +50,7 @@ export function candidateFromOperator(op: PersistentOperator, cost: number): Rec
     roleLabel: op.roleLabel,
     archetypeId: op.archetypeId,
     stats: { ...op.stats },
+    potential: { ...op.potential },
     perkIds: [...op.perkIds],
     equipment: {
       weapon: op.equipment.weapon,
@@ -67,6 +69,7 @@ export function candidateToOperator(candidate: RecruitCandidate, operatorId: str
     roleLabel: candidate.roleLabel,
     archetypeId: candidate.archetypeId,
     stats: { ...candidate.stats },
+    potential: { ...candidate.potential },
     perkIds: [...candidate.perkIds],
     equipment: {
       weapon: candidate.equipment.weapon,
@@ -130,11 +133,17 @@ export function normalizeCrewState(crew: Partial<CrewState> | undefined, runs: n
       generation: Number(pool.generation) || 0,
       lastRefreshedAtRun: Number(pool.lastRefreshedAtRun) || runs,
       candidates: withRecruitmentCosts(
-        pool.candidates.map((c) => ({
-          ...c,
-          perkIds: Array.isArray(c.perkIds) ? c.perkIds : [],
-          equipment: c.equipment ?? clearOperatorEquipment(),
-        })),
+        pool.candidates.map((c) => {
+          const stats = c.stats ?? { aim: 50, toughness: 50, handling: 50, mobility: 50 };
+          const potential = normalizeCandidatePotential({ ...c, stats });
+          return {
+            ...c,
+            stats,
+            potential,
+            perkIds: Array.isArray(c.perkIds) ? c.perkIds : [],
+            equipment: c.equipment ?? clearOperatorEquipment(),
+          };
+        }),
       ),
     },
   };

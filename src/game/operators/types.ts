@@ -31,6 +31,7 @@ export interface PersistentOperator {
   roleLabel: string;
   archetypeId: string;
   stats: OperatorBaseStats;
+  potential: OperatorBaseStats;
   perkIds: string[];
   equipment: OperatorEquipment;
   appearance: OperatorAppearance;
@@ -45,6 +46,7 @@ export interface RecruitCandidate {
   roleLabel: string;
   archetypeId: string;
   stats: OperatorBaseStats;
+  potential: OperatorBaseStats;
   perkIds: string[];
   equipment: OperatorEquipment;
   appearance: OperatorAppearance;
