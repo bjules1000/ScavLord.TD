@@ -189,13 +189,23 @@ import {
   requestNewTransmission,
 } from "./operators/crew";
 import { applyQuestRewardsToRadio } from "./operators/questRadioRewards";
-import { QUEST_SPEC_BY_ID, questUniqueGateMet } from "./quests";
+import {
+  QUEST_SPEC_BY_ID,
+  QUEST_SPECS,
+  applyRaidQuestProgress,
+  getQuestAvailability,
+  listAvailableQuestIds,
+  type QuestUnlockContext,
+} from "./quests";
+import PlayerQuestsPanel, { type PlayerQuestFilter } from "./PlayerQuestsPanel";
 import { nextRetransmissionCashCost, CANONICAL_RETRANSMISSION } from "./operators/retransmission";
 import {
   advanceUniqueLifecycle,
   getUniqueContactProgress,
+  isUniqueContactActiveTransmission,
   maybeTriggerUniqueDistress,
   setUniqueLifecycle,
+  settleUniqueTransmission,
   syncUniqueEligibility,
   uniqueContactRequirementsMet,
   uniqueTransmissionForLifecycle,
@@ -584,7 +594,7 @@ export default function TarkovTD() {
   const [stashTab, setStashTab] = useState<
     "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
   >("all");
-  const [questFilter, setQuestFilter] = useState<"all" | "open" | "done">("all");
+  const [questFilter, setQuestFilter] = useState<PlayerQuestFilter>("active");
   const [devPickerOpen, setDevPickerOpen] = useState(false);
   const [balanceLabOpen, setBalanceLabOpen] = useState(false);
   const [economyLabOpen, setEconomyLabOpen] = useState(false);
@@ -741,28 +751,22 @@ export default function TarkovTD() {
         next = settled.next;
       }
       if (!isQuestTestActive()) {
-        m.quests.bestWave = Math.max(m.quests.bestWave, s.wave);
-        m.quests.scavKills += s.scavKills;
-        m.quests.bossKills += s.bossKills;
+        const unlockCtx: QuestUnlockContext = {
+          claimedQuestIds: m.claimed,
+          playerLevel: m.pmc.level,
+          radioState: (m.crew.radio ?? freshRadioProgression()).radioState,
+          uniqueContacts: m.crew.radio?.uniqueContacts,
+        };
+        // Snapshot AVAILABLE before applying this raid — newly unlocked quests get 0 from this event.
+        const availableAtStart = listAvailableQuestIds(QUEST_SPECS, unlockCtx);
         const mapKey = mapRef.current.def.id;
-        const killsByMap = { ...(m.quests.killsByMap ?? {}) };
-        const mapEntry = { ...(killsByMap[mapKey] ?? {}) };
-        mapEntry.scav = (mapEntry.scav ?? 0) + s.scavKills;
-        mapEntry.boss = (mapEntry.boss ?? 0) + s.bossKills;
-        killsByMap[mapKey] = mapEntry;
-        m.quests.killsByMap = killsByMap;
-        if (s.bossKills > 0) {
-          const byId = { ...(m.quests.bossKillsById ?? {}) };
-          byId["boss"] = (byId["boss"] ?? 0) + s.bossKills;
-          m.quests.bossKillsById = byId;
-        }
-        if (keepBackpack) {
-          const prev = m.quests.wavesCompletedByMap ?? {};
-          m.quests.wavesCompletedByMap = {
-            ...prev,
-            [mapKey]: (prev[mapKey] ?? 0) + s.wave,
-          };
-        }
+        m.quests = applyRaidQuestProgress(m.quests, availableAtStart, {
+          scavKills: s.scavKills,
+          bossKills: s.bossKills,
+          wave: s.wave,
+          mapId: mapKey,
+          extracted: keepBackpack,
+        });
       }
       // Operator bookkeeping: they keep kit on extract, lose it on death / wipe
       const pmc = s.towers.find((t) => t.pmc);
@@ -886,24 +890,29 @@ export default function TarkovTD() {
     (questId: string) => {
       const m = metaRef.current;
       const q = QUESTS.find((x) => x.id === questId);
-      if (!q || !q.done(m.quests) || m.claimed.includes(q.id)) return;
+      const spec = QUEST_SPEC_BY_ID[questId];
+      if (!q || !spec || m.claimed.includes(q.id)) return;
+      const unlockCtx: QuestUnlockContext = {
+        claimedQuestIds: m.claimed,
+        playerLevel: m.pmc.level,
+        radioState: (m.crew.radio ?? freshRadioProgression()).radioState,
+        uniqueContacts: m.crew.radio?.uniqueContacts,
+      };
+      if (getQuestAvailability(spec, unlockCtx) !== "AVAILABLE") return;
+      if (!q.done(m.quests)) return;
       m.claimed = [...m.claimed, q.id];
       m.bank += q.reward;
       m.skillPoints += q.skillPoints ?? 0;
-      const spec = QUEST_SPEC_BY_ID[questId];
-      if (spec) {
-        ensureRadio(m);
-        m.crew.radio = applyQuestRewardsToRadio(m.crew.radio, questId, spec.rewards);
-        m.crew.radio = syncUniqueEligibility(
-          m.crew.radio,
-          "wolf",
-          progressionFactsFromMeta(m),
-        );
-        // If network just unlocked and pool empty, generate first procedural transmission.
-        const cap = capabilityFromMeta(m);
-        if (cap.slots.effective > 0 && m.crew.recruitment.candidates.length === 0) {
-          regenerateRecruitmentPool(m);
-        }
+      ensureRadio(m);
+      m.crew.radio = applyQuestRewardsToRadio(m.crew.radio, questId, spec.rewards);
+      m.crew.radio = syncUniqueEligibility(
+        m.crew.radio,
+        "wolf",
+        progressionFactsFromMeta(m),
+      );
+      const cap = capabilityFromMeta(m);
+      if (cap.slots.effective > 0 && m.crew.recruitment.candidates.length === 0) {
+        regenerateRecruitmentPool(m);
       }
       saveMeta(m);
       pushLog(
@@ -2396,7 +2405,7 @@ export default function TarkovTD() {
     for (const it of haul) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
     for (const [itemId, count] of counts) items.push({ itemId, count });
     noteQuestTestEvent({ type: "EXTRACT", mapId, items });
-    if (!isQuestTestActive()) metaRef.current.quests.extracts += 1;
+    // Extract count for quest trackers is applied in toHideout via applyRaidQuestProgress.
     s.phase = "extracted";
     pushLog(`Extracted with ${s.backpack.length + carried.length} item(s). Decide what to keep.`);
     rerender();
@@ -2561,6 +2570,7 @@ export default function TarkovTD() {
                 <Overlay
                   title="SCAVLORD"
                   subtitle={`${meta.pmc.name} · LVL ${meta.pmc.level} · ${meta.skillPoints} skill point(s)`}
+                  layout={scavTab === "quests" ? "wide" : "center"}
                 >
                   <div className="mb-2 flex flex-wrap gap-1">
                     {(["overview", "crew", "skills", "quests"] as const).map((tab) => (
@@ -2719,59 +2729,20 @@ export default function TarkovTD() {
                     </div>
                   )}
                   {scavTab === "quests" && (
-                    <div className="pixel-card pixel-scrollbar max-h-[280px] overflow-auto text-left">
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {(["all", "open", "done"] as const).map((t) => (
-                          <button
-                            key={t}
-                            onClick={() => setQuestFilter(t)}
-                            className={`border px-1 py-[2px] font-mono text-[9px] uppercase ${
-                              questFilter === t
-                                ? "border-primary text-primary"
-                                : "border-border/60 text-muted-foreground"
-                            }`}
-                          >
-                            {t === "open" ? "not completed" : t === "done" ? "completed" : "all"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-2 space-y-1 font-mono text-[10px]">
-                        {QUESTS.filter((q) => {
-                          const spec = QUEST_SPEC_BY_ID[q.id];
-                          if (
-                            spec &&
-                            !questUniqueGateMet(spec, meta.crew.radio?.uniqueContacts)
-                          ) {
-                            return false;
-                          }
-                          const d = q.done(meta.quests);
-                          return questFilter === "all" || (questFilter === "done" ? d : !d);
-                        }).map((q) => {
-                          const done = q.done(meta.quests);
-                          const claimed = meta.claimed.includes(q.id);
-                          return (
-                            <div
-                              key={q.id}
-                              className={`flex items-center justify-between gap-2 border-b border-border/40 pb-1 ${
-                                claimed ? "text-muted-foreground" : done ? "text-accent" : "text-muted-foreground"
-                              }`}
-                            >
-                              <span>
-                                [{claimed ? "✓" : done ? "!" : q.progress(meta.quests)}] {q.name} — {q.desc}
-                              </span>
-                              {done && !claimed && (
-                                <button
-                                  onClick={() => redeem(q.id)}
-                                  className="pixel-btn pixel-btn-primary shrink-0 px-2 py-1 text-[9px]"
-                                >
-                                  REDEEM +{q.reward}₽{q.skillPoints ? ` +${q.skillPoints}SP` : ""}
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <PlayerQuestsPanel
+                      catalog={QUEST_SPECS}
+                      unlockCtx={{
+                        claimedQuestIds: meta.claimed,
+                        playerLevel: meta.pmc.level,
+                        radioState: (meta.crew.radio ?? freshRadioProgression()).radioState,
+                        uniqueContacts: meta.crew.radio?.uniqueContacts,
+                      }}
+                      questProgress={meta.quests}
+                      claimed={meta.claimed}
+                      filter={questFilter}
+                      onFilter={setQuestFilter}
+                      onRedeem={redeem}
+                    />
                   )}
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
                     BACK TO CAMP
@@ -2812,7 +2783,9 @@ export default function TarkovTD() {
                     ? "CURRENT SIGNAL TASK · DEAD CHANNEL — restore power."
                     : radio.radioState === "POWERED_STATIC"
                       ? "CURRENT SIGNAL TASK · RAISE THE TOWER — repair the signal path."
-                      : radio.radioState === "SIGNAL_RESTORED" && wolfProg.lifecycle === "RECRUITED"
+                      : radio.radioState === "SIGNAL_RESTORED" &&
+                          wolfProg.lifecycle === "RECRUITED" &&
+                          wolfProg.transmissionSettled
                         ? "CURRENT SIGNAL TASK · OPEN FREQUENCIES — unlock the scav network."
                         : radio.radioState === "SIGNAL_RESTORED" &&
                             wolfProg.lifecycle !== "HIDDEN" &&
@@ -2820,12 +2793,16 @@ export default function TarkovTD() {
                           ? "CURRENT SIGNAL TASK · HELP WOLF — prove you can hold a line."
                           : null;
 
-                const uniqueContact =
-                  wolfDef && wolfTx && wolfProg.lifecycle !== "HIDDEN"
+                const showWolfTx =
+                  !!wolfDef &&
+                  !!wolfTx &&
+                  isUniqueContactActiveTransmission(wolfProg);
+
+                const uniqueContact = showWolfTx
                     ? {
                         uniqueId: "wolf",
                         lifecycle: wolfProg.lifecycle,
-                        transmission: wolfTx,
+                        transmission: wolfTx!,
                         onAdvance:
                           wolfProg.lifecycle === "DISTRESS_SIGNAL" ||
                           wolfProg.lifecycle === "IDENTIFIED"
@@ -2840,7 +2817,16 @@ export default function TarkovTD() {
                                 saveMeta(cur);
                                 rerender();
                               }
-                            : null,
+                            : wolfProg.lifecycle === "RECRUITED"
+                              ? () => {
+                                  const cur = metaRef.current;
+                                  ensureRadio(cur);
+                                  cur.crew.radio = settleUniqueTransmission(cur.crew.radio!, "wolf");
+                                  saveMeta(cur);
+                                  pushLog("Wolf cleared the channel.");
+                                  rerender();
+                                }
+                              : null,
                         onRecruit: wolfCanRecruit
                           ? () => {
                               const cur = metaRef.current;
@@ -3753,6 +3739,12 @@ export default function TarkovTD() {
           inRaid={s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted"}
           onClose={() => setLabs("none")}
           onApplied={() => rerender()}
+          unlockContext={{
+            claimedQuestIds: metaRef.current.claimed,
+            playerLevel: metaRef.current.pmc.level,
+            radioState: (metaRef.current.crew.radio ?? freshRadioProgression()).radioState,
+            uniqueContacts: metaRef.current.crew.radio?.uniqueContacts,
+          }}
           onTestQuest={(questId) => {
             const inRaidNow = s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted";
             const r = requestTestQuest(DEV_TOOLS_ENABLED, inRaidNow, questId);
