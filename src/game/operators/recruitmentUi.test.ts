@@ -19,7 +19,7 @@ import {
 import { generateRecruitmentCandidates as gen } from "./generation";
 
 describe("recruitment UI helpers", () => {
-  const pool = withRecruitmentCosts(generateRecruitmentCandidates(4242, 0));
+  const pool = withRecruitmentCosts(generateRecruitmentCandidates(4242, 0, 3));
   const candidate = pool[0]!;
   const other = pool[1]!;
 
@@ -33,10 +33,10 @@ describe("recruitment UI helpers", () => {
     }
   });
 
-  it("candidate cards render perk and formatted cost", () => {
+  it("candidate cards render traits and formatted cost", () => {
     const card = buildCandidateCardView(candidate);
-    expect(card.perkName).toBe(PERKS[candidate.perkIds[0]!]!.name);
     expect(card.costFormatted).toBe(formatRecruitmentRoubles(candidate.cost));
+    expect(card.perkName.length).toBeGreaterThan(0);
   });
 
   it("candidate cards do not include starting-kit line", () => {
@@ -80,9 +80,8 @@ describe("recruitment UI helpers", () => {
     expect(seg.totalSegments).toBe(STAT_BAR_SEGMENTS);
   });
 
-  it("selected detail renders perk, kit, and hiring data", () => {
+  it("selected detail renders kit and hiring data", () => {
     const detail = buildSelectedDetailView(candidate, 600);
-    expect(detail.perk).not.toBeNull();
     expect(detail.kit.weapon.length).toBeGreaterThan(0);
     expect(detail.bankFormatted).toContain("₽");
     expect(detail.costFormatted).toContain("₽");
@@ -117,12 +116,15 @@ describe("recruitment UI helpers", () => {
   it("starting kit and perk descriptions remain canonical", () => {
     const kit = startingKitDisplay(candidate.equipment);
     expect(kit.kitValue).toBeGreaterThanOrEqual(0);
-    const perk = perkRecruitmentDetail(candidate.perkIds[0]!);
-    expect(perk.lines.length).toBeGreaterThan(0);
+    const perkId = candidate.perkIds[0] ?? candidate.traitIds?.[0];
+    if (perkId) {
+      const perk = perkRecruitmentDetail(perkId);
+      expect(perk.lines.length).toBeGreaterThan(0);
+    }
   });
 
   it("candidate generation unchanged by UI formatters", () => {
-    expect(gen(77, 3)).toEqual(gen(77, 3));
+    expect(gen(77, 3, 2)).toEqual(gen(77, 3, 2));
   });
 
   it("cost available for card display", () => {

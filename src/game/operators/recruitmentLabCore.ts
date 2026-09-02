@@ -15,6 +15,7 @@ import {
   type EffectiveRecruitmentProfile,
   type RecruitmentProfileKit,
   type StatRange,
+  type WeightedGearEntry,
 } from "./recruitmentProfiles";
 import {
   evaluateRequirement,
@@ -23,33 +24,55 @@ import {
   type RecruitmentRequirement,
   validateRequirements,
 } from "./recruitmentRequirements";
-import { getRecruitmentSlotCount, BASE_RADIO_SLOTS } from "./recruitmentSlots";
 import {
   generateRecruitmentCandidates,
   generateRecruitmentPool,
-  type GeneratePoolOptions,
 } from "./generation";
 import { withRecruitmentCosts, calculateRecruitmentCost, recruitmentCostBreakdown } from "./recruitment";
 import type { OperatorBaseStats, OperatorEquipment, RecruitCandidate } from "./types";
 import { isNegativeTraitId, isPositivePerkId } from "./perks";
+import {
+  RADIO_STATES,
+  freshRadioProgression,
+  resolveRecruitmentCapability,
+  type CapabilityBreakdown,
+  type RadioState,
+  type RecruitmentQuality,
+  type UniqueContactLifecycle,
+  type RadioProgressionState,
+  clampQuality,
+} from "./radioProgression";
+import {
+  CANONICAL_QUALITY_TIERS,
+  mergeTraitConfig,
+  type TraitProbabilityConfig,
+} from "./recruitmentQuality";
+import {
+  CANONICAL_RETRANSMISSION,
+  nextRetransmissionCashCost,
+  type RetransmissionRules,
+} from "./retransmission";
 
 export const RECRUITMENT_LAB_STORAGE_KEY = "scavlord.dev.recruitmentLab.v1";
 
 export type ProfileOverride = {
   enabled?: boolean;
   weight?: number;
+  minQuality?: number;
   currentRanges?: Partial<Record<keyof OperatorBaseStats, StatRange>>;
   potentialRanges?: Partial<Record<keyof OperatorBaseStats, StatRange>>;
   positivePerkPool?: string[];
   negativeTraitPool?: string[];
   negativeTraitChance?: number;
-  kit?: Partial<RecruitmentProfileKit>;
+  /** Full kit override when present. */
+  kit?: RecruitmentProfileKit;
   requirements?: RecruitmentRequirement[];
 };
 
 export type CandidateOverride = {
   stats?: Partial<OperatorBaseStats>;
   potential?: Partial<OperatorBaseStats>;
+  traitIds?: string[];
   perkIds?: string[];
   negativeTraitIds?: string[];
   equipment?: Partial<OperatorEquipment>;
@@ -57,12 +80,20 @@ export type CandidateOverride = {
 };
 
 export type RecruitmentLabOverrides = {
+  radioState?: RadioState;
+  /** Absolute DEV slot override. */
   slotCount?: number;
+  qualityLevel?: number;
+  crewCapacity?: number;
+  retransmissionUnlocked?: boolean | null;
+  retransmissionRules?: Partial<RetransmissionRules>;
+  qualityTraitOverrides?: Partial<Record<RecruitmentQuality, Partial<TraitProbabilityConfig>>>;
   profiles: Record<string, ProfileOverride>;
   previewCandidates: Record<string, CandidateOverride>;
+  uniqueLifecycle?: Record<string, UniqueContactLifecycle>;
 };
 
-export type RecruitmentLabView = "radio" | "profiles" | "candidates";
+export type RecruitmentLabView = "radio" | "profiles" | "unique" | "candidates";
 
 export type StorageLike = {
   getItem(key: string): string | null;
@@ -131,7 +162,13 @@ export function resetRecruitmentLabAll(storage: StorageLike | null = defaultStor
 
 export function resetRecruitmentLabRadio(): void {
   const next = { ...appliedOverrides };
+  delete next.radioState;
   delete next.slotCount;
+  delete next.qualityLevel;
+  delete next.crewCapacity;
+  delete next.retransmissionUnlocked;
+  delete next.retransmissionRules;
+  delete next.qualityTraitOverrides;
   appliedOverrides = pruneOverrides(next);
   previewPool = null;
   previewSeed = null;
@@ -144,8 +181,17 @@ export function resetRecruitmentLabProfile(profileId: string): void {
 }
 
 export function resetRecruitmentLabCandidate(candidateId: string): void {
-  const next = { ...appliedOverrides, previewCandidates: { ...appliedOverrides.previewCandidates } };
+  const next = {
+    ...appliedOverrides,
+    previewCandidates: { ...appliedOverrides.previewCandidates },
+  };
   delete next.previewCandidates[candidateId];
+  appliedOverrides = pruneOverrides(next);
+}
+
+export function resetRecruitmentLabUnique(): void {
+  const next = { ...appliedOverrides };
+  delete next.uniqueLifecycle;
   appliedOverrides = pruneOverrides(next);
 }
 
@@ -153,21 +199,43 @@ function normalizeOverrides(src: Partial<RecruitmentLabOverrides>): RecruitmentL
   return pruneOverrides({
     profiles: src.profiles ?? {},
     previewCandidates: src.previewCandidates ?? {},
+    ...(src.radioState && RADIO_STATES.includes(src.radioState) ? { radioState: src.radioState } : {}),
     ...(src.slotCount != null ? { slotCount: src.slotCount } : {}),
+    ...(src.qualityLevel != null ? { qualityLevel: src.qualityLevel } : {}),
+    ...(src.crewCapacity != null ? { crewCapacity: src.crewCapacity } : {}),
+    ...(src.retransmissionUnlocked !== undefined
+      ? { retransmissionUnlocked: src.retransmissionUnlocked }
+      : {}),
+    ...(src.retransmissionRules ? { retransmissionRules: src.retransmissionRules } : {}),
+    ...(src.qualityTraitOverrides ? { qualityTraitOverrides: src.qualityTraitOverrides } : {}),
+    ...(src.uniqueLifecycle ? { uniqueLifecycle: src.uniqueLifecycle } : {}),
   });
 }
 
 function pruneOverrides(src: RecruitmentLabOverrides): RecruitmentLabOverrides {
   const profiles: Record<string, ProfileOverride> = {};
   for (const [id, o] of Object.entries(src.profiles ?? {})) {
-    if (Object.keys(o).length) profiles[id] = o;
+    if (o && Object.keys(o).length) profiles[id] = o;
   }
   const previewCandidates: Record<string, CandidateOverride> = {};
   for (const [id, o] of Object.entries(src.previewCandidates ?? {})) {
-    if (Object.keys(o).length) previewCandidates[id] = o;
+    if (o && Object.keys(o).length) previewCandidates[id] = o;
   }
   const out: RecruitmentLabOverrides = { profiles, previewCandidates };
+  if (src.radioState && RADIO_STATES.includes(src.radioState)) out.radioState = src.radioState;
   if (src.slotCount != null) out.slotCount = src.slotCount;
+  if (src.qualityLevel != null) out.qualityLevel = src.qualityLevel;
+  if (src.crewCapacity != null) out.crewCapacity = src.crewCapacity;
+  if (src.retransmissionUnlocked !== undefined) out.retransmissionUnlocked = src.retransmissionUnlocked;
+  if (src.retransmissionRules && Object.keys(src.retransmissionRules).length) {
+    out.retransmissionRules = src.retransmissionRules;
+  }
+  if (src.qualityTraitOverrides && Object.keys(src.qualityTraitOverrides).length) {
+    out.qualityTraitOverrides = src.qualityTraitOverrides;
+  }
+  if (src.uniqueLifecycle && Object.keys(src.uniqueLifecycle).length) {
+    out.uniqueLifecycle = { ...src.uniqueLifecycle };
+  }
   return out;
 }
 
@@ -176,12 +244,19 @@ export function recruitmentLabOverridesEqual(a: RecruitmentLabOverrides, b: Recr
 }
 
 export function modifiedRecruitmentLabCount(overrides: RecruitmentLabOverrides): number {
-  let n = overrides.slotCount != null ? 1 : 0;
+  let n = 0;
+  if (overrides.radioState != null) n += 1;
+  if (overrides.slotCount != null) n += 1;
+  if (overrides.qualityLevel != null) n += 1;
+  if (overrides.crewCapacity != null) n += 1;
+  if (overrides.retransmissionUnlocked !== undefined && overrides.retransmissionUnlocked !== null) n += 1;
+  if (overrides.retransmissionRules && Object.keys(overrides.retransmissionRules).length) n += 1;
+  if (overrides.qualityTraitOverrides && Object.keys(overrides.qualityTraitOverrides).length) n += 1;
   n += Object.keys(overrides.profiles).length;
   n += Object.keys(overrides.previewCandidates).length;
+  n += Object.keys(overrides.uniqueLifecycle ?? {}).length;
   return n;
 }
-
 
 function mergeStatRanges(
   base: Record<keyof OperatorBaseStats, StatRange>,
@@ -195,6 +270,62 @@ function mergeStatRanges(
   return out;
 }
 
+function cloneGearEntries(entries: readonly WeightedGearEntry[]): WeightedGearEntry[] {
+  return entries.map((e) => ({ ...e }));
+}
+
+/** Merge weighted kit arrays by id (null id kept as distinct none entry). */
+export function mergeWeightedGearEntries(
+  base: readonly WeightedGearEntry[],
+  patch?: readonly WeightedGearEntry[],
+): WeightedGearEntry[] {
+  if (!patch) return cloneGearEntries(base);
+  const byKey = new Map<string, WeightedGearEntry>();
+  for (const e of base) {
+    byKey.set(e.id ?? "__null__", { ...e });
+  }
+  for (const e of patch) {
+    byKey.set(e.id ?? "__null__", { ...e });
+  }
+  // Preserve patch order when provided as a full replacement list; otherwise base+new.
+  if (patch.length >= base.length || patch.length > 0) {
+    const seen = new Set<string>();
+    const ordered: WeightedGearEntry[] = [];
+    for (const e of patch) {
+      const key = e.id ?? "__null__";
+      ordered.push(byKey.get(key) ?? { ...e });
+      seen.add(key);
+    }
+    for (const e of base) {
+      const key = e.id ?? "__null__";
+      if (!seen.has(key)) ordered.push(byKey.get(key)!);
+    }
+    return ordered;
+  }
+  return [...byKey.values()];
+}
+
+export function mergeRecruitmentKit(
+  base: RecruitmentProfileKit,
+  patch?: RecruitmentProfileKit | Partial<RecruitmentProfileKit>,
+): RecruitmentProfileKit {
+  if (!patch) {
+    return {
+      weapons: cloneGearEntries(base.weapons),
+      armors: cloneGearEntries(base.armors),
+      attachments: cloneGearEntries(base.attachments),
+      attachmentChance: base.attachmentChance,
+    };
+  }
+  return {
+    weapons: mergeWeightedGearEntries(base.weapons, patch.weapons),
+    armors: mergeWeightedGearEntries(base.armors, patch.armors),
+    attachments: mergeWeightedGearEntries(base.attachments, patch.attachments),
+    attachmentChance:
+      typeof patch.attachmentChance === "number" ? patch.attachmentChance : base.attachmentChance,
+  };
+}
+
 export function effectiveRecruitmentProfile(
   profileId: string,
   overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
@@ -202,24 +333,23 @@ export function effectiveRecruitmentProfile(
   const base = RECRUITMENT_PROFILE_BY_ID[profileId];
   if (!base) return undefined;
   const patch = overrides.profiles[profileId];
-  if (!patch) return { ...base, hasOverride: false };
-  return {
+  if (!patch) return { ...base, kit: mergeRecruitmentKit(base.kit), hasOverride: false };
+  const negativeTraitChance = patch.negativeTraitChance ?? base.negativeTraitChance;
+  const out: EffectiveRecruitmentProfile = {
     ...base,
     enabled: patch.enabled ?? base.enabled,
     weight: patch.weight ?? base.weight,
+    minQuality: patch.minQuality ?? base.minQuality,
     currentRanges: mergeStatRanges(base.currentRanges, patch.currentRanges),
     potentialRanges: mergeStatRanges(base.potentialRanges, patch.potentialRanges),
     positivePerkPool: patch.positivePerkPool ?? base.positivePerkPool,
     negativeTraitPool: patch.negativeTraitPool ?? base.negativeTraitPool,
-    negativeTraitChance: patch.negativeTraitChance ?? base.negativeTraitChance,
-    kit: {
-      weaponPool: patch.kit?.weaponPool ?? base.kit.weaponPool,
-      armorPool: patch.kit?.armorPool ?? base.kit.armorPool,
-      attachTierWeights: { ...base.kit.attachTierWeights, ...patch.kit?.attachTierWeights },
-    },
+    kit: mergeRecruitmentKit(base.kit, patch.kit),
     requirements: patch.requirements ?? base.requirements,
     hasOverride: true,
   };
+  if (negativeTraitChance != null) out.negativeTraitChance = negativeTraitChance;
+  return out;
 }
 
 export function effectiveRecruitmentProfiles(
@@ -228,16 +358,51 @@ export function effectiveRecruitmentProfiles(
   return CANONICAL_RECRUITMENT_PROFILES.map((p) => effectiveRecruitmentProfile(p.id, overrides)!);
 }
 
-export function progressionFactsFromMeta(meta: Meta): RecruitmentProgressionFacts {
-  return { quests: meta.quests, claimedQuestIds: meta.claimed };
+/** Local capability resolution — avoids importing crew (cycle with getRecruitmentLabOverrides). */
+export function capabilityFromRadio(
+  radio: RadioProgressionState,
+  overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
+  devEnabled = DEV_TOOLS_ENABLED,
+): CapabilityBreakdown {
+  const dev: NonNullable<Parameters<typeof resolveRecruitmentCapability>[0]["dev"]> = {
+    slotOverride: overrides.slotCount ?? null,
+    qualityOverride: overrides.qualityLevel ?? null,
+    crewCapacityOverride: overrides.crewCapacity ?? null,
+    retransmissionUnlocked: overrides.retransmissionUnlocked ?? null,
+  };
+  if (overrides.radioState != null) dev.radioState = overrides.radioState;
+  return resolveRecruitmentCapability({
+    radio,
+    dev,
+    devToolsEnabled: devEnabled,
+  });
+}
+
+export function progressionFactsFromMeta(
+  meta: Meta,
+  overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
+): RecruitmentProgressionFacts {
+  const radio = meta.crew?.radio ?? freshRadioProgression();
+  const cap = capabilityFromRadio(radio, overrides);
+  return {
+    quests: meta.quests,
+    claimedQuestIds: meta.claimed,
+    radioState: cap.radioState,
+    effectiveQuality: cap.quality.effective,
+  };
 }
 
 export function eligibleProfiles(
   facts: RecruitmentProgressionFacts,
   overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
 ): EffectiveRecruitmentProfile[] {
+  const quality = facts.effectiveQuality;
   return effectiveRecruitmentProfiles(overrides).filter(
-    (p) => p.enabled && isProfileEligible(p.requirements, facts) && isProfileRangeValid(p),
+    (p) =>
+      p.enabled &&
+      (p.minQuality ?? 1) <= quality &&
+      isProfileEligible(p.requirements, facts) &&
+      isProfileRangeValid(p),
   );
 }
 
@@ -253,14 +418,41 @@ export function profileEligibilityRows(profileId: string, facts: RecruitmentProg
 export function profileLocked(profileId: string, facts: RecruitmentProgressionFacts): boolean {
   const profile = effectiveRecruitmentProfile(profileId);
   if (!profile || !profile.enabled) return true;
+  if ((profile.minQuality ?? 1) > facts.effectiveQuality) return true;
   return !isProfileEligible(profile.requirements, facts);
 }
 
-export function effectiveSlotCount(overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides()): number {
-  return getRecruitmentSlotCount({
-    devAppliedSlotOverride: overrides.slotCount ?? null,
-    devToolsEnabled: DEV_TOOLS_ENABLED,
-  });
+export function effectiveSlotCount(
+  overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
+  radio: RadioProgressionState = freshRadioProgression(),
+): number {
+  return capabilityFromRadio(radio, overrides).slots.effective;
+}
+
+export function effectiveRetransmissionRules(
+  overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
+): RetransmissionRules {
+  const patch = overrides.retransmissionRules;
+  if (!patch) return { ...CANONICAL_RETRANSMISSION, resourceCosts: { ...CANONICAL_RETRANSMISSION.resourceCosts } };
+  return {
+    baseCashCost: patch.baseCashCost ?? CANONICAL_RETRANSMISSION.baseCashCost,
+    escalation: patch.escalation ?? CANONICAL_RETRANSMISSION.escalation,
+    maxPerCycle: patch.maxPerCycle !== undefined ? patch.maxPerCycle : CANONICAL_RETRANSMISSION.maxPerCycle,
+    resourceCosts: {
+      ...CANONICAL_RETRANSMISSION.resourceCosts,
+      ...patch.resourceCosts,
+    },
+  };
+}
+
+export function effectiveTraitProbability(
+  quality: number,
+  overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
+): TraitProbabilityConfig {
+  const q = clampQuality(quality);
+  const base = CANONICAL_QUALITY_TIERS[q].traits;
+  const patch = overrides.qualityTraitOverrides?.[q];
+  return mergeTraitConfig(base, patch);
 }
 
 export function generateTestRecruitmentPool(
@@ -269,15 +461,19 @@ export function generateTestRecruitmentPool(
   facts: RecruitmentProgressionFacts,
   existingNames: readonly string[] = [],
   overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
+  radio: RadioProgressionState = freshRadioProgression(),
 ): RecruitCandidate[] {
-  const count = effectiveSlotCount(overrides);
-  const profiles = eligibleProfiles(facts, overrides);
+  const cap = capabilityFromRadio(radio, overrides);
+  const count = cap.slots.effective;
+  const quality = cap.quality.effective;
+  const profiles = eligibleProfiles({ ...facts, effectiveQuality: quality, radioState: cap.radioState }, overrides);
   const pool = generateRecruitmentPool({
     seed,
     generation,
     count,
     existingNames,
     profiles,
+    quality,
   });
   previewPool = pool;
   previewSeed = { seed, generation };
@@ -286,6 +482,10 @@ export function generateTestRecruitmentPool(
 
 export function getPreviewRecruitmentPool(): RecruitCandidate[] | null {
   return previewPool;
+}
+
+export function getPreviewRecruitmentSeed(): { seed: number; generation: number } | null {
+  return previewSeed;
 }
 
 export function applyCandidateOverride(
@@ -299,11 +499,17 @@ export function applyCandidateOverride(
   for (const key of Object.keys(stats) as Array<keyof OperatorBaseStats>) {
     potential[key] = Math.max(stats[key], potential[key] ?? stats[key]);
   }
+  const perkIds = override.perkIds ?? candidate.perkIds;
+  const neg = override.negativeTraitIds ?? candidate.negativeTraitIds;
+  const traitIds =
+    override.traitIds ??
+    [...new Set([...(perkIds ?? []), ...(neg ?? [])])];
   const next: RecruitCandidate = {
     ...candidate,
     stats,
     potential,
-    perkIds: override.perkIds ?? candidate.perkIds,
+    traitIds,
+    perkIds,
     equipment: {
       weapon: override.equipment?.weapon ?? candidate.equipment.weapon,
       attachments: override.equipment?.attachments ?? [...candidate.equipment.attachments],
@@ -311,10 +517,8 @@ export function applyCandidateOverride(
     },
     cost: 0,
   };
-  const neg = override.negativeTraitIds ?? candidate.negativeTraitIds;
   if (neg?.length) next.negativeTraitIds = [...neg];
-  next.cost =
-    override.costOverride != null ? override.costOverride : calculateRecruitmentCost(next);
+  next.cost = override.costOverride != null ? override.costOverride : calculateRecruitmentCost(next);
   return next;
 }
 
@@ -323,9 +527,54 @@ export function formatRecruitmentPatch(
   applied: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
 ): string {
   const lines: string[] = ["RECRUITMENT PATCH", ""];
-  if (draft.slotCount !== applied.slotCount) {
-    lines.push("RADIO", `baseSlots: ${BASE_RADIO_SLOTS} -> test ${draft.slotCount ?? BASE_RADIO_SLOTS}`, "");
+  const radioChanged =
+    draft.radioState !== applied.radioState ||
+    draft.slotCount !== applied.slotCount ||
+    draft.qualityLevel !== applied.qualityLevel ||
+    draft.crewCapacity !== applied.crewCapacity ||
+    draft.retransmissionUnlocked !== applied.retransmissionUnlocked ||
+    JSON.stringify(draft.retransmissionRules ?? null) !== JSON.stringify(applied.retransmissionRules ?? null) ||
+    JSON.stringify(draft.qualityTraitOverrides ?? null) !== JSON.stringify(applied.qualityTraitOverrides ?? null);
+
+  if (radioChanged) {
+    lines.push("RADIO");
+    if (draft.radioState !== applied.radioState) {
+      lines.push(`radioState: ${applied.radioState ?? "(meta)"} -> ${draft.radioState ?? "(meta)"}`);
+    }
+    if (draft.slotCount !== applied.slotCount) {
+      lines.push(`slotOverride: ${applied.slotCount ?? "none"} -> ${draft.slotCount ?? "none"}`);
+    }
+    if (draft.qualityLevel !== applied.qualityLevel) {
+      lines.push(`qualityOverride: ${applied.qualityLevel ?? "none"} -> ${draft.qualityLevel ?? "none"}`);
+    }
+    if (draft.crewCapacity !== applied.crewCapacity) {
+      lines.push(`crewCapacity: ${applied.crewCapacity ?? "none"} -> ${draft.crewCapacity ?? "none"}`);
+    }
+    if (draft.retransmissionUnlocked !== applied.retransmissionUnlocked) {
+      lines.push(
+        `retransmissionUnlocked: ${String(applied.retransmissionUnlocked)} -> ${String(draft.retransmissionUnlocked)}`,
+      );
+    }
+    if (JSON.stringify(draft.retransmissionRules ?? null) !== JSON.stringify(applied.retransmissionRules ?? null)) {
+      lines.push(`retransmissionRules: ${JSON.stringify(draft.retransmissionRules ?? {})}`);
+    }
+    if (
+      JSON.stringify(draft.qualityTraitOverrides ?? null) !==
+      JSON.stringify(applied.qualityTraitOverrides ?? null)
+    ) {
+      lines.push(`qualityTraitOverrides: ${JSON.stringify(draft.qualityTraitOverrides ?? {})}`);
+    }
+    lines.push("");
   }
+
+  if (JSON.stringify(draft.uniqueLifecycle ?? {}) !== JSON.stringify(applied.uniqueLifecycle ?? {})) {
+    lines.push("UNIQUE LIFECYCLE");
+    for (const [id, life] of Object.entries(draft.uniqueLifecycle ?? {})) {
+      lines.push(`${id}: ${life}`);
+    }
+    lines.push("");
+  }
+
   for (const profile of CANONICAL_RECRUITMENT_PROFILES) {
     const d = draft.profiles[profile.id];
     const a = applied.profiles[profile.id];
@@ -339,8 +588,18 @@ export function formatRecruitmentPatch(
     if (merged.enabled != null && merged.enabled !== profile.enabled) {
       lines.push(`enabled: ${profile.enabled} -> ${merged.enabled}`);
     }
+    if (merged.minQuality != null && merged.minQuality !== profile.minQuality) {
+      lines.push(`minQuality: ${profile.minQuality} -> ${merged.minQuality}`);
+    }
     if (merged.negativeTraitChance != null && merged.negativeTraitChance !== profile.negativeTraitChance) {
-      lines.push(`negativeTraitChance: ${(profile.negativeTraitChance * 100).toFixed(0)}% -> ${(merged.negativeTraitChance * 100).toFixed(0)}%`);
+      lines.push(
+        `negativeTraitChance: ${((profile.negativeTraitChance ?? 0) * 100).toFixed(0)}% -> ${(merged.negativeTraitChance * 100).toFixed(0)}%`,
+      );
+    }
+    if (merged.kit) {
+      lines.push(
+        `kit: weapons=${merged.kit.weapons.length} armors=${merged.kit.armors.length} attachments=${merged.kit.attachments.length} attachChance=${merged.kit.attachmentChance}`,
+      );
     }
     if (merged.requirements?.length) {
       for (const req of merged.requirements) {
@@ -384,6 +643,13 @@ export function validateProfileOverride(profileId: string, override: ProfileOver
     if (!isNegativeTraitId(id)) errors.push(`Non-negative trait in negative pool: ${id}`);
   }
   return errors;
+}
+
+export function nextLabRetransmissionCost(
+  overrides: RecruitmentLabOverrides,
+  retransmissionCount: number,
+): number {
+  return nextRetransmissionCashCost(effectiveRetransmissionRules(overrides), retransmissionCount);
 }
 
 export { recruitmentCostBreakdown, withRecruitmentCosts, generateRecruitmentCandidates };

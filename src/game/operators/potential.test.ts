@@ -10,7 +10,7 @@ import {
 } from "./recruitment";
 import { generatePotentialStats, migratePotentialStats } from "./potentialGeneration";
 import { migrateOperatorPotentialOnce, normalizeCandidatePotential } from "./migration";
-import { hireCandidate } from "./crew";
+import { hireCandidate, regenerateRecruitmentPool } from "./crew";
 import { mulberry32, seedFromParts } from "./rng";
 import {
   STAT_KEYS,
@@ -166,6 +166,13 @@ describe("pricing with potential", () => {
 describe("potential persistence", () => {
   it("hired operator receives exact candidate potential", () => {
     const meta = freshMeta();
+    meta.crew.radio = {
+      radioState: "SIGNAL_RESTORED",
+      modifiers: [],
+      retransmissionCount: 0,
+      uniqueContacts: {},
+    };
+    regenerateRecruitmentPool(meta);
     const candidate = meta.crew.recruitment.candidates[0]!;
     meta.bank = candidate.cost + 500;
     const result = hireCandidate(meta, candidate.candidateId, "op_pot_1");

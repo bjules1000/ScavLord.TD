@@ -4,15 +4,22 @@ import {
   applyRecruitmentLabOverrides,
   effectiveSlotCount,
   eligibleProfiles,
-  emptyRecruitmentLabOverrides,
   generateTestRecruitmentPool,
-  getRecruitmentLabOverrides,
   initRecruitmentLab,
   progressionFactsFromMeta,
   resetRecruitmentLabAll,
 } from "./recruitmentLabCore";
-import { BASE_RADIO_SLOTS, getRecruitmentSlotCount, RADIO_SLOT_MAX, RADIO_SLOT_MIN } from "./recruitmentSlots";
-import { regenerateRecruitmentPool, refreshRecruitmentPoolIfNeeded } from "./crew";
+import {
+  BASE_RADIO_SLOTS,
+  getRecruitmentSlotCount,
+  RADIO_SLOT_MAX,
+  RADIO_SLOT_MIN,
+} from "./recruitmentSlots";
+import {
+  freshRadioProgression,
+  RADIO_SLOTS_ON_SIGNAL_RESTORE,
+} from "./radioProgression";
+import { regenerateRecruitmentPool } from "./crew";
 import { generateRecruitmentCandidates } from "./generation";
 import { buildCandidateCardView, candidateStatRows } from "./recruitmentUi";
 import { playerStatRows } from "./recruitmentPresentation";
@@ -29,7 +36,6 @@ import {
 import {
   isNegativeTraitId,
   isPositivePerkId,
-  PERKS,
   RECRUITABLE_NEGATIVE_TRAIT_IDS,
   traitPolarity,
 } from "./perks";
@@ -38,9 +44,19 @@ import { hireCandidate } from "./crew";
 import { STAT_KEYS } from "./stats";
 
 describe("recruitment slots", () => {
-  it("canonical base slot count remains 3", () => {
-    expect(BASE_RADIO_SLOTS).toBe(3);
-    expect(getRecruitmentSlotCount({ devToolsEnabled: false })).toBe(3);
+  it("new game default is 0 slots until signal restored", () => {
+    expect(getRecruitmentSlotCount({ radio: freshRadioProgression(), devToolsEnabled: false })).toBe(0);
+    expect(BASE_RADIO_SLOTS).toBe(RADIO_SLOTS_ON_SIGNAL_RESTORE);
+    expect(BASE_RADIO_SLOTS).toBe(1);
+  });
+
+  it("SIGNAL_RESTORED grants base 1 slot", () => {
+    expect(
+      getRecruitmentSlotCount({
+        radio: { ...freshRadioProgression(), radioState: "SIGNAL_RESTORED" },
+        devToolsEnabled: false,
+      }),
+    ).toBe(1);
   });
 
   it("DEV slot override changes effective count", () => {
@@ -52,7 +68,13 @@ describe("recruitment slots", () => {
 
   it("DEV-off ignores slot override", () => {
     applyRecruitmentLabOverrides({ profiles: {}, previewCandidates: {}, slotCount: 6 }, true);
-    expect(getRecruitmentSlotCount({ devToolsEnabled: false })).toBe(3);
+    expect(
+      getRecruitmentSlotCount({
+        radio: { ...freshRadioProgression(), radioState: "SIGNAL_RESTORED" },
+        devAppliedSlotOverride: 6,
+        devToolsEnabled: false,
+      }),
+    ).toBe(1);
     resetRecruitmentLabAll();
   });
 
@@ -62,7 +84,7 @@ describe("recruitment slots", () => {
         modifiers: { signalLevelBonus: 1, perkBonus: 0 },
         devToolsEnabled: false,
       }),
-    ).toBe(4);
+    ).toBe(2);
   });
 
   it("clamps to min/max bounds", () => {
@@ -86,6 +108,12 @@ describe("recruitment slots", () => {
     regenerateRecruitmentPool(meta);
     expect(meta.crew.recruitment.candidates.length).toBe(5);
     resetRecruitmentLabAll();
+  });
+
+  it("fresh meta starts with empty pool (0 slots)", () => {
+    const meta = freshMeta();
+    expect(meta.crew.radio.radioState).toBe("BROKEN");
+    expect(meta.crew.recruitment.candidates.length).toBe(0);
   });
 });
 
@@ -136,6 +164,10 @@ describe("recruitment profiles and potential presentation", () => {
 
   it("already-hired operator unchanged by profile override", () => {
     initRecruitmentLab(true);
+    applyRecruitmentLabOverrides(
+      { profiles: {}, previewCandidates: {}, crewCapacity: 4 },
+      true,
+    );
     const meta = freshMeta();
     meta.bank = 99999;
     const pool = withRecruitmentCosts(generateRecruitmentCandidates(1, 0));
@@ -151,6 +183,7 @@ describe("recruitment profiles and potential presentation", () => {
         },
       },
       previewCandidates: {},
+      crewCapacity: 4,
     }, true);
     expect(hired.operator.stats).toEqual(before);
     resetRecruitmentLabAll();
@@ -211,6 +244,11 @@ describe("recruitment prerequisites", () => {
     m.quests.scavKills = 5;
     expect(isProfileEligible(reqs, progressionFactsFromMeta(m))).toBe(false);
   });
+
+  it("facts include radio state and quality", () => {
+    expect(facts.radioState).toBe("BROKEN");
+    expect(facts.effectiveQuality).toBe(1);
+  });
 });
 
 describe("recruitment lab preview pool", () => {
@@ -218,7 +256,7 @@ describe("recruitment lab preview pool", () => {
     initRecruitmentLab(true);
     const meta = freshMeta();
     const before = meta.crew.recruitment.candidates.length;
-    generateTestRecruitmentPool(123, 1, progressionFactsFromMeta(meta));
+    generateTestRecruitmentPool(123, 1, progressionFactsFromMeta(meta), [], getOverridesWithSlots(2), meta.crew.radio);
     expect(meta.crew.recruitment.candidates.length).toBe(before);
     resetRecruitmentLabAll();
   });
@@ -239,3 +277,7 @@ describe("recruitment lab preview pool", () => {
     resetRecruitmentLabAll();
   });
 });
+
+function getOverridesWithSlots(slotCount: number) {
+  return { profiles: {}, previewCandidates: {}, slotCount };
+}

@@ -232,7 +232,8 @@ describe("export", () => {
   });
 
   it("no source-file mutation path", () => {
-    upsertQuest(emptyQuestLabOverrides(), { ...QUEST_SPECS[0]!, name: "X" });
-    expect(QUEST_SPECS[0]!.name).toBe("FIRST BLOOD");
+    const debut = QUEST_SPECS.find((q) => q.id === "debut")!;
+    upsertQuest(emptyQuestLabOverrides(), { ...debut, name: "X" });
+    expect(QUEST_SPECS.find((q) => q.id === "debut")!.name).toBe("FIRST BLOOD");
   });
 });

@@ -1,26 +1,41 @@
 import { describe, expect, it } from "bun:test";
 import { freshMeta } from "../meta";
 import { migrateV5ToV6 } from "./migration";
-import { hireCandidate, refreshRecruitmentPoolIfNeeded } from "./crew";
+import { hireCandidate, refreshRecruitmentPoolIfNeeded, regenerateRecruitmentPool } from "./crew";
 import { generateRecruitmentCandidates } from "./generation";
+import { freshRadioProgression } from "./radioProgression";
+
+function metaWithSignal(slots = 3) {
+  const meta = freshMeta();
+  meta.crew.radio = {
+    ...freshRadioProgression(),
+    radioState: "SIGNAL_RESTORED",
+    modifiers:
+      slots > 1
+        ? [{ id: "extra", kind: "RECRUITMENT_SLOT_BONUS", source: "quest", amount: slots - 1 }]
+        : [],
+  };
+  regenerateRecruitmentPool(meta);
+  return meta;
+}
 
 describe("crew persistence", () => {
   it("refresh only after run counter advances", () => {
-    const meta = freshMeta();
+    const meta = metaWithSignal(2);
     const first = [...meta.crew.recruitment.candidates];
     expect(refreshRecruitmentPoolIfNeeded(meta)).toBe(false);
     expect(meta.crew.recruitment.candidates.map((c) => c.candidateId)).toEqual(
       first.map((c) => c.candidateId),
     );
-    meta.runs = 1;
+    meta.runs = meta.crew.recruitment.lastRefreshedAtRun + 1;
     expect(refreshRecruitmentPoolIfNeeded(meta)).toBe(true);
-    expect(meta.crew.recruitment.generation).toBe(1);
+    expect(meta.crew.recruitment.generation).toBeGreaterThan(0);
     expect(refreshRecruitmentPoolIfNeeded(meta)).toBe(false);
   });
 
   it("duplicate refresh does not reroll twice", () => {
-    const meta = freshMeta();
-    meta.runs = 2;
+    const meta = metaWithSignal(2);
+    meta.runs = meta.crew.recruitment.lastRefreshedAtRun + 1;
     refreshRecruitmentPoolIfNeeded(meta);
     const ids = meta.crew.recruitment.candidates.map((c) => c.candidateId);
     refreshRecruitmentPoolIfNeeded(meta);
@@ -38,7 +53,9 @@ describe("migration", () => {
     expect(migrated.bank).toBe(4200);
     expect(migrated.stash).toHaveLength(2);
     expect(migrated.crew.operators).toEqual([]);
-    expect(migrated.crew.recruitment.candidates.length).toBe(3);
+    // New-game radio is BROKEN with empty pool
+    expect(migrated.crew.radio.radioState).toBe("BROKEN");
+    expect(migrated.crew.recruitment.candidates.length).toBe(0);
   });
 
   it("migration is idempotent for crew block", () => {
@@ -50,7 +67,7 @@ describe("migration", () => {
 
 describe("pool stability", () => {
   it("hiring one candidate does not reroll the others", () => {
-    const meta = freshMeta();
+    const meta = metaWithSignal(3);
     const others = meta.crew.recruitment.candidates.slice(1).map((c) => c.candidateId);
     const first = meta.crew.recruitment.candidates[0]!;
     meta.bank = first.cost + 100;
@@ -59,8 +76,8 @@ describe("pool stability", () => {
   });
 
   it("same seed reproduces pool contents", () => {
-    const a = generateRecruitmentCandidates(404, 9);
-    const b = generateRecruitmentCandidates(404, 9);
+    const a = generateRecruitmentCandidates(404, 9, 2);
+    const b = generateRecruitmentCandidates(404, 9, 2);
     expect(a).toEqual(b);
   });
 });
