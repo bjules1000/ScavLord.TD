@@ -39,21 +39,32 @@ export function canAffordRecruitment(bank: number, cost: number): boolean {
   return bank >= cost;
 }
 
+export function formatRecruitmentRoubles(amount: number): string {
+  return `${amount.toLocaleString()} ₽`;
+}
+
 export function recruitmentAffordabilityMessage(bank: number, cost: number): string | null {
   const deficit = recruitmentDeficit(bank, cost);
   if (deficit <= 0) return null;
-  return `INSUFFICIENT FUNDS · NEED ${deficit} ₽ MORE`;
+  return `INSUFFICIENT FUNDS · NEED ${formatRecruitmentRoubles(deficit)} MORE`;
 }
+
+const PERK_STAT_EFFECT_LABELS: Record<keyof OperatorBaseStats, string> = {
+  aim: "Aim",
+  toughness: "Toughness",
+  handling: "Handling",
+  mobility: "Mobility",
+};
 
 export function perkRecruitmentDetail(perkId: string): { name: string; lines: string[] } {
   const perk = PERKS[perkId];
   if (!perk) return { name: perkId.toUpperCase(), lines: [] };
   const lines: string[] = [];
   const combat = perk.combat;
-  if (combat.aim) lines.push(`+${combat.aim} aim`);
-  if (combat.toughness) lines.push(`+${combat.toughness} toughness`);
-  if (combat.handling) lines.push(`+${combat.handling} handling`);
-  if (combat.mobility) lines.push(`+${combat.mobility} mobility`);
+  if (combat.aim) lines.push(`+${combat.aim} ${PERK_STAT_EFFECT_LABELS.aim}`);
+  if (combat.toughness) lines.push(`+${combat.toughness} ${PERK_STAT_EFFECT_LABELS.toughness}`);
+  if (combat.handling) lines.push(`+${combat.handling} ${PERK_STAT_EFFECT_LABELS.handling}`);
+  if (combat.mobility) lines.push(`+${combat.mobility} ${PERK_STAT_EFFECT_LABELS.mobility}`);
   if (lines.length) lines.push(perk.desc);
   else lines.push(`Future: ${perk.desc}`);
   return { name: perk.name, lines };
@@ -98,4 +109,49 @@ export function candidateStatRows(stats: OperatorBaseStats): Array<{
 
 export function primaryPerkId(candidate: Pick<RecruitCandidate, "perkIds">): string | null {
   return candidate.perkIds[0] ?? null;
+}
+
+export interface CandidateCardView {
+  name: string;
+  archetype: string;
+  statRows: ReturnType<typeof candidateStatRows>;
+  perkName: string;
+  costFormatted: string;
+  showsKitLine: false;
+}
+
+export function buildCandidateCardView(candidate: RecruitCandidate): CandidateCardView {
+  const perkId = primaryPerkId(candidate);
+  return {
+    name: candidate.name,
+    archetype: candidate.roleLabel,
+    statRows: candidateStatRows(candidate.stats),
+    perkName: perkId ? (PERKS[perkId]?.name ?? perkId) : "—",
+    costFormatted: formatRecruitmentRoubles(candidate.cost),
+    showsKitLine: false,
+  };
+}
+
+export interface SelectedDetailView {
+  identity: string;
+  perk: ReturnType<typeof perkRecruitmentDetail> | null;
+  kit: StartingKitDisplay;
+  bankFormatted: string;
+  costFormatted: string;
+  affordMsg: string | null;
+  affordable: boolean;
+}
+
+/** Detail panel content — intentionally excludes stat comparison (shown on cards only). */
+export function buildSelectedDetailView(candidate: RecruitCandidate, bank: number): SelectedDetailView {
+  const perkId = primaryPerkId(candidate);
+  return {
+    identity: `${candidate.name} · ${candidate.roleLabel}`,
+    perk: perkId ? perkRecruitmentDetail(perkId) : null,
+    kit: startingKitDisplay(candidate.equipment),
+    bankFormatted: formatRecruitmentRoubles(bank),
+    costFormatted: formatRecruitmentRoubles(candidate.cost),
+    affordMsg: recruitmentAffordabilityMessage(bank, candidate.cost),
+    affordable: canAffordRecruitment(bank, candidate.cost),
+  };
 }

@@ -2678,17 +2678,15 @@ export default function TarkovTD() {
               )}
 
               {s.phase === "hideout" && screen === "radio" && (
-                <Overlay title="RADIO — RECRUITMENT" subtitle={RECRUITMENT_SUBTITLE}>
+                <Overlay title="RADIO — RECRUITMENT" subtitle={RECRUITMENT_SUBTITLE} layout="wide">
                   <RecruitmentPanel
                     candidates={meta.crew.recruitment.candidates}
                     bank={meta.bank}
                     selectedId={selectedRecruitId}
                     onSelect={setSelectedRecruitId}
                     onHire={hireRecruit}
+                    onBack={() => setScreen("hideout")}
                   />
-                  <button onClick={() => setScreen("hideout")} className="pixel-btn mt-3 w-full">
-                    BACK TO CAMP
-                  </button>
                 </Overlay>
               )}
 
@@ -3934,20 +3932,25 @@ function Overlay({
   title: string;
   subtitle: string;
   children: React.ReactNode;
-  layout?: "center" | "fill";
+  layout?: "center" | "fill" | "wide";
 }) {
   const fill = layout === "fill";
+  const wide = layout === "wide";
   return (
     <div
-      className={`absolute inset-0 z-10 flex flex-col items-center gap-2 bg-background/90 p-3 text-center backdrop-blur-[2px] pixel-scrollbar sm:p-4 ${
-        fill ? "overflow-hidden" : "justify-center overflow-auto"
+      className={`absolute inset-0 z-10 flex flex-col items-center gap-2 bg-background/85 p-3 text-center backdrop-blur-[1px] pixel-scrollbar sm:p-5 ${
+        fill ? "overflow-hidden" : wide ? "justify-start overflow-auto pt-4 sm:pt-6" : "justify-center overflow-auto"
       }`}
     >
-      <h2 className="shrink-0 font-display text-base text-primary sm:text-lg">{title}</h2>
-      <p className="shrink-0 font-mono text-[11px] text-muted-foreground">{subtitle}</p>
+      <h2 className="shrink-0 font-display text-base text-primary sm:text-xl">{title}</h2>
+      <p className="shrink-0 max-w-3xl font-mono text-[11px] text-muted-foreground sm:text-xs">{subtitle}</p>
       <div
         className={`w-full ${
-          fill ? "flex min-h-0 flex-1 flex-col overflow-hidden max-w-6xl" : "max-w-4xl"
+          fill
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden max-w-6xl"
+            : wide
+              ? "flex min-h-0 w-[min(80vw,72rem)] max-w-[80vw] flex-1 flex-col"
+              : "max-w-4xl"
         }`}
       >
         {children}
