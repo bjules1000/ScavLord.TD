@@ -1,6 +1,6 @@
 import { BACKPACKS, ITEM_BY_ID, WEAPONS, makeItem, type Item } from "./gear";
 import { freshCrewState, migrateV5ToV6, normalizeMetaV6 } from "./operators";
-import { QUESTS, type QuestProgress } from "./quests";
+import { QUESTS, emptyQuestProgress, type QuestProgress } from "./quests";
 
 export type { QuestDef, QuestProgress } from "./quests";
 export { QUESTS } from "./quests";
@@ -130,7 +130,7 @@ export function freshMeta(): Meta {
     bank: 0,
     claimed: [],
     stash: [{ defId: "a_grip" }, { defId: "m_ifak" }],
-    quests: { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0, wavesCompletedByMap: {} },
+    quests: emptyQuestProgress(),
     runs: 0,
     pmc: freshPmc(),
     skills: [],
@@ -143,6 +143,7 @@ export function freshMeta(): Meta {
 function normalizeLegacyMeta(p: Partial<Meta>): Meta {
   const base = freshPmc();
   const runs = Number(p.runs) || 0;
+  const emptyQuests = emptyQuestProgress();
   const meta: Meta = {
     bank: Number(p.bank) || 0,
     claimed: Array.isArray(p.claimed) ? p.claimed.filter((c) => typeof c === "string") : [],
@@ -163,7 +164,16 @@ function normalizeLegacyMeta(p: Partial<Meta>): Meta {
       wavesCompletedByMap:
         p.quests?.wavesCompletedByMap && typeof p.quests.wavesCompletedByMap === "object"
           ? { ...p.quests.wavesCompletedByMap }
-          : {},
+          : { ...emptyQuests.wavesCompletedByMap },
+      killsByMap:
+        p.quests?.killsByMap && typeof p.quests.killsByMap === "object"
+          ? { ...p.quests.killsByMap }
+          : { ...emptyQuests.killsByMap },
+      raiderKills: Number(p.quests?.raiderKills) || 0,
+      bossKillsById:
+        p.quests?.bossKillsById && typeof p.quests.bossKillsById === "object"
+          ? { ...p.quests.bossKillsById }
+          : { ...emptyQuests.bossKillsById },
     },
     runs,
     pmc: {
@@ -179,6 +189,7 @@ function normalizeLegacyMeta(p: Partial<Meta>): Meta {
     skills: Array.isArray(p.skills) ? p.skills.filter((x) => !!SKILL_BY_ID[x]) : [],
     skillPoints: Math.max(0, Number(p.skillPoints) || 0),
     backpack: BACKPACKS[p.backpack ?? ""] ? p.backpack! : "sling",
+    // Always normalize through normalizeMetaV6 so crew.radio is present.
     crew: p.crew ?? freshCrewState(runs),
   };
   return normalizeMetaV6(meta, runs);

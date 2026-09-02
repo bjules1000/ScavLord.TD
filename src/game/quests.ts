@@ -18,6 +18,12 @@ import type { EnemyKind } from "./types";
 export const QUEST_ID_RE = /^[a-z][a-z0-9_]{1,39}$/;
 export const MAX_WAVE_OBJECTIVE = 99;
 
+export interface MapKillCounts {
+  scav?: number;
+  boss?: number;
+  raider?: number;
+}
+
 export interface QuestProgress {
   scavKills: number;
   bossKills: number;
@@ -25,6 +31,12 @@ export interface QuestProgress {
   extracts: number;
   /** Cumulative waves completed per map (successful extracts). */
   wavesCompletedByMap?: Record<string, number>;
+  /** Lifetime kills attributed by map (leaks excluded at settlement). */
+  killsByMap?: Record<string, MapKillCounts>;
+  /** Optional raider lifetime kills when tracked. */
+  raiderKills?: number;
+  /** Per-boss kill counts when multiple bosses exist. */
+  bossKillsById?: Record<string, number>;
 }
 
 export interface QuestDef {
@@ -68,7 +80,14 @@ export type QuestObjective =
 export type QuestReward =
   | { type: "ROUBLES"; amount: number }
   | { type: "SKILL_POINTS"; amount: number }
-  | { type: "UNLOCK"; itemId: string };
+  | { type: "UNLOCK"; itemId: string }
+  | { type: "SET_RADIO_STATE"; state: import("./operators/radioProgression").RadioState }
+  | { type: "RECRUITMENT_SLOT_BONUS"; amount: number }
+  | { type: "RECRUITMENT_QUALITY_BONUS"; amount: number }
+  | { type: "CREW_CAPACITY_BONUS"; amount: number }
+  | { type: "UNLOCK_RETRANSMISSION" }
+  | { type: "UNLOCK_RECRUITMENT_PROFILE"; profileId: string }
+  | { type: "UNLOCK_UNIQUE_CONTACT"; uniqueId: string };
 
 export type QuestSpec = {
   id: string;
@@ -83,8 +102,30 @@ export type QuestSpec = {
 };
 
 export function emptyQuestProgress(): QuestProgress {
-  return { scavKills: 0, bossKills: 0, bestWave: 0, extracts: 0 };
+  return {
+    scavKills: 0,
+    bossKills: 0,
+    bestWave: 0,
+    extracts: 0,
+    wavesCompletedByMap: {},
+    killsByMap: {},
+    raiderKills: 0,
+    bossKillsById: {},
+  };
 }
+
+export const QUEST_REWARD_TYPES = [
+  "ROUBLES",
+  "SKILL_POINTS",
+  "UNLOCK",
+  "SET_RADIO_STATE",
+  "RECRUITMENT_SLOT_BONUS",
+  "RECRUITMENT_QUALITY_BONUS",
+  "CREW_CAPACITY_BONUS",
+  "UNLOCK_RETRANSMISSION",
+  "UNLOCK_RECRUITMENT_PROFILE",
+  "UNLOCK_UNIQUE_CONTACT",
+] as const;
 
 export function questDropSourceId(questId: string): string {
   return `quest:${questId}`;
@@ -156,6 +197,29 @@ function reward(partial: QuestReward): QuestReward {
 /** Canonical authored quests. Functions on QuestDef are derived from these specs. */
 export const QUEST_SPECS: QuestSpec[] = [
   {
+    id: "radio_power",
+    name: "DEAD CHANNEL",
+    desc: "Find a way to restore power to the Radio. Extract after surviving a raid with scavs down.",
+    objectives: [obj({ type: "KILL", count: 10 }), obj({ type: "EXTRACT", count: 1 })],
+    rewards: [
+      reward({ type: "ROUBLES", amount: 400 }),
+      reward({ type: "SET_RADIO_STATE", state: "POWERED_STATIC" }),
+    ],
+    prerequisites: [],
+  },
+  {
+    id: "radio_signal",
+    name: "RAISE THE TOWER",
+    desc: "Repair the antenna path. Reach wave 3 and extract to lock in a clear signal.",
+    objectives: [obj({ type: "REACH_WAVE", wave: 3 }), obj({ type: "EXTRACT", count: 1 })],
+    rewards: [
+      reward({ type: "ROUBLES", amount: 600 }),
+      reward({ type: "SET_RADIO_STATE", state: "SIGNAL_RESTORED" }),
+      reward({ type: "SKILL_POINTS", amount: 1 }),
+    ],
+    prerequisites: ["radio_power"],
+  },
+  {
     id: "debut",
     name: "FIRST BLOOD",
     desc: "Kill 25 scavs.",
@@ -167,6 +231,7 @@ export const QUEST_SPECS: QuestSpec[] = [
       reward({ type: "UNLOCK", itemId: "a_grip" }),
       reward({ type: "UNLOCK", itemId: "m_ifak" }),
       reward({ type: "UNLOCK", itemId: "ar_paca" }),
+      reward({ type: "CREW_CAPACITY_BONUS", amount: 1 }),
     ],
     prerequisites: [],
   },
@@ -577,6 +642,26 @@ export function validateReward(r: QuestReward, index: number): QuestIssue[] {
     if (!r.itemId) out.push(issue("error", "MISSING_UNLOCK", `${prefix}: missing item ID`));
     else if (!ITEM_BY_ID[r.itemId]) out.push(issue("error", "BAD_UNLOCK", `${prefix}: unknown item ${r.itemId}`));
   }
+  if (r.type === "SET_RADIO_STATE") {
+    if (!["BROKEN", "POWERED_STATIC", "SIGNAL_RESTORED", "NETWORKED"].includes(r.state)) {
+      out.push(issue("error", "BAD_RADIO_STATE", `${prefix}: unknown radio state`));
+    }
+  }
+  if (
+    r.type === "RECRUITMENT_SLOT_BONUS" ||
+    r.type === "RECRUITMENT_QUALITY_BONUS" ||
+    r.type === "CREW_CAPACITY_BONUS"
+  ) {
+    if (!Number.isFinite(r.amount) || r.amount < 1) {
+      out.push(issue("error", "BAD_REWARD", `${prefix}: amount must be ≥ 1`));
+    }
+  }
+  if (r.type === "UNLOCK_RECRUITMENT_PROFILE" && !r.profileId) {
+    out.push(issue("error", "BAD_REWARD", `${prefix}: missing profileId`));
+  }
+  if (r.type === "UNLOCK_UNIQUE_CONTACT" && !r.uniqueId) {
+    out.push(issue("error", "BAD_REWARD", `${prefix}: missing uniqueId`));
+  }
   return out;
 }
 
@@ -594,7 +679,23 @@ export function validateQuest(spec: QuestSpec, catalog: readonly QuestSpec[]): Q
   if (spec.objectives.length === 0) errors.push(issue("error", "NO_OBJECTIVES", "Quest has no objectives"));
   spec.objectives.forEach((o, i) => errors.push(...validateObjective(spec, o, i)));
   spec.rewards.forEach((r, i) => errors.push(...validateReward(r, i)));
-  if (spec.rewards.length === 0 || (questRoubles(spec) === 0 && questSkillPoints(spec) === 0 && questUnlocks(spec).length === 0)) {
+  if (
+    spec.rewards.length === 0 ||
+    (questRoubles(spec) === 0 &&
+      questSkillPoints(spec) === 0 &&
+      questUnlocks(spec).length === 0 &&
+      !spec.rewards.some((r) =>
+        [
+          "SET_RADIO_STATE",
+          "RECRUITMENT_SLOT_BONUS",
+          "RECRUITMENT_QUALITY_BONUS",
+          "CREW_CAPACITY_BONUS",
+          "UNLOCK_RETRANSMISSION",
+          "UNLOCK_RECRUITMENT_PROFILE",
+          "UNLOCK_UNIQUE_CONTACT",
+        ].includes(r.type),
+      ))
+  ) {
     warnings.push(issue("warning", "NO_REWARD", "Quest has no reward"));
   }
   if (spec.prerequisites.length === 0) {
