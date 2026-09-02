@@ -7,15 +7,15 @@ import { DEV_TOOLS_ENABLED } from "../dev/tools";
 import {
   RADIO_SLOT_MAX,
   RADIO_SLOT_MIN,
-  RADIO_SLOTS_ON_SIGNAL_RESTORE,
+  RADIO_SLOTS_ON_NETWORKED,
   clampSlots,
   resolveRecruitmentCapability,
   type RadioProgressionState,
   freshRadioProgression,
 } from "./radioProgression";
 
-/** @deprecated New-game base is 0 until SIGNAL_RESTORED. Kept for Lab labels. */
-export const BASE_RADIO_SLOTS = RADIO_SLOTS_ON_SIGNAL_RESTORE;
+/** Lab label: procedural base once NETWORKED (pre-network base is 0). */
+export const BASE_RADIO_SLOTS = RADIO_SLOTS_ON_NETWORKED;
 
 export { RADIO_SLOT_MIN, RADIO_SLOT_MAX, clampSlots };
 
@@ -48,11 +48,11 @@ export function getRecruitmentSlotCount(ctx: RecruitmentSlotContext = {}): numbe
   if (devOn && ctx.devAppliedSlotOverride != null) {
     return clampSlots(ctx.devAppliedSlotOverride);
   }
-  // Without radio state (legacy callers): treat as unlocked with base 1 + modifiers.
+  // Without radio state (legacy callers): treat as networked base + modifiers.
   const m = ctx.modifiers ?? {};
   const fromModifiers =
     (m.signalLevelBonus ?? 0) + (m.perkBonus ?? 0) + (m.otherBonus ?? 0);
-  return clampSlots(RADIO_SLOTS_ON_SIGNAL_RESTORE + fromModifiers);
+  return clampSlots(RADIO_SLOTS_ON_NETWORKED + fromModifiers);
 }
 
 export function emptyRadioForSlots(): RadioProgressionState {

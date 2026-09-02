@@ -17,7 +17,7 @@ import {
 } from "./recruitmentSlots";
 import {
   freshRadioProgression,
-  RADIO_SLOTS_ON_SIGNAL_RESTORE,
+  RADIO_SLOTS_ON_NETWORKED,
 } from "./radioProgression";
 import { regenerateRecruitmentPool } from "./crew";
 import { generateRecruitmentCandidates } from "./generation";
@@ -44,16 +44,25 @@ import { hireCandidate } from "./crew";
 import { STAT_KEYS } from "./stats";
 
 describe("recruitment slots", () => {
-  it("new game default is 0 slots until signal restored", () => {
+  it("new game default is 0 slots until NETWORKED", () => {
     expect(getRecruitmentSlotCount({ radio: freshRadioProgression(), devToolsEnabled: false })).toBe(0);
-    expect(BASE_RADIO_SLOTS).toBe(RADIO_SLOTS_ON_SIGNAL_RESTORE);
+    expect(BASE_RADIO_SLOTS).toBe(RADIO_SLOTS_ON_NETWORKED);
     expect(BASE_RADIO_SLOTS).toBe(1);
   });
 
-  it("SIGNAL_RESTORED grants base 1 slot", () => {
+  it("SIGNAL_RESTORED grants 0 procedural slots", () => {
     expect(
       getRecruitmentSlotCount({
         radio: { ...freshRadioProgression(), radioState: "SIGNAL_RESTORED" },
+        devToolsEnabled: false,
+      }),
+    ).toBe(0);
+  });
+
+  it("NETWORKED grants base 1 slot", () => {
+    expect(
+      getRecruitmentSlotCount({
+        radio: { ...freshRadioProgression(), radioState: "NETWORKED" },
         devToolsEnabled: false,
       }),
     ).toBe(1);
@@ -70,7 +79,7 @@ describe("recruitment slots", () => {
     applyRecruitmentLabOverrides({ profiles: {}, previewCandidates: {}, slotCount: 6 }, true);
     expect(
       getRecruitmentSlotCount({
-        radio: { ...freshRadioProgression(), radioState: "SIGNAL_RESTORED" },
+        radio: { ...freshRadioProgression(), radioState: "NETWORKED" },
         devAppliedSlotOverride: 6,
         devToolsEnabled: false,
       }),

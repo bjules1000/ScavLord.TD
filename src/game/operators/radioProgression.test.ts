@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import {
   applyProgressionModifier,
   freshRadioProgression,
+  isProceduralRecruitmentUnlocked,
   isRecruitmentUnlocked,
+  isUniqueContactRadioActive,
   radioStateBaseSlots,
   resolveRecruitmentCapability,
   normalizeRadioProgression,
@@ -18,16 +20,25 @@ import {
   CANONICAL_RETRANSMISSION,
   nextRetransmissionCashCost,
 } from "./retransmission";
-import { CANONICAL_UNIQUE_OPERATORS, uniqueRevealForLifecycle } from "./uniqueOperators";
+import {
+  CANONICAL_UNIQUE_OPERATORS,
+  getUniqueContactProgress,
+  maybeTriggerUniqueDistress,
+  uniqueRevealForLifecycle,
+  uniqueTransmissionForLifecycle,
+  syncUniqueEligibility,
+  uniqueContactRequirementsMet,
+} from "./uniqueOperators";
 import { resolveTraitIds } from "./types";
-import { freshCrewState, hireCandidate, regenerateRecruitmentPool } from "./crew";
+import { crewOccupancy, freshCrewState, hireCandidate, hireUniqueContact, regenerateRecruitmentPool } from "./crew";
 import { freshMeta } from "../meta";
-import { QUEST_SPEC_BY_ID } from "../quests";
+import { QUEST_SPEC_BY_ID, questUniqueGateMet } from "../quests";
 import { isProfileEligible } from "./recruitmentRequirements";
 import { generateRecruitmentPool } from "./generation";
 import { CANONICAL_RECRUITMENT_PROFILES } from "./recruitmentProfiles";
 import { withRecruitmentCosts } from "./recruitment";
 import { kitEquipmentValue } from "./generation";
+import { progressionFactsFromMeta } from "./recruitmentLabCore";
 
 describe("radio progression", () => {
   it("new game Radio starts BROKEN with 0 slots", () => {
@@ -35,6 +46,7 @@ describe("radio progression", () => {
     expect(radio.radioState).toBe("BROKEN");
     const cap = resolveRecruitmentCapability({ radio, devToolsEnabled: false });
     expect(cap.slots.effective).toBe(0);
+    expect(isProceduralRecruitmentUnlocked(radio.radioState)).toBe(false);
     expect(isRecruitmentUnlocked(radio.radioState)).toBe(false);
   });
 
@@ -47,10 +59,11 @@ describe("radio progression", () => {
       targetId: "POWERED_STATIC",
     });
     expect(radio.radioState).toBe("POWERED_STATIC");
+    expect(radioStateBaseSlots(radio.radioState)).toBe(0);
     expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(0);
   });
 
-  it("signal restored grants first slot", () => {
+  it("SIGNAL_RESTORED has 0 procedural slots but unique contacts active", () => {
     let radio = freshRadioProgression();
     radio = applyProgressionModifier(radio, {
       id: "t",
@@ -58,11 +71,43 @@ describe("radio progression", () => {
       source: "quest",
       targetId: "SIGNAL_RESTORED",
     });
-    expect(radioStateBaseSlots(radio.radioState)).toBe(1);
-    expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(1);
+    expect(radioStateBaseSlots(radio.radioState)).toBe(0);
+    expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(0);
+    expect(isProceduralRecruitmentUnlocked(radio.radioState)).toBe(false);
+    expect(isUniqueContactRadioActive(radio.radioState)).toBe(true);
   });
 
-  it("quest slot bonus composes", () => {
+  it("NETWORKED grants first procedural slot", () => {
+    let radio = freshRadioProgression();
+    radio = applyProgressionModifier(radio, {
+      id: "t",
+      kind: "SET_RADIO_STATE",
+      source: "quest",
+      targetId: "NETWORKED",
+    });
+    expect(radioStateBaseSlots(radio.radioState)).toBe(1);
+    expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(1);
+    expect(isProceduralRecruitmentUnlocked(radio.radioState)).toBe(true);
+  });
+
+  it("quest slot bonus composes after NETWORKED", () => {
+    let radio = freshRadioProgression();
+    radio = applyProgressionModifier(radio, {
+      id: "net",
+      kind: "SET_RADIO_STATE",
+      source: "quest",
+      targetId: "NETWORKED",
+    });
+    radio = applyProgressionModifier(radio, {
+      id: "slot",
+      kind: "RECRUITMENT_SLOT_BONUS",
+      source: "quest",
+      amount: 1,
+    });
+    expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(2);
+  });
+
+  it("slot bonuses do not unlock procedural pool before NETWORKED", () => {
     let radio = freshRadioProgression();
     radio = applyProgressionModifier(radio, {
       id: "sig",
@@ -74,9 +119,9 @@ describe("radio progression", () => {
       id: "slot",
       kind: "RECRUITMENT_SLOT_BONUS",
       source: "quest",
-      amount: 1,
+      amount: 3,
     });
-    expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(2);
+    expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(0);
   });
 
   it("radio quest rewards apply generically", () => {
@@ -87,11 +132,16 @@ describe("radio progression", () => {
     const signal = QUEST_SPEC_BY_ID["radio_signal"]!;
     radio = applyQuestRewardsToRadio(radio, "radio_signal", signal.rewards);
     expect(radio.radioState).toBe("SIGNAL_RESTORED");
+    expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(0);
+    const network = QUEST_SPEC_BY_ID["radio_network"]!;
+    radio = applyQuestRewardsToRadio(radio, "radio_network", network.rewards);
+    expect(radio.radioState).toBe("NETWORKED");
+    expect(resolveRecruitmentCapability({ radio, devToolsEnabled: false }).slots.effective).toBe(1);
   });
 
-  it("compat migration for existing recruitment saves", () => {
+  it("compat migration for existing recruitment saves → NETWORKED", () => {
     const migrated = normalizeRadioProgression(undefined, { hadRecruitmentCandidates: true });
-    expect(migrated.radioState).toBe("SIGNAL_RESTORED");
+    expect(migrated.radioState).toBe("NETWORKED");
     expect(resolveRecruitmentCapability({ radio: migrated, devToolsEnabled: false }).slots.effective).toBeGreaterThanOrEqual(1);
   });
 });
@@ -131,7 +181,6 @@ describe("quality and traits", () => {
     );
     expect(low.length).toBe(8);
     expect(high.length).toBe(8);
-    // Same seed different quality → different individuals; not every high > every low.
     const lowAimAvg = low.reduce((s, c) => s + c.stats.aim, 0) / low.length;
     const highAimAvg = high.reduce((s, c) => s + c.stats.aim, 0) / high.length;
     expect(highAimAvg).toBeGreaterThanOrEqual(lowAimAvg - 5);
@@ -159,18 +208,13 @@ describe("crew capacity vs radio slots", () => {
     const meta = freshMeta();
     meta.crew.radio = {
       ...freshRadioProgression(),
-      radioState: "SIGNAL_RESTORED",
-      modifiers: [
-        { id: "slots", kind: "RECRUITMENT_SLOT_BONUS", source: "quest", amount: 3 },
-      ],
+      radioState: "NETWORKED",
+      modifiers: [{ id: "slots", kind: "RECRUITMENT_SLOT_BONUS", source: "quest", amount: 3 }],
     };
-    // Force capacity to current occupancy (PMC only = 1) via absolute... use modifiers carefully:
-    // base capacity is 2, so hire one first then block next if we don't bump capacity.
     regenerateRecruitmentPool(meta);
     meta.bank = 99999;
     const first = hireCandidate(meta, meta.crew.recruitment.candidates[0]!.candidateId);
     expect(first.ok).toBe(true);
-    // Now occupancy = 2 (PMC + 1), capacity = 2 → next hire blocked
     const before = meta.crew.recruitment.candidates.length;
     expect(before).toBeGreaterThan(0);
     const result = hireCandidate(meta, meta.crew.recruitment.candidates[0]!.candidateId);
@@ -180,14 +224,114 @@ describe("crew capacity vs radio slots", () => {
   });
 });
 
-describe("unique operators", () => {
-  it("has curated definition and reveal stages", () => {
+describe("unique operators / Wolf storyline", () => {
+  it("has curated definition and transmissions", () => {
     const wolf = CANONICAL_UNIQUE_OPERATORS.find((u) => u.id === "wolf")!;
     expect(wolf.name).toBe("WOLF");
     const distress = uniqueRevealForLifecycle(wolf, "DISTRESS_SIGNAL");
     expect(distress?.headline).toContain("UNKNOWN");
     const identified = uniqueRevealForLifecycle(wolf, "IDENTIFIED");
     expect(identified?.headline).toContain("WOLF");
+    expect(uniqueTransmissionForLifecycle(wolf, "DISTRESS_SIGNAL")?.body).toContain("anyone receiving");
+  });
+
+  it("starts HIDDEN and cannot transmit while Radio BROKEN", () => {
+    const radio = freshRadioProgression();
+    expect(getUniqueContactProgress(radio, "wolf").lifecycle).toBe("HIDDEN");
+    const once = maybeTriggerUniqueDistress(radio, "wolf", 0);
+    expect(once.triggered).toBe(false);
+  });
+
+  it("first Radio open after SIGNAL_RESTORED triggers distress exactly once", () => {
+    let radio = freshRadioProgression();
+    radio = applyProgressionModifier(radio, {
+      id: "sig",
+      kind: "SET_RADIO_STATE",
+      source: "quest",
+      targetId: "SIGNAL_RESTORED",
+    });
+    const first = maybeTriggerUniqueDistress(radio, "wolf", 1);
+    expect(first.triggered).toBe(true);
+    expect(first.radio.uniqueContacts["wolf"]?.lifecycle).toBe("DISTRESS_SIGNAL");
+    const second = maybeTriggerUniqueDistress(first.radio, "wolf", 2);
+    expect(second.triggered).toBe(false);
+    expect(second.radio.uniqueContacts["wolf"]?.lifecycle).toBe("DISTRESS_SIGNAL");
+  });
+
+  it("Wolf hire does not unlock procedural slots; network quest does", () => {
+    const meta = freshMeta();
+    meta.crew.radio = {
+      ...freshRadioProgression(),
+      radioState: "SIGNAL_RESTORED",
+      uniqueContacts: { wolf: { lifecycle: "RECRUITABLE", distressHeard: true } },
+    };
+    meta.claimed = ["wolf_help"];
+    meta.quests.wavesCompletedByMap = { woods: 5 };
+    meta.bank = 0;
+    expect(crewOccupancy(meta)).toBe(1);
+    const hired = hireUniqueContact(meta, "wolf");
+    expect(hired.ok).toBe(true);
+    if (hired.ok) {
+      expect(hired.operator.uniqueId).toBe("wolf");
+      expect(hired.operator.equipment.weapon).toBe("adar");
+    }
+    expect(crewOccupancy(meta)).toBe(2);
+    expect(meta.crew.radio.uniqueContacts["wolf"]?.lifecycle).toBe("RECRUITED");
+    expect(resolveRecruitmentCapability({ radio: meta.crew.radio, devToolsEnabled: false }).slots.effective).toBe(0);
+    expect(meta.crew.recruitment.candidates.length).toBe(0);
+
+    const again = hireUniqueContact(meta, "wolf");
+    expect(again.ok).toBe(false);
+
+    expect(questUniqueGateMet(QUEST_SPEC_BY_ID["radio_network"]!, meta.crew.radio.uniqueContacts)).toBe(true);
+    meta.crew.radio = applyQuestRewardsToRadio(
+      meta.crew.radio,
+      "radio_network",
+      QUEST_SPEC_BY_ID["radio_network"]!.rewards,
+    );
+    expect(meta.crew.radio.radioState).toBe("NETWORKED");
+    regenerateRecruitmentPool(meta);
+    expect(meta.crew.recruitment.candidates.length).toBe(1);
+    expect(meta.crew.operators.some((o) => o.uniqueId === "wolf")).toBe(true);
+  });
+
+  it("unmet Wolf requirements block hire", () => {
+    const meta = freshMeta();
+    meta.crew.radio = {
+      ...freshRadioProgression(),
+      radioState: "SIGNAL_RESTORED",
+      uniqueContacts: { wolf: { lifecycle: "CONTACTABLE" } },
+    };
+    const facts = progressionFactsFromMeta(meta);
+    const wolf = CANONICAL_UNIQUE_OPERATORS.find((u) => u.id === "wolf")!;
+    expect(uniqueContactRequirementsMet(wolf, facts)).toBe(false);
+    expect(hireUniqueContact(meta, "wolf").ok).toBe(false);
+  });
+
+  it("SET_UNIQUE_CONTACT_STATE quest reward advances lifecycle", () => {
+    let radio = freshRadioProgression();
+    radio = applyProgressionModifier(radio, {
+      id: "sig",
+      kind: "SET_RADIO_STATE",
+      source: "quest",
+      targetId: "SIGNAL_RESTORED",
+    });
+    radio = maybeTriggerUniqueDistress(radio, "wolf", 0).radio;
+    radio = applyQuestRewardsToRadio(radio, "wolf_help", QUEST_SPEC_BY_ID["wolf_help"]!.rewards);
+    expect(radio.uniqueContacts["wolf"]?.lifecycle).toBe("CONTACTABLE");
+  });
+
+  it("sync promotes CONTACTABLE → RECRUITABLE when requirements met", () => {
+    const meta = freshMeta();
+    meta.claimed = ["wolf_help"];
+    meta.quests.wavesCompletedByMap = { woods: 3 };
+    const radio = {
+      ...freshRadioProgression(),
+      radioState: "SIGNAL_RESTORED" as const,
+      uniqueContacts: { wolf: { lifecycle: "CONTACTABLE" as const } },
+    };
+    const next = syncUniqueEligibility(radio, "wolf", progressionFactsFromMeta({ ...meta, crew: { ...meta.crew, radio } }));
+    expect(next.uniqueContacts["wolf"]?.lifecycle).toBe("RECRUITABLE");
   });
 });
 

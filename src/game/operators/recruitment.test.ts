@@ -12,7 +12,7 @@ function metaWithSignal(slots = 1) {
   const meta = freshMeta();
   meta.crew.radio = {
     ...freshRadioProgression(),
-    radioState: "SIGNAL_RESTORED",
+    radioState: "NETWORKED",
     modifiers:
       slots > 1
         ? [{ id: "extra", kind: "RECRUITMENT_SLOT_BONUS", source: "quest", amount: slots - 1 }]

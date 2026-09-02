@@ -1,10 +1,9 @@
 /**
  * Canonical Radio / recruitment progression.
  *
- * New game: Radio BROKEN, 0 recruitment slots.
- * Restored signal unlocks the first slot. Further slots/quality come from
- * generic progression modifiers (quests, upgrades, future perks) — not
- * hard-coded quest-id checks in Radio UI.
+ * New game: Radio BROKEN, 0 procedural slots.
+ * SIGNAL_RESTORED enables unique contacts (Wolf) but NOT procedural recruitment.
+ * NETWORKED unlocks the first procedural Radio slot.
  */
 
 import { DEV_TOOLS_ENABLED } from "../dev/tools";
@@ -16,15 +15,31 @@ export const RECRUITMENT_QUALITY_MIN = 1;
 export const RECRUITMENT_QUALITY_MAX = 5;
 export type RecruitmentQuality = 1 | 2 | 3 | 4 | 5;
 
-/** Layout / DEV-safe Radio slot bounds. 0 allowed for broken/static. */
+/** Layout / DEV-safe Radio slot bounds. 0 allowed before NETWORKED. */
 export const RADIO_SLOT_MIN = 0;
 export const RADIO_SLOT_MAX = 8;
 
-/** Slots granted when Radio first reaches SIGNAL_RESTORED (before other bonuses). */
-export const RADIO_SLOTS_ON_SIGNAL_RESTORE = 1;
+/**
+ * Procedural slots granted by Radio state alone.
+ * SIGNAL_RESTORED is intentionally 0 — unique contacts only until NETWORKED.
+ */
+export const RADIO_SLOTS_ON_NETWORKED = 1;
+
+/** @deprecated Use RADIO_SLOTS_ON_NETWORKED — SIGNAL_RESTORED no longer grants slots. */
+export const RADIO_SLOTS_ON_SIGNAL_RESTORE = 0;
 
 export const BASE_CREW_CAPACITY = 2;
 export const CREW_CAPACITY_MAX = 12;
+
+export const UNIQUE_CONTACT_LIFECYCLES = [
+  "HIDDEN",
+  "DISTRESS_SIGNAL",
+  "IDENTIFIED",
+  "REQUIREMENTS_VISIBLE",
+  "CONTACTABLE",
+  "RECRUITABLE",
+  "RECRUITED",
+] as const;
 
 export type ProgressionModifierSource =
   | "radio_state"
@@ -42,40 +57,34 @@ export type ProgressionModifierKind =
   | "UNLOCK_RETRANSMISSION"
   | "UNLOCK_RECRUITMENT_PROFILE"
   | "UNLOCK_UNIQUE_CONTACT"
-  | "SET_RADIO_STATE";
+  | "SET_RADIO_STATE"
+  | "SET_UNIQUE_CONTACT_STATE";
 
 export interface ProgressionModifier {
   id: string;
   kind: ProgressionModifierKind;
   source: ProgressionModifierSource;
-  /** Numeric delta for bonus kinds; radio state uses value as ordinal via SET_RADIO_STATE. */
   amount?: number;
-  /** Target id for unlock kinds / SET_RADIO_STATE payload. */
+  /** Target id for unlock / SET_RADIO_STATE / unique id. */
   targetId?: string;
+  /** Lifecycle payload for SET_UNIQUE_CONTACT_STATE. */
+  lifecycle?: UniqueContactLifecycle;
 }
 
 export interface RadioProgressionState {
   radioState: RadioState;
-  /** Explicit modifiers granted by quests/upgrades (persisted). */
   modifiers: ProgressionModifier[];
-  /** Retransmissions used since last natural recruitment cycle. */
   retransmissionCount: number;
-  /** Unique contact progress keyed by unique operator id. */
   uniqueContacts: Record<string, UniqueContactProgress>;
 }
 
-export type UniqueContactLifecycle =
-  | "HIDDEN"
-  | "DISTRESS_SIGNAL"
-  | "IDENTIFIED"
-  | "REQUIREMENTS_VISIBLE"
-  | "CONTACTABLE"
-  | "RECRUITABLE"
-  | "RECRUITED";
+export type UniqueContactLifecycle = (typeof UNIQUE_CONTACT_LIFECYCLES)[number];
 
 export interface UniqueContactProgress {
   lifecycle: UniqueContactLifecycle;
   discoveredAtRun?: number;
+  /** First distress transmission already shown (idempotent). */
+  distressHeard?: boolean;
 }
 
 export function freshRadioProgression(): RadioProgressionState {
@@ -95,14 +104,24 @@ export function maxRadioState(a: RadioState, b: RadioState): RadioState {
   return radioStateOrdinal(a) >= radioStateOrdinal(b) ? a : b;
 }
 
-export function isRecruitmentUnlocked(state: RadioState): boolean {
+/** Unique contacts / transmissions may run once a usable signal exists. */
+export function isUniqueContactRadioActive(state: RadioState): boolean {
   return state === "SIGNAL_RESTORED" || state === "NETWORKED";
+}
+
+/** Procedural candidate pool is only available after the scav network is open. */
+export function isProceduralRecruitmentUnlocked(state: RadioState): boolean {
+  return state === "NETWORKED";
+}
+
+/** @deprecated Prefer isProceduralRecruitmentUnlocked — SIGNAL_RESTORED is unique-only. */
+export function isRecruitmentUnlocked(state: RadioState): boolean {
+  return isProceduralRecruitmentUnlocked(state);
 }
 
 /** Slots contributed by radio state alone (before quest/upgrade bonuses). */
 export function radioStateBaseSlots(state: RadioState): number {
-  if (!isRecruitmentUnlocked(state)) return 0;
-  return RADIO_SLOTS_ON_SIGNAL_RESTORE;
+  return state === "NETWORKED" ? RADIO_SLOTS_ON_NETWORKED : 0;
 }
 
 export function clampSlots(n: number): number {
@@ -217,9 +236,9 @@ export function resolveRecruitmentCapability(ctx: CapabilityContext): Capability
 
   let effectiveSlots = clampSlots(stateBase + slotQuest + slotUpgrade + slotCamp + slotPerk + slotRep);
   if (slotDev != null) effectiveSlots = clampSlots(slotDev);
-  if (!isRecruitmentUnlocked(radioState) && slotDev == null) effectiveSlots = 0;
+  if (!isProceduralRecruitmentUnlocked(radioState) && slotDev == null) effectiveSlots = 0;
 
-  const qualityUnlocked = isRecruitmentUnlocked(radioState);
+  const qualityUnlocked = isProceduralRecruitmentUnlocked(radioState);
   const qualityBase = qualityUnlocked ? 1 : 0;
   const qQuest = sumBonuses(mods, "RECRUITMENT_QUALITY_BONUS", ["quest"]);
   const qUpgrade = sumBonuses(mods, "RECRUITMENT_QUALITY_BONUS", ["upgrade"]);
@@ -301,9 +320,20 @@ export function applyProgressionModifier(
     }
   }
   if (modifier.kind === "UNLOCK_UNIQUE_CONTACT" && modifier.targetId) {
-    if (!next.uniqueContacts[modifier.targetId]) {
-      next.uniqueContacts[modifier.targetId] = { lifecycle: "DISTRESS_SIGNAL" };
+    const cur = next.uniqueContacts[modifier.targetId];
+    if (!cur || cur.lifecycle === "HIDDEN") {
+      const entry: UniqueContactProgress = { lifecycle: "DISTRESS_SIGNAL" };
+      if (typeof cur?.discoveredAtRun === "number") entry.discoveredAtRun = cur.discoveredAtRun;
+      next.uniqueContacts[modifier.targetId] = entry;
     }
+  }
+  if (modifier.kind === "SET_UNIQUE_CONTACT_STATE" && modifier.targetId && modifier.lifecycle) {
+    const prev = next.uniqueContacts[modifier.targetId];
+    next.uniqueContacts[modifier.targetId] = {
+      lifecycle: modifier.lifecycle,
+      ...(prev?.discoveredAtRun != null ? { discoveredAtRun: prev.discoveredAtRun } : {}),
+      ...(prev?.distressHeard ? { distressHeard: true } : {}),
+    };
   }
   return next;
 }
@@ -331,33 +361,53 @@ export function normalizeRadioProgression(
   opts?: { hadRecruitmentCandidates?: boolean; hadHiredOperators?: boolean },
 ): RadioProgressionState {
   if (!raw) {
-    // Compatibility: existing saves that already had recruitment stay playable.
+    // Compatibility: existing saves that already had recruitment stay playable at NETWORKED.
     if (opts?.hadHiredOperators || opts?.hadRecruitmentCandidates) {
       return {
-        radioState: "SIGNAL_RESTORED",
-        modifiers: [
-          {
-            id: "migrate_compat_slot",
-            kind: "RECRUITMENT_SLOT_BONUS",
-            source: "quest",
-            amount: 2,
-          },
-        ],
+        radioState: "NETWORKED",
+        modifiers: [],
         retransmissionCount: 0,
         uniqueContacts: {},
       };
     }
     return freshRadioProgression();
   }
-  const state = RADIO_STATES.includes(raw.radioState as RadioState)
+  let state = RADIO_STATES.includes(raw.radioState as RadioState)
     ? (raw.radioState as RadioState)
     : "BROKEN";
+  // Old saves treated SIGNAL_RESTORED as procedural unlock — promote if they already had a pool/operators.
+  if (
+    state === "SIGNAL_RESTORED" &&
+    (opts?.hadHiredOperators || opts?.hadRecruitmentCandidates) &&
+    (!raw.uniqueContacts || Object.keys(raw.uniqueContacts).length === 0)
+  ) {
+    // Keep SIGNAL_RESTORED if mid Wolf story; only promote empty contact-less legacy pools.
+    const hadSlots =
+      Array.isArray(raw.modifiers) &&
+      raw.modifiers.some((m) => m.kind === "RECRUITMENT_SLOT_BONUS");
+    if (hadSlots || opts?.hadRecruitmentCandidates) {
+      state = "NETWORKED";
+    }
+  }
+  const uniqueContacts: Record<string, UniqueContactProgress> = {};
+  if (raw.uniqueContacts && typeof raw.uniqueContacts === "object") {
+    for (const [id, prog] of Object.entries(raw.uniqueContacts)) {
+      if (!prog) continue;
+      const life = UNIQUE_CONTACT_LIFECYCLES.includes(prog.lifecycle as UniqueContactLifecycle)
+        ? (prog.lifecycle as UniqueContactLifecycle)
+        : "HIDDEN";
+      uniqueContacts[id] = {
+        lifecycle: life,
+        ...(typeof prog.discoveredAtRun === "number" ? { discoveredAtRun: prog.discoveredAtRun } : {}),
+        ...(prog.distressHeard ? { distressHeard: true } : {}),
+      };
+    }
+  }
   return {
     radioState: state,
     modifiers: Array.isArray(raw.modifiers) ? raw.modifiers.filter(Boolean) : [],
     retransmissionCount: Math.max(0, Number(raw.retransmissionCount) || 0),
-    uniqueContacts:
-      raw.uniqueContacts && typeof raw.uniqueContacts === "object" ? { ...raw.uniqueContacts } : {},
+    uniqueContacts,
   };
 }
 
@@ -384,13 +434,13 @@ export function radioStatePresentation(state: RadioState): {
       return {
         title: "RADIO",
         subtitle: "SIGNAL RESTORED",
-        body: "A clear channel opens. Someone is listening.",
+        body: "A clear channel opens.\nNo scav network yet — but someone might be listening.",
       };
     case "NETWORKED":
       return {
         title: "RADIO",
         subtitle: "NETWORKED",
-        body: "The network is live. More frequencies answer.",
+        body: "Frequencies are open. Word gets around.",
       };
   }
 }

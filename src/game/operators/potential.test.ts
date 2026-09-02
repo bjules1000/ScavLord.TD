@@ -167,7 +167,7 @@ describe("potential persistence", () => {
   it("hired operator receives exact candidate potential", () => {
     const meta = freshMeta();
     meta.crew.radio = {
-      radioState: "SIGNAL_RESTORED",
+      radioState: "NETWORKED",
       modifiers: [],
       retransmissionCount: 0,
       uniqueContacts: {},
