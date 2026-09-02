@@ -1,15 +1,17 @@
+import {
+  playerStatRows,
+  devStatRows,
+  type PlayerStatRow,
+  type DevStatRow,
+} from "./recruitmentPresentation";
 import { ARMORS, ATTACHMENTS, WEAPONS } from "../gear";
 import { kitEquipmentValue } from "./generation";
 import { PERKS } from "./perks";
-import {
-  STAT_DISPLAY_MAX,
-  STAT_KEYS,
-  STAT_LABELS,
-  growthGap,
-  growthGaps,
-} from "./stats";
+import { STAT_DISPLAY_MAX, STAT_KEYS, STAT_LABELS } from "./stats";
 import type { OperatorBaseStats } from "./types";
 import type { OperatorEquipment, RecruitCandidate } from "./types";
+
+export { playerStatRows, devStatRows, type PlayerStatRow, type DevStatRow };
 
 export const RECRUITMENT_SUBTITLE =
   "Incoming transmissions. Stats, perks and kit affect hiring cost.";
@@ -78,10 +80,10 @@ export function perkRecruitmentDetail(perkId: string): { name: string; lines: st
   if (!perk) return { name: perkId.toUpperCase(), lines: [] };
   const lines: string[] = [];
   const combat = perk.combat;
-  if (combat.aim) lines.push(`+${combat.aim} ${PERK_STAT_EFFECT_LABELS["aim"]}`);
-  if (combat.toughness) lines.push(`+${combat.toughness} ${PERK_STAT_EFFECT_LABELS["toughness"]}`);
-  if (combat.handling) lines.push(`+${combat.handling} ${PERK_STAT_EFFECT_LABELS["handling"]}`);
-  if (combat.mobility) lines.push(`+${combat.mobility} ${PERK_STAT_EFFECT_LABELS["mobility"]}`);
+  if (combat.aim) lines.push(`${combat.aim > 0 ? "+" : ""}${combat.aim} ${PERK_STAT_EFFECT_LABELS["aim"]}`);
+  if (combat.toughness) lines.push(`${combat.toughness > 0 ? "+" : ""}${combat.toughness} ${PERK_STAT_EFFECT_LABELS["toughness"]}`);
+  if (combat.handling) lines.push(`${combat.handling > 0 ? "+" : ""}${combat.handling} ${PERK_STAT_EFFECT_LABELS["handling"]}`);
+  if (combat.mobility) lines.push(`${combat.mobility > 0 ? "+" : ""}${combat.mobility} ${PERK_STAT_EFFECT_LABELS["mobility"]}`);
   if (lines.length) lines.push(perk.desc);
   else lines.push(`Future: ${perk.desc}`);
   return { name: perk.name, lines };
@@ -105,45 +107,12 @@ export function startingKitDisplay(equipment: OperatorEquipment): StartingKitDis
   };
 }
 
+/** DEV-only exact stat rows with true potential numbers. */
 export function candidateStatRows(
   stats: OperatorBaseStats,
   potential: OperatorBaseStats,
-): Array<{
-  key: keyof OperatorBaseStats;
-  label: string;
-  current: number;
-  potential: number;
-  growthGap: number;
-  bar: string;
-}> {
-  return STAT_KEYS.map((key) => {
-    const barModel = statPotentialBarSegments(stats[key], potential[key], key);
-    return {
-      key,
-      label: STAT_LABELS[key],
-      current: stats[key],
-      potential: potential[key],
-      growthGap: growthGap(stats[key], potential[key]),
-      bar: barModel.bar,
-    };
-  });
-}
-
-export function largestGrowthGapLabel(
-  stats: OperatorBaseStats,
-  potential: OperatorBaseStats,
-): string | null {
-  const gaps = growthGaps(stats, potential);
-  let best: keyof OperatorBaseStats | null = null;
-  let bestGap = 0;
-  for (const key of STAT_KEYS) {
-    if (gaps[key] > bestGap) {
-      bestGap = gaps[key];
-      best = key;
-    }
-  }
-  if (!best || bestGap <= 0) return null;
-  return `DEVELOPMENT: +${bestGap} ${STAT_LABELS[best]} AVAILABLE`;
+): DevStatRow[] {
+  return devStatRows(stats, potential);
 }
 
 export function primaryPerkId(candidate: Pick<RecruitCandidate, "perkIds">): string | null {
@@ -153,7 +122,7 @@ export function primaryPerkId(candidate: Pick<RecruitCandidate, "perkIds">): str
 export interface CandidateCardView {
   name: string;
   archetype: string;
-  statRows: ReturnType<typeof candidateStatRows>;
+  statRows: PlayerStatRow[];
   perkName: string;
   costFormatted: string;
   showsKitLine: false;
@@ -165,7 +134,7 @@ export function buildCandidateCardView(candidate: RecruitCandidate): CandidateCa
   return {
     name: candidate.name,
     archetype: candidate.roleLabel,
-    statRows: candidateStatRows(candidate.stats, candidate.potential),
+    statRows: playerStatRows(candidate.stats, candidate.potential),
     perkName: perkId ? (PERKS[perkId]?.name ?? perkId) : "—",
     costFormatted: formatRecruitmentRoubles(candidate.cost),
     showsKitLine: false,
@@ -181,7 +150,6 @@ export interface SelectedDetailView {
   costFormatted: string;
   affordMsg: string | null;
   affordable: boolean;
-  developmentLine: string | null;
 }
 
 export function buildSelectedDetailView(candidate: RecruitCandidate, bank: number): SelectedDetailView {
@@ -194,14 +162,31 @@ export function buildSelectedDetailView(candidate: RecruitCandidate, bank: numbe
     costFormatted: formatRecruitmentRoubles(candidate.cost),
     affordMsg: recruitmentAffordabilityMessage(bank, candidate.cost),
     affordable: canAffordRecruitment(bank, candidate.cost),
-    developmentLine: largestGrowthGapLabel(candidate.stats, candidate.potential),
   };
 }
 
+/** Player-facing crew stat line: current number + potential bar only. */
+export function formatCrewStatDisplay(
+  key: keyof OperatorBaseStats,
+  current: number,
+  truePotential: number,
+): { label: string; current: number; bar: string } {
+  const barModel = statPotentialBarSegments(current, truePotential, key);
+  return { label: STAT_LABELS[key], current, bar: barModel.bar };
+}
+
+/** @deprecated Use formatCrewStatDisplay — reveals exact potential. */
 export function formatCrewStatLine(
   key: keyof OperatorBaseStats,
   current: number,
   potential: number,
 ): string {
   return `${STAT_LABELS[key]} ${current} / ${potential}`;
+}
+
+export function crewStatRows(
+  stats: OperatorBaseStats,
+  truePotential: OperatorBaseStats,
+): PlayerStatRow[] {
+  return playerStatRows(stats, truePotential);
 }

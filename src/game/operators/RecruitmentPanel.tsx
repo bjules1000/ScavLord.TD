@@ -10,20 +10,16 @@ export { RECRUITMENT_SUBTITLE };
 function StatRow({
   label,
   current,
-  potential,
   bar,
 }: {
   label: string;
   current: number;
-  potential: number;
   bar: string;
 }) {
   return (
-    <div className="grid grid-cols-[3rem_4.75rem_minmax(0,1fr)] items-center gap-x-2 leading-snug">
+    <div className="grid grid-cols-[3rem_2.5rem_minmax(0,1fr)] items-center gap-x-2 leading-snug">
       <span className="text-[12px] text-muted-foreground">{label}</span>
-      <span className="tabular-nums text-[12px] font-medium text-foreground">
-        {current} / {potential}
-      </span>
+      <span className="tabular-nums text-[12px] font-medium text-foreground">{current}</span>
       <span className="font-mono text-[10px] tracking-tight text-primary/90" aria-hidden>
         {bar}
       </span>
@@ -55,13 +51,7 @@ function CandidateCard({
       <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{view.archetype}</div>
       <div className="mt-2.5 space-y-1">
         {view.statRows.map((row) => (
-          <StatRow
-            key={row.key}
-            label={row.label}
-            current={row.current}
-            potential={row.potential}
-            bar={row.bar}
-          />
+          <StatRow key={row.key} label={row.label} current={row.current} bar={row.bar} />
         ))}
       </div>
       <div className="mt-2.5 border-t border-border/40 pt-2 text-[11px]">
@@ -87,9 +77,6 @@ function SelectedCandidateDetail({
   return (
     <div className="pixel-card mt-3 p-3.5 text-left font-mono sm:p-4">
       <div className="font-display text-[14px] text-primary">{view.identity}</div>
-      {view.developmentLine && (
-        <div className="mt-1 text-[10px] text-muted-foreground">{view.developmentLine}</div>
-      )}
 
       <div className="mt-3 grid gap-4 lg:grid-cols-2 lg:gap-6">
         <div>
@@ -182,7 +169,7 @@ export default function RecruitmentPanel({
   return (
     <div className="flex min-h-0 flex-col text-left font-mono">
       <div className="text-[11px] text-muted-foreground">AVAILABLE OPERATORS</div>
-      <div className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+      <div className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {candidates.map((c) => (
           <CandidateCard
             key={c.candidateId}

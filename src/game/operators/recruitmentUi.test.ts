@@ -23,13 +23,13 @@ describe("recruitment UI helpers", () => {
   const candidate = pool[0]!;
   const other = pool[1]!;
 
-  it("candidate cards render all four canonical stats with current/potential", () => {
+  it("candidate cards render all four canonical stats with current only (player view)", () => {
     const card = buildCandidateCardView(candidate);
     expect(card.statRows).toHaveLength(STAT_KEYS.length);
     for (const row of card.statRows) {
       expect(row.current).toBe(candidate.stats[row.key]);
-      expect(row.potential).toBe(candidate.potential[row.key]);
-      expect(row.current).toBeLessThanOrEqual(row.potential);
+      expect(row).not.toHaveProperty("potential");
+      expect(row.bar.length).toBeGreaterThan(0);
     }
   });
 
@@ -43,10 +43,14 @@ describe("recruitment UI helpers", () => {
     expect(buildCandidateCardView(candidate).showsKitLine).toBe(false);
   });
 
-  it("selected detail does not duplicate full stat grid", () => {
+  it("DEV stat rows expose exact potential", () => {
+    const rows = candidateStatRows(candidate.stats, candidate.potential);
+    expect(rows[0]!.potential).toBe(candidate.potential.aim);
+  });
+
+  it("selected detail does not leak exact development gap", () => {
     const detail = buildSelectedDetailView(candidate, 0);
-    expect(buildCandidateCardView(candidate).includesStatGridInDetail).toBe(false);
-    expect(detail).not.toHaveProperty("statRows");
+    expect(detail).not.toHaveProperty("developmentLine");
   });
 
   it("stat bars use shared global stat scale", () => {
