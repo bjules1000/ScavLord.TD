@@ -25,6 +25,12 @@ import {
   CANONICAL_RETRANSMISSION,
 } from "./retransmission";
 import { incrementRetransmissionCount } from "./radioProgression";
+import {
+  getUniqueContactProgress,
+  uniqueContactRequirementsMet,
+  uniqueToOperator,
+  UNIQUE_OPERATOR_BY_ID,
+} from "./uniqueOperators";
 
 export { progressionFactsFromMeta };
 
@@ -206,6 +212,53 @@ export function hireCandidate(meta: Meta, candidateId: string, operatorId = crea
       },
     };
   }
+  return { ok: true, meta, operator };
+}
+
+/**
+ * Hire a unique contact (e.g. Wolf) outside the procedural Radio pool.
+ * Does not consume a procedural slot.
+ */
+export function hireUniqueContact(
+  meta: Meta,
+  uniqueId: string,
+  operatorId = createOperatorId(),
+): HireResult {
+  const def = UNIQUE_OPERATOR_BY_ID[uniqueId];
+  if (!def) return { ok: false, reason: "Unknown contact." };
+  ensureRadio(meta);
+  const radio = meta.crew.radio!;
+  const prog = getUniqueContactProgress(radio, uniqueId);
+  if (prog.lifecycle === "RECRUITED" || meta.crew.operators.some((o) => o.uniqueId === uniqueId)) {
+    return { ok: false, reason: "Already recruited." };
+  }
+  if (prog.lifecycle !== "RECRUITABLE" && prog.lifecycle !== "CONTACTABLE") {
+    return { ok: false, reason: "Contact not ready." };
+  }
+  const facts = progressionFactsFromMeta(meta);
+  if (!uniqueContactRequirementsMet(def, facts)) {
+    return { ok: false, reason: "Requirements not met." };
+  }
+  const cap = capabilityFromMeta(meta);
+  if (crewOccupancy(meta) >= cap.crewCapacity.effective) {
+    return { ok: false, reason: "CREW CAPACITY FULL" };
+  }
+  const cost = def.terms.cashCost ?? 0;
+  if (meta.bank < cost) return { ok: false, reason: "Insufficient funds." };
+  meta.bank -= cost;
+  const operator = uniqueToOperator(def, operatorId);
+  meta.crew.operators.push(operator);
+  meta.crew.radio = {
+    ...radio,
+    uniqueContacts: {
+      ...radio.uniqueContacts,
+      [uniqueId]: {
+        ...prog,
+        lifecycle: "RECRUITED",
+        distressHeard: true,
+      },
+    },
+  };
   return { ok: true, meta, operator };
 }
 

@@ -58,6 +58,7 @@ import {
 import {
   CANONICAL_UNIQUE_OPERATORS,
   uniqueRevealForLifecycle,
+  uniqueTransmissionForLifecycle,
 } from "../operators/uniqueOperators";
 import {
   PERKS,
@@ -849,6 +850,7 @@ export default function RecruitmentLab({
                     const forced = draft.uniqueLifecycle?.[selectedUnique.id];
                     const life = forced ?? metaLife;
                     const reveal = uniqueRevealForLifecycle(selectedUnique, life);
+                    const tx = uniqueTransmissionForLifecycle(selectedUnique, life);
                     return (
                       <>
                         <div className="pixel-card p-2">
@@ -880,19 +882,24 @@ export default function RecruitmentLab({
                           <div className="mt-1 text-accent">EFFECTIVE: {life}</div>
                         </div>
                         <div className="pixel-card p-2">
-                          <div className="text-primary">REVEAL CONTENT</div>
-                          {reveal ? (
+                          <div className="text-primary">TRANSMISSION / REVEAL</div>
+                          {tx ? (
+                            <>
+                              <div>{tx.title}</div>
+                              {tx.status ? <div className="text-muted-foreground">{tx.status}</div> : null}
+                              <div className="mt-1 whitespace-pre-wrap text-muted-foreground">{tx.body}</div>
+                              {tx.knownTraits?.length ? (
+                                <div className="mt-1">traits: {tx.knownTraits.join(", ")}</div>
+                              ) : null}
+                              {tx.knownRoleHint ? <div>role: {tx.knownRoleHint}</div> : null}
+                            </>
+                          ) : reveal ? (
                             <>
                               <div>{reveal.headline}</div>
                               <div className="mt-1 whitespace-pre-wrap text-muted-foreground">{reveal.body}</div>
-                              {reveal.knownTraits?.length ? (
-                                <div className="mt-1">traits: {reveal.knownTraits.join(", ")}</div>
-                              ) : null}
-                              {reveal.knownRoleHint ? <div>role: {reveal.knownRoleHint}</div> : null}
-                              {reveal.knownLocationHint ? <div>loc: {reveal.knownLocationHint}</div> : null}
                             </>
                           ) : (
-                            <div className="text-muted-foreground">No reveal at {life}</div>
+                            <div className="text-muted-foreground">No transmission at {life}</div>
                           )}
                         </div>
                         <div className="pixel-card p-2">

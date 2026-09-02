@@ -181,19 +181,28 @@ import {
   ensureRadio,
   findOperator,
   hireCandidate,
+  hireUniqueContact,
   markOperatorDead,
+  progressionFactsFromMeta,
   refreshRecruitmentPoolIfNeeded,
   regenerateRecruitmentPool,
   requestNewTransmission,
 } from "./operators/crew";
 import { applyQuestRewardsToRadio } from "./operators/questRadioRewards";
-import { QUEST_SPEC_BY_ID } from "./quests";
+import { QUEST_SPEC_BY_ID, questUniqueGateMet } from "./quests";
 import { nextRetransmissionCashCost, CANONICAL_RETRANSMISSION } from "./operators/retransmission";
 import {
-  CANONICAL_UNIQUE_OPERATORS,
-  uniqueRevealForLifecycle,
+  advanceUniqueLifecycle,
+  getUniqueContactProgress,
+  maybeTriggerUniqueDistress,
+  setUniqueLifecycle,
+  syncUniqueEligibility,
+  uniqueContactRequirementsMet,
+  uniqueTransmissionForLifecycle,
+  UNIQUE_OPERATOR_BY_ID,
 } from "./operators/uniqueOperators";
 import { freshRadioProgression, radioStatePresentation } from "./operators/radioProgression";
+import { evaluateRequirement } from "./operators/recruitmentRequirements";
 import {
   applyOperatorEquipToMeta,
   equipArmorOnOperator,
@@ -885,7 +894,12 @@ export default function TarkovTD() {
       if (spec) {
         ensureRadio(m);
         m.crew.radio = applyQuestRewardsToRadio(m.crew.radio, questId, spec.rewards);
-        // If signal just restored and pool empty, generate first transmission.
+        m.crew.radio = syncUniqueEligibility(
+          m.crew.radio,
+          "wolf",
+          progressionFactsFromMeta(m),
+        );
+        // If network just unlocked and pool empty, generate first procedural transmission.
         const cap = capabilityFromMeta(m);
         if (cap.slots.effective > 0 && m.crew.recruitment.candidates.length === 0) {
           regenerateRecruitmentPool(m);
@@ -1019,6 +1033,30 @@ export default function TarkovTD() {
     },
     [pushLog, rerender],
   );
+
+  // First Radio open after SIGNAL_RESTORED: Wolf distress once + eligibility sync.
+  useEffect(() => {
+    if (screen !== "radio") return;
+    const m = metaRef.current;
+    ensureRadio(m);
+    let radio = m.crew.radio!;
+    let dirty = false;
+    const distress = maybeTriggerUniqueDistress(radio, "wolf", m.runs);
+    if (distress.triggered) {
+      radio = distress.radio;
+      dirty = true;
+    }
+    const synced = syncUniqueEligibility(radio, "wolf", progressionFactsFromMeta(m));
+    if (synced !== radio) {
+      radio = synced;
+      dirty = true;
+    }
+    if (dirty) {
+      m.crew.radio = radio;
+      saveMeta(m);
+      rerender();
+    }
+  }, [screen, rerender]);
 
   const equipOnCrew = useCallback(
     (operatorId: string, uid: number) => {
@@ -2699,6 +2737,13 @@ export default function TarkovTD() {
                       </div>
                       <div className="mt-2 space-y-1 font-mono text-[10px]">
                         {QUESTS.filter((q) => {
+                          const spec = QUEST_SPEC_BY_ID[q.id];
+                          if (
+                            spec &&
+                            !questUniqueGateMet(spec, meta.crew.radio?.uniqueContacts)
+                          ) {
+                            return false;
+                          }
                           const d = q.done(meta.quests);
                           return questFilter === "all" || (questFilter === "done" ? d : !d);
                         }).map((q) => {
@@ -2735,38 +2780,97 @@ export default function TarkovTD() {
               )}
 
               {s.phase === "hideout" && screen === "radio" && (() => {
-                const radio = meta.crew.radio ?? freshRadioProgression();
-                const cap = capabilityFromMeta(meta);
+                const m = meta;
+                const radio = m.crew.radio ?? freshRadioProgression();
+                const facts = progressionFactsFromMeta(m);
+                const cap = capabilityFromMeta(m);
                 const crewFull =
-                  crewOccupancy(meta) >= cap.crewCapacity.effective
+                  crewOccupancy(m) >= cap.crewCapacity.effective
                     ? "CREW CAPACITY FULL"
                     : null;
-                const uniqueId = Object.keys(radio.uniqueContacts)[0];
-                const uniqueDef = uniqueId
-                  ? CANONICAL_UNIQUE_OPERATORS.find((u) => u.id === uniqueId)
-                  : undefined;
-                const uniqueLife = uniqueId ? radio.uniqueContacts[uniqueId]?.lifecycle : undefined;
-                const uniqueReveal =
-                  uniqueDef && uniqueLife ? uniqueRevealForLifecycle(uniqueDef, uniqueLife) : null;
+
+                const wolfProg = getUniqueContactProgress(radio, "wolf");
+                const wolfDef = UNIQUE_OPERATOR_BY_ID["wolf"];
+                const wolfTx =
+                  wolfDef && wolfProg.lifecycle !== "HIDDEN"
+                    ? uniqueTransmissionForLifecycle(wolfDef, wolfProg.lifecycle)
+                    : null;
+                const wolfReqs =
+                  wolfDef &&
+                  (wolfProg.lifecycle === "REQUIREMENTS_VISIBLE" ||
+                    wolfProg.lifecycle === "CONTACTABLE" ||
+                    wolfProg.lifecycle === "RECRUITABLE")
+                    ? wolfDef.contactRequirements.map((r) => evaluateRequirement(r, facts))
+                    : null;
+                const wolfCanRecruit =
+                  !!wolfDef &&
+                  (wolfProg.lifecycle === "RECRUITABLE" || wolfProg.lifecycle === "CONTACTABLE") &&
+                  uniqueContactRequirementsMet(wolfDef, facts);
+
                 const questHint =
                   radio.radioState === "BROKEN"
-                    ? "Quest: DEAD CHANNEL — restore power to the Radio."
+                    ? "CURRENT SIGNAL TASK · DEAD CHANNEL — restore power."
                     : radio.radioState === "POWERED_STATIC"
-                      ? "Quest: RAISE THE TOWER — repair the signal path."
-                      : null;
+                      ? "CURRENT SIGNAL TASK · RAISE THE TOWER — repair the signal path."
+                      : radio.radioState === "SIGNAL_RESTORED" && wolfProg.lifecycle === "RECRUITED"
+                        ? "CURRENT SIGNAL TASK · OPEN FREQUENCIES — unlock the scav network."
+                        : radio.radioState === "SIGNAL_RESTORED" &&
+                            wolfProg.lifecycle !== "HIDDEN" &&
+                            wolfProg.lifecycle !== "RECRUITED"
+                          ? "CURRENT SIGNAL TASK · HELP WOLF — prove you can hold a line."
+                          : null;
+
+                const uniqueContact =
+                  wolfDef && wolfTx && wolfProg.lifecycle !== "HIDDEN"
+                    ? {
+                        uniqueId: "wolf",
+                        lifecycle: wolfProg.lifecycle,
+                        transmission: wolfTx,
+                        onAdvance:
+                          wolfProg.lifecycle === "DISTRESS_SIGNAL" ||
+                          wolfProg.lifecycle === "IDENTIFIED"
+                            ? () => {
+                                const cur = metaRef.current;
+                                ensureRadio(cur);
+                                const life =
+                                  wolfProg.lifecycle === "IDENTIFIED"
+                                    ? ("REQUIREMENTS_VISIBLE" as const)
+                                    : advanceUniqueLifecycle(wolfProg.lifecycle);
+                                cur.crew.radio = setUniqueLifecycle(cur.crew.radio!, "wolf", life);
+                                saveMeta(cur);
+                                rerender();
+                              }
+                            : null,
+                        onRecruit: wolfCanRecruit
+                          ? () => {
+                              const cur = metaRef.current;
+                              const result = hireUniqueContact(cur, "wolf");
+                              if (!result.ok) return pushLog(result.reason);
+                              saveMeta(cur);
+                              setDeployOperatorIds((ids) => [...ids, result.operator.id]);
+                              pushLog(`${result.operator.name} joined the crew.`);
+                              rerender();
+                            }
+                          : null,
+                        requirements: wolfReqs,
+                        canRecruit: wolfCanRecruit,
+                        recruitBlockedReason: crewFull,
+                      }
+                    : null;
+
                 return (
                   <Overlay
                     title="RADIO"
                     subtitle={
-                      cap.radioState === "SIGNAL_RESTORED" || cap.radioState === "NETWORKED"
+                      cap.radioState === "NETWORKED"
                         ? RECRUITMENT_SUBTITLE
                         : radioStatePresentation(cap.radioState).subtitle
                     }
                     layout="wide"
                   >
                     <RecruitmentPanel
-                      candidates={meta.crew.recruitment.candidates}
-                      bank={meta.bank}
+                      candidates={m.crew.recruitment.candidates}
+                      bank={m.bank}
                       selectedId={selectedRecruitId}
                       onSelect={setSelectedRecruitId}
                       onHire={hireRecruit}
@@ -2774,7 +2878,7 @@ export default function TarkovTD() {
                       radioState={cap.radioState}
                       hireBlockedReason={crewFull}
                       questHint={questHint}
-                      uniqueReveal={uniqueReveal}
+                      uniqueContact={uniqueContact}
                       retransmission={
                         cap.retransmissionUnlocked
                           ? {
