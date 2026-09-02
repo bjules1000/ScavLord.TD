@@ -56,7 +56,10 @@ export type QuestTracker = {
   bossKillsById?: Record<string, number>;
 };
 
-export type QuestAvailability = "LOCKED" | "AVAILABLE" | "COMPLETED";
+export type QuestLifecycle = "LOCKED" | "ACTIVE" | "READY_TO_REDEEM" | "COMPLETED";
+
+/** @deprecated Prefer QuestLifecycle — AVAILABLE is now ACTIVE / READY_TO_REDEEM. */
+export type QuestAvailability = QuestLifecycle;
 
 export interface QuestUnlockContext {
   claimedQuestIds: readonly string[];
@@ -969,31 +972,82 @@ function radioOrd(state: string): number {
 }
 
 /**
- * Canonical quest availability.
- * COMPLETED = claimed/redeemed.
- * AVAILABLE = all unlock conditions met and not claimed.
- * LOCKED = otherwise (hidden from player Active list; no objective progress).
+ * Unlock gate only (prerequisites / level / radio / unique).
+ * Does not consider objective completion.
  */
-export function getQuestAvailability(spec: QuestSpec, ctx: QuestUnlockContext): QuestAvailability {
-  if (ctx.claimedQuestIds.includes(spec.id)) return "COMPLETED";
+export function isQuestUnlocked(spec: QuestSpec, ctx: QuestUnlockContext): boolean {
   for (const pre of spec.prerequisites) {
-    if (!ctx.claimedQuestIds.includes(pre)) return "LOCKED";
+    if (!ctx.claimedQuestIds.includes(pre)) return false;
   }
   if (spec.minLevel != null && spec.minLevel > 0 && ctx.playerLevel < spec.minLevel) {
-    return "LOCKED";
+    return false;
   }
   if (spec.minRadioState && radioOrd(ctx.radioState) < radioOrd(spec.minRadioState)) {
-    return "LOCKED";
+    return false;
   }
-  if (!questUniqueGateMet(spec, ctx.uniqueContacts)) return "LOCKED";
-  return "AVAILABLE";
+  if (!questUniqueGateMet(spec, ctx.uniqueContacts)) return false;
+  return true;
 }
 
+/**
+ * Four-state quest lifecycle.
+ * COMPLETED = claimed/redeemed.
+ * READY_TO_REDEEM = unlocked + all objectives met, rewards NOT granted.
+ * ACTIVE = unlocked, objectives incomplete.
+ * LOCKED = unlock requirements unmet (no objective progress).
+ */
+export function getQuestLifecycle(
+  spec: QuestSpec,
+  ctx: QuestUnlockContext,
+  progress?: QuestProgress,
+): QuestLifecycle {
+  if (ctx.claimedQuestIds.includes(spec.id)) return "COMPLETED";
+  if (!isQuestUnlocked(spec, ctx)) return "LOCKED";
+  if (progress) {
+    const done = evaluateQuest(spec, {
+      kind: "meta",
+      progress: getQuestTracker(progress, spec.id),
+    }).complete;
+    if (done) return "READY_TO_REDEEM";
+  }
+  return "ACTIVE";
+}
+
+/** @deprecated Prefer getQuestLifecycle */
+export function getQuestAvailability(
+  spec: QuestSpec,
+  ctx: QuestUnlockContext,
+  progress?: QuestProgress,
+): QuestLifecycle {
+  return getQuestLifecycle(spec, ctx, progress);
+}
+
+/** Quests that may receive raid objective progress (ACTIVE + READY_TO_REDEEM). */
 export function listAvailableQuestIds(
   catalog: readonly QuestSpec[],
   ctx: QuestUnlockContext,
+  progress?: QuestProgress,
 ): string[] {
-  return catalog.filter((q) => getQuestAvailability(q, ctx) === "AVAILABLE").map((q) => q.id);
+  return catalog
+    .filter((q) => {
+      const life = getQuestLifecycle(q, ctx, progress);
+      return life === "ACTIVE" || life === "READY_TO_REDEEM";
+    })
+    .map((q) => q.id);
+}
+
+export function listNewlyUnlockedQuestIds(
+  catalog: readonly QuestSpec[],
+  before: QuestUnlockContext,
+  after: QuestUnlockContext,
+): string[] {
+  return catalog
+    .filter((q) => {
+      const was = getQuestLifecycle(q, before);
+      const now = getQuestLifecycle(q, after);
+      return was === "LOCKED" && (now === "ACTIVE" || now === "READY_TO_REDEEM");
+    })
+    .map((q) => q.id);
 }
 
 export type RaidQuestDelta = {
@@ -1076,11 +1130,12 @@ export function describeQuestUnlock(
   spec: QuestSpec,
   ctx: QuestUnlockContext,
   catalog: readonly QuestSpec[],
-): { availability: QuestAvailability; rows: UnlockCheckRow[] } {
+  progress?: QuestProgress,
+): { availability: QuestLifecycle; rows: UnlockCheckRow[] } {
+  const availability = getQuestLifecycle(spec, ctx, progress);
   const rows: UnlockCheckRow[] = [];
-  const availability = getQuestAvailability(spec, ctx);
   if (availability === "COMPLETED") {
-    return { availability, rows: [{ label: "Claimed / completed", met: true }] };
+    return { availability, rows: [{ label: "Redeemed / completed", met: true }] };
   }
   for (const pre of spec.prerequisites) {
     const name = catalog.find((q) => q.id === pre)?.name ?? pre;
@@ -1113,6 +1168,11 @@ export function describeQuestUnlock(
   }
   if (rows.length === 0) {
     rows.push({ label: "No unlock requirements", met: true });
+  }
+  if (availability === "READY_TO_REDEEM") {
+    rows.push({ label: "Objectives complete — awaiting REDEEM", met: true });
+  } else if (availability === "ACTIVE") {
+    rows.push({ label: "Objectives in progress", met: false, detail: "ACTIVE" });
   }
   return { availability, rows };
 }

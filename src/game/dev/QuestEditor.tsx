@@ -364,7 +364,7 @@ function QuestDetails({
   const canonical = isCanonicalQuestId(spec.id);
   const zones = spec.mapId ? mapSpecialZones(spec.mapId) : [];
   const unlockPreview = unlockContext
-    ? describeQuestUnlock(spec, unlockContext, catalog)
+    ? describeQuestUnlock(spec, unlockContext, catalog, undefined)
     : null;
 
   return (
@@ -608,7 +608,7 @@ function QuestDetails({
       {unlockPreview && (
         <div className="mt-4 border-2 border-border bg-secondary/20 p-3 font-mono text-[11px]">
           <div className="font-display text-[11px] text-primary">
-            AVAILABILITY · {unlockPreview.availability}
+            LIFECYCLE · {unlockPreview.availability}
           </div>
           <ul className="mt-2 space-y-1">
             {unlockPreview.rows.map((row) => (

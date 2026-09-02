@@ -1,12 +1,12 @@
 /**
- * Player-facing Quest panel — Active / Completed only (LOCKED hidden).
+ * Player-facing Quest panel — Active (ACTIVE + READY_TO_REDEEM) / Completed.
  */
 
 import {
   evaluateQuest,
-  getQuestAvailability,
+  getQuestLifecycle,
   getQuestTracker,
-  type QuestAvailability,
+  type QuestLifecycle,
   type QuestProgress,
   type QuestSpec,
   type QuestUnlockContext,
@@ -17,13 +17,14 @@ export type PlayerQuestFilter = "active" | "completed";
 export function playerVisibleQuests(
   catalog: readonly QuestSpec[],
   ctx: QuestUnlockContext,
+  progress: QuestProgress,
   filter: PlayerQuestFilter,
 ): QuestSpec[] {
   return catalog.filter((spec) => {
-    const a = getQuestAvailability(spec, ctx);
-    if (a === "LOCKED") return false;
-    if (filter === "completed") return a === "COMPLETED";
-    return a === "AVAILABLE";
+    const life = getQuestLifecycle(spec, ctx, progress);
+    if (life === "LOCKED") return false;
+    if (filter === "completed") return life === "COMPLETED";
+    return life === "ACTIVE" || life === "READY_TO_REDEEM";
   });
 }
 
@@ -31,7 +32,6 @@ export default function PlayerQuestsPanel({
   catalog,
   unlockCtx,
   questProgress,
-  claimed,
   filter,
   onFilter,
   onRedeem,
@@ -39,12 +39,11 @@ export default function PlayerQuestsPanel({
   catalog: readonly QuestSpec[];
   unlockCtx: QuestUnlockContext;
   questProgress: QuestProgress;
-  claimed: readonly string[];
   filter: PlayerQuestFilter;
   onFilter: (f: PlayerQuestFilter) => void;
   onRedeem: (questId: string) => void;
 }) {
-  const list = playerVisibleQuests(catalog, unlockCtx, filter);
+  const list = playerVisibleQuests(catalog, unlockCtx, questProgress, filter);
 
   return (
     <div className="pixel-card pixel-scrollbar max-h-[min(70vh,36rem)] w-full overflow-auto p-3 text-left sm:p-4">
@@ -70,12 +69,12 @@ export default function PlayerQuestsPanel({
           </div>
         ) : (
           list.map((spec) => {
-            const availability: QuestAvailability = getQuestAvailability(spec, unlockCtx);
+            const life: QuestLifecycle = getQuestLifecycle(spec, unlockCtx, questProgress);
             const evald = evaluateQuest(spec, {
               kind: "meta",
               progress: getQuestTracker(questProgress, spec.id),
             });
-            const ready = availability === "AVAILABLE" && evald.complete && !claimed.includes(spec.id);
+            const ready = life === "READY_TO_REDEEM";
             return (
               <div
                 key={spec.id}
@@ -85,12 +84,17 @@ export default function PlayerQuestsPanel({
                   <div className="min-w-0 flex-1">
                     <div
                       className={`font-display text-[16px] leading-tight sm:text-[18px] ${
-                        availability === "COMPLETED" ? "text-muted-foreground" : "text-primary"
+                        life === "COMPLETED" ? "text-muted-foreground" : "text-primary"
                       }`}
                     >
-                      {availability === "COMPLETED" ? "✓ " : ""}
+                      {life === "COMPLETED" ? "✓ " : ""}
                       {spec.name}
                     </div>
+                    {ready && (
+                      <div className="mt-1 font-display text-[12px] uppercase tracking-wide text-accent sm:text-[13px]">
+                        Ready to redeem
+                      </div>
+                    )}
                     <div className="mt-1.5 font-mono text-[13px] leading-snug text-foreground/90 sm:text-[14px]">
                       {spec.desc}
                     </div>
@@ -106,7 +110,7 @@ export default function PlayerQuestsPanel({
                   )}
                 </div>
 
-                {availability === "AVAILABLE" && (
+                {(life === "ACTIVE" || life === "READY_TO_REDEEM") && (
                   <ul className="mt-3 space-y-1.5 font-mono text-[12px] sm:text-[13px]">
                     {evald.objectives.map((row) => (
                       <li

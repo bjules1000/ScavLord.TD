@@ -224,16 +224,18 @@ describe("recruitment prerequisites", () => {
     expect(isProfileEligible([], facts)).toBe(true);
   });
 
-  it("quest requirement uses canonical quest progress", () => {
+  it("quest requirement uses claimed (COMPLETED) only", () => {
     const req: RecruitmentRequirement = { type: "QUEST_COMPLETED", questId: "debut" };
     const incomplete = evaluateRequirement(req, facts);
-    const completeMeta = freshMeta();
-    completeMeta.quests.trackers = {
+    const progressOnly = freshMeta();
+    progressOnly.quests.trackers = {
       debut: { scavKills: 25, bossKills: 0, bestWave: 0, extracts: 0 },
     };
-    const complete = evaluateRequirement(req, progressionFactsFromMeta(completeMeta));
+    expect(evaluateRequirement(req, progressionFactsFromMeta(progressOnly)).met).toBe(false);
+    const claimedMeta = freshMeta();
+    claimedMeta.claimed = ["debut"];
+    expect(evaluateRequirement(req, progressionFactsFromMeta(claimedMeta)).met).toBe(true);
     expect(incomplete.met).toBe(false);
-    expect(complete.met).toBe(true);
   });
 
   it("wave requirement uses map-specific counter", () => {

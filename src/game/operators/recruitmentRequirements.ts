@@ -98,12 +98,9 @@ export function evaluateRequirement(
   const label = requirementLabel(req);
   switch (req.type) {
     case "QUEST_COMPLETED": {
-      // Prefer claimed (redeemed) when present; otherwise progress-complete.
+      // COMPLETED only — READY_TO_REDEEM / objective-complete does not count.
       const claimed = facts.claimedQuestIds.includes(req.questId);
-      if (claimed) return { met: true, label };
-      const quest = QUEST_BY_ID[req.questId] ?? QUESTS.find((q) => q.id === req.questId);
-      const met = quest ? quest.done(facts.quests) : false;
-      return { met, label };
+      return { met: claimed, label };
     }
     case "TOTAL_KILLS": {
       const current = killCount(facts, req.enemyId, req.mapId);
