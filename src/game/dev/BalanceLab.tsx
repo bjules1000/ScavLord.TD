@@ -31,6 +31,7 @@ import {
   type LabField,
 } from "./balance";
 import StatBenchmark from "./StatBenchmark";
+import { AttachmentCompatEditor, WeaponMountEditor, WeaponTestFit } from "./BalanceLabAuthoring";
 import WeaponCompare from "./WeaponCompare";
 import {
   allCanonicalWeapons,
@@ -85,6 +86,7 @@ export default function BalanceLab({
   const [compareMetric, setCompareMetric] = useState<ScalarMetric>("sustainedDps");
   const [compareSortDir, setCompareSortDir] = useState<CompareSortDir>("desc");
   const [benchmarkScope, setBenchmarkScope] = useState<BenchmarkScope>("category");
+  const [testFit, setTestFit] = useState<string[]>([]);
   const allWeapons = useMemo(() => allCanonicalWeapons(), []);
   const catalog = useMemo(() => balanceLabCatalog(), []);
   const visible = useMemo(
@@ -443,6 +445,26 @@ export default function BalanceLab({
                       })}
                     </div>
                   </div>
+                )}
+
+                {selectedWeapon && (
+                  <>
+                    <WeaponMountEditor weaponId={selectedWeapon.id} draft={draft} setDraft={setDraft} />
+                    <WeaponTestFit
+                      weaponId={selectedWeapon.id}
+                      draft={draft}
+                      testFit={testFit}
+                      setTestFit={setTestFit}
+                    />
+                  </>
+                )}
+
+                {selected?.kind === "attachment" && (
+                  <AttachmentCompatEditor
+                    attachmentId={selected.id}
+                    draft={draft}
+                    setDraft={setDraft}
+                  />
                 )}
               </>
             )}
