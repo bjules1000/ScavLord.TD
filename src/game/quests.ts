@@ -87,7 +87,12 @@ export type QuestReward =
   | { type: "CREW_CAPACITY_BONUS"; amount: number }
   | { type: "UNLOCK_RETRANSMISSION" }
   | { type: "UNLOCK_RECRUITMENT_PROFILE"; profileId: string }
-  | { type: "UNLOCK_UNIQUE_CONTACT"; uniqueId: string };
+  | { type: "UNLOCK_UNIQUE_CONTACT"; uniqueId: string }
+  | {
+      type: "SET_UNIQUE_CONTACT_STATE";
+      uniqueId: string;
+      lifecycle: import("./operators/radioProgression").UniqueContactLifecycle;
+    };
 
 export type QuestSpec = {
   id: string;
@@ -97,6 +102,14 @@ export type QuestSpec = {
   objectives: QuestObjective[];
   rewards: QuestReward[];
   prerequisites: string[];
+  /**
+   * Soft gate: quest is listed / redeemable only when this unique contact
+   * has reached at least the given lifecycle (e.g. network quest after Wolf hired).
+   */
+  requiresUnique?: {
+    uniqueId: string;
+    minLifecycle: import("./operators/radioProgression").UniqueContactLifecycle;
+  };
   /** True when created in DEV and not present in QUEST_SPECS. */
   devCreated?: boolean;
 };
@@ -125,6 +138,7 @@ export const QUEST_REWARD_TYPES = [
   "UNLOCK_RETRANSMISSION",
   "UNLOCK_RECRUITMENT_PROFILE",
   "UNLOCK_UNIQUE_CONTACT",
+  "SET_UNIQUE_CONTACT_STATE",
 ] as const;
 
 export function questDropSourceId(questId: string): string {
@@ -153,6 +167,7 @@ export function cloneQuestSpec(spec: QuestSpec): QuestSpec {
     prerequisites: [...spec.prerequisites],
   };
   if (spec.mapId) next.mapId = spec.mapId;
+  if (spec.requiresUnique) next.requiresUnique = { ...spec.requiresUnique };
   if (spec.devCreated) next.devCreated = true;
   return next;
 }
@@ -218,6 +233,34 @@ export const QUEST_SPECS: QuestSpec[] = [
       reward({ type: "SKILL_POINTS", amount: 1 }),
     ],
     prerequisites: ["radio_power"],
+  },
+  {
+    id: "wolf_help",
+    name: "HELP WOLF",
+    desc: "Prove you can hold a line. Clear scavs and extract — Wolf is listening.",
+    objectives: [obj({ type: "KILL", count: 12 }), obj({ type: "EXTRACT", count: 1 })],
+    rewards: [
+      reward({ type: "ROUBLES", amount: 500 }),
+      reward({
+        type: "SET_UNIQUE_CONTACT_STATE",
+        uniqueId: "wolf",
+        lifecycle: "CONTACTABLE",
+      }),
+    ],
+    prerequisites: ["radio_signal"],
+  },
+  {
+    id: "radio_network",
+    name: "OPEN FREQUENCIES",
+    desc: "With Wolf in the crew, open the broader scav channels. Reach wave 2 and extract.",
+    objectives: [obj({ type: "REACH_WAVE", wave: 2 }), obj({ type: "EXTRACT", count: 1 })],
+    rewards: [
+      reward({ type: "ROUBLES", amount: 700 }),
+      reward({ type: "SET_RADIO_STATE", state: "NETWORKED" }),
+      reward({ type: "SKILL_POINTS", amount: 1 }),
+    ],
+    prerequisites: ["wolf_help"],
+    requiresUnique: { uniqueId: "wolf", minLifecycle: "RECRUITED" },
   },
   {
     id: "debut",
@@ -662,6 +705,21 @@ export function validateReward(r: QuestReward, index: number): QuestIssue[] {
   if (r.type === "UNLOCK_UNIQUE_CONTACT" && !r.uniqueId) {
     out.push(issue("error", "BAD_REWARD", `${prefix}: missing uniqueId`));
   }
+  if (r.type === "SET_UNIQUE_CONTACT_STATE") {
+    if (!r.uniqueId) out.push(issue("error", "BAD_REWARD", `${prefix}: missing uniqueId`));
+    const lives = [
+      "HIDDEN",
+      "DISTRESS_SIGNAL",
+      "IDENTIFIED",
+      "REQUIREMENTS_VISIBLE",
+      "CONTACTABLE",
+      "RECRUITABLE",
+      "RECRUITED",
+    ];
+    if (!lives.includes(r.lifecycle)) {
+      out.push(issue("error", "BAD_REWARD", `${prefix}: unknown unique lifecycle`));
+    }
+  }
   return out;
 }
 
@@ -675,7 +733,7 @@ export function validateQuest(spec: QuestSpec, catalog: readonly QuestSpec[]): Q
   if (spec.mapId && !MAP_BY_ID[spec.mapId]) {
     errors.push(issue("error", "BAD_MAP", `Unknown map ${spec.mapId}`));
   }
-  if (!spec.mapId) warnings.push(issue("warning", "NO_MAP", "Quest has no map requirement"));
+  // No map / no prereq are valid for introductory / map-agnostic quests — do not warn.
   if (spec.objectives.length === 0) errors.push(issue("error", "NO_OBJECTIVES", "Quest has no objectives"));
   spec.objectives.forEach((o, i) => errors.push(...validateObjective(spec, o, i)));
   spec.rewards.forEach((r, i) => errors.push(...validateReward(r, i)));
@@ -693,13 +751,11 @@ export function validateQuest(spec: QuestSpec, catalog: readonly QuestSpec[]): Q
           "UNLOCK_RETRANSMISSION",
           "UNLOCK_RECRUITMENT_PROFILE",
           "UNLOCK_UNIQUE_CONTACT",
+          "SET_UNIQUE_CONTACT_STATE",
         ].includes(r.type),
       ))
   ) {
     warnings.push(issue("warning", "NO_REWARD", "Quest has no reward"));
-  }
-  if (spec.prerequisites.length === 0) {
-    warnings.push(issue("warning", "NO_PREREQ", "Quest has no prerequisite"));
   }
   for (const pre of spec.prerequisites) {
     if (pre === spec.id) errors.push(issue("error", "SELF_PREREQ", "Quest cannot require itself"));
@@ -823,6 +879,29 @@ export function defaultObjective(): QuestObjective {
 
 export function defaultReward(): QuestReward {
   return { type: "ROUBLES", amount: 0 };
+}
+
+const UNIQUE_LIFECYCLE_ORDER = [
+  "HIDDEN",
+  "DISTRESS_SIGNAL",
+  "IDENTIFIED",
+  "REQUIREMENTS_VISIBLE",
+  "CONTACTABLE",
+  "RECRUITABLE",
+  "RECRUITED",
+] as const;
+
+/** True when quest has no unique gate, or the contact has reached the required lifecycle. */
+export function questUniqueGateMet(
+  spec: QuestSpec,
+  uniqueContacts: Record<string, { lifecycle: string }> | undefined,
+): boolean {
+  if (!spec.requiresUnique) return true;
+  const life = uniqueContacts?.[spec.requiresUnique.uniqueId]?.lifecycle ?? "HIDDEN";
+  const have = UNIQUE_LIFECYCLE_ORDER.indexOf(life as (typeof UNIQUE_LIFECYCLE_ORDER)[number]);
+  const need = UNIQUE_LIFECYCLE_ORDER.indexOf(spec.requiresUnique.minLifecycle);
+  if (need < 0) return false;
+  return have >= need;
 }
 
 export function newQuestSpec(id: string): QuestSpec {

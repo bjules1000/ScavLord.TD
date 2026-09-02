@@ -718,6 +718,8 @@ function RewardCard({
           else if (t === "UNLOCK_RECRUITMENT_PROFILE")
             onChange({ type: "UNLOCK_RECRUITMENT_PROFILE", profileId: "rifleman" });
           else if (t === "UNLOCK_UNIQUE_CONTACT") onChange({ type: "UNLOCK_UNIQUE_CONTACT", uniqueId: "wolf" });
+          else if (t === "SET_UNIQUE_CONTACT_STATE")
+            onChange({ type: "SET_UNIQUE_CONTACT_STATE", uniqueId: "wolf", lifecycle: "IDENTIFIED" });
           else onChange({ type: "ROUBLES", amount: 0 });
         }}
       >
@@ -731,6 +733,7 @@ function RewardCard({
         <option value="UNLOCK_RETRANSMISSION">UNLOCK RETRANSMISSION</option>
         <option value="UNLOCK_RECRUITMENT_PROFILE">UNLOCK PROFILE</option>
         <option value="UNLOCK_UNIQUE_CONTACT">UNLOCK UNIQUE CONTACT</option>
+        <option value="SET_UNIQUE_CONTACT_STATE">SET UNIQUE CONTACT STATE</option>
       </select>
       {(reward.type === "ROUBLES" || reward.type === "SKILL_POINTS") && (
         <input
@@ -803,6 +806,41 @@ function RewardCard({
           className="w-36 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
           onChange={(e) => onChange({ type: "UNLOCK_UNIQUE_CONTACT", uniqueId: e.target.value })}
         />
+      )}
+      {reward.type === "SET_UNIQUE_CONTACT_STATE" && (
+        <>
+          <input
+            value={reward.uniqueId}
+            className="w-28 border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+            onChange={(e) =>
+              onChange({
+                type: "SET_UNIQUE_CONTACT_STATE",
+                uniqueId: e.target.value,
+                lifecycle: reward.lifecycle,
+              })
+            }
+            placeholder="uniqueId"
+          />
+          <select
+            value={reward.lifecycle}
+            className="border-2 border-border bg-background px-2 py-1 font-mono text-sm"
+            onChange={(e) =>
+              onChange({
+                type: "SET_UNIQUE_CONTACT_STATE",
+                uniqueId: reward.uniqueId,
+                lifecycle: e.target.value as typeof reward.lifecycle,
+              })
+            }
+          >
+            <option value="HIDDEN">HIDDEN</option>
+            <option value="DISTRESS_SIGNAL">DISTRESS_SIGNAL</option>
+            <option value="IDENTIFIED">IDENTIFIED</option>
+            <option value="REQUIREMENTS_VISIBLE">REQUIREMENTS_VISIBLE</option>
+            <option value="CONTACTABLE">CONTACTABLE</option>
+            <option value="RECRUITABLE">RECRUITABLE</option>
+            <option value="RECRUITED">RECRUITED</option>
+          </select>
+        </>
       )}
       <button type="button" className="pixel-btn ml-auto px-2 py-1 text-[9px]" onClick={onRemove}>
         REMOVE

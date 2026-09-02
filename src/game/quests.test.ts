@@ -37,6 +37,8 @@ describe("quest catalog", () => {
     expect(QUEST_SPECS.map((q) => q.id)).toEqual([
       "radio_power",
       "radio_signal",
+      "wolf_help",
+      "radio_network",
       "debut",
       "checkpoint",
       "supplier",

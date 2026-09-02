@@ -64,6 +64,15 @@ export function questRewardToModifiers(
           targetId: r.uniqueId,
         });
         break;
+      case "SET_UNIQUE_CONTACT_STATE":
+        out.push({
+          id,
+          kind: "SET_UNIQUE_CONTACT_STATE",
+          source: "quest",
+          targetId: r.uniqueId,
+          lifecycle: r.lifecycle,
+        });
+        break;
       default:
         break;
     }
