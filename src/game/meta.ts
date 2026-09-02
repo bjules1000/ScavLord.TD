@@ -1,5 +1,6 @@
 import { BACKPACKS, ITEM_BY_ID, WEAPONS, makeItem, type Item } from "./gear";
 import { freshCrewState, migrateV5ToV6, normalizeMetaV6 } from "./operators";
+import { STARTING_OPERATOR } from "./operators/startingOperator";
 import { QUESTS, emptyQuestProgress, type QuestProgress } from "./quests";
 
 export type { QuestDef, QuestProgress } from "./quests";
@@ -82,7 +83,7 @@ export interface PmcState {
 
 export function freshPmc(): PmcState {
   return {
-    name: "ASH-01",
+    name: STARTING_OPERATOR.defaultName,
     level: 1,
     xp: 0,
     debuffs: [],

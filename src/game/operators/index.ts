@@ -9,6 +9,8 @@ export * from "./recruitment";
 export * from "./runtime";
 export * from "./equipment";
 export * from "./crewEquipment";
+export * from "./startingOperator";
+export * from "./raidIdentity";
 export * from "./radioProgression";
 export * from "./recruitmentQuality";
 export * from "./retransmission";

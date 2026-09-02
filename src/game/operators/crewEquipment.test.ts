@@ -5,6 +5,7 @@ import { candidateToOperator, hireUniqueContact, markOperatorDead } from "./crew
 import { generateRecruitmentCandidates } from "./generation";
 import { freshRadioProgression } from "./radioProgression";
 import { UNIQUE_OPERATOR_BY_ID, uniqueToOperator } from "./uniqueOperators";
+import { STARTING_OPERATOR } from "./startingOperator";
 import {
   LEADER_EQUIPMENT_OWNER_ID,
   coerceEquipmentOwnerId,
@@ -214,7 +215,7 @@ describe("crew equipment helpers", () => {
   it("UI terminology helpers expose operator identity not ScavLord kit", () => {
     const meta = freshMeta();
     const row = listCrewEquipmentRows(meta)[0]!;
-    expect(row.name).toBe("ASH-01");
+    expect(row.name).toBe(STARTING_OPERATOR.defaultName);
     expect(`${row.name} · KIT`).not.toContain("SCAVLORD");
   });
 });

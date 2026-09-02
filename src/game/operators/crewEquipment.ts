@@ -29,8 +29,10 @@ import {
 import { operatorEffectiveWeight, resolveCombatMods } from "./runtime";
 import type { OperatorEquipment, PersistentOperator } from "./types";
 
+import { STARTING_OPERATOR, STARTING_OPERATOR_ID } from "./startingOperator";
+
 /** Stable equipment owner id for the camp leader (Meta.pmc). Not an array index. */
-export const LEADER_EQUIPMENT_OWNER_ID = "leader" as const;
+export const LEADER_EQUIPMENT_OWNER_ID = STARTING_OPERATOR_ID;
 
 export type EquipmentOwnerId = typeof LEADER_EQUIPMENT_OWNER_ID | (string & {});
 
@@ -89,7 +91,7 @@ export function listCrewEquipmentRows(meta: Meta): CrewEquipmentRow[] {
     {
       ownerId: LEADER_EQUIPMENT_OWNER_ID,
       name: meta.pmc.name,
-      roleLabel: "LEADER",
+      roleLabel: STARTING_OPERATOR.roleLabel,
       weaponId: meta.pmc.weapon,
       armorId: meta.pmc.armor,
       editable: true,
