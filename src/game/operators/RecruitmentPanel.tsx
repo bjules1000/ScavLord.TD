@@ -216,7 +216,8 @@ export function UniqueContactTransmission({
     (lifecycle === "DISTRESS_SIGNAL" ||
       lifecycle === "IDENTIFIED" ||
       lifecycle === "REQUIREMENTS_VISIBLE" ||
-      lifecycle === "CONTACTABLE");
+      lifecycle === "CONTACTABLE" ||
+      lifecycle === "RECRUITED");
   const showHire = onRecruit && (lifecycle === "RECRUITABLE" || (lifecycle === "CONTACTABLE" && canRecruit));
 
   return (

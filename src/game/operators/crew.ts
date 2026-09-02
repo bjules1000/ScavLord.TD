@@ -325,7 +325,11 @@ export function requestNewTransmission(meta: Meta): RetransmitResult {
   return { ok: true, meta, cost: attempt.cost };
 }
 
-export function normalizeCrewState(crew: Partial<CrewState> | undefined, runs: number): CrewState {
+export function normalizeCrewState(
+  crew: Partial<CrewState> | undefined,
+  runs: number,
+  opts?: { claimedQuestIds?: readonly string[] },
+): CrewState {
   const hadCandidates = !!crew?.recruitment?.candidates?.length;
   const hadOperators = Array.isArray(crew?.operators) && crew!.operators!.length > 0;
   if (!crew) return freshCrewState(runs);
@@ -333,6 +337,7 @@ export function normalizeCrewState(crew: Partial<CrewState> | undefined, runs: n
   const radio = normalizeRadioProgression(crew.radio, {
     hadRecruitmentCandidates: hadCandidates,
     hadHiredOperators: hadOperators,
+    ...(opts?.claimedQuestIds ? { claimedQuestIds: opts.claimedQuestIds } : {}),
   });
 
   if (!crew.recruitment?.candidates) {

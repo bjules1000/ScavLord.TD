@@ -93,7 +93,9 @@ export function normalizeMetaV6(raw: Partial<Meta>, runs: number): Meta {
   const operators = Array.isArray(raw.crew?.operators)
     ? raw.crew.operators.map(normalizeOperator).filter((o): o is PersistentOperator => !!o)
     : [];
-  const crewBase = normalizeCrewState(raw.crew, runs);
+  const crewBase = normalizeCrewState(raw.crew, runs, {
+    claimedQuestIds: Array.isArray(raw.claimed) ? raw.claimed : [],
+  });
   const candidates = crewBase.recruitment.candidates.map((c) => {
     const stats = isValidStats(c.stats) ? c.stats : { aim: 50, toughness: 50, handling: 50, mobility: 50 };
     const potential = normalizeCandidatePotential({ ...c, stats });

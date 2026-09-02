@@ -290,6 +290,9 @@ describe("unique operators / Wolf storyline", () => {
       QUEST_SPEC_BY_ID["radio_network"]!.rewards,
     );
     expect(meta.crew.radio.radioState).toBe("NETWORKED");
+    const cap = resolveRecruitmentCapability({ radio: meta.crew.radio, devToolsEnabled: false });
+    expect(cap.slots.effective).toBe(1);
+    expect(cap.crewCapacity.effective).toBe(3);
     regenerateRecruitmentPool(meta);
     expect(meta.crew.recruitment.candidates.length).toBe(1);
     expect(meta.crew.operators.some((o) => o.uniqueId === "wolf")).toBe(true);

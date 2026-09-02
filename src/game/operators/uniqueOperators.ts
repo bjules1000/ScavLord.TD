@@ -264,24 +264,44 @@ export function setUniqueLifecycle(
   lifecycle: UniqueContactLifecycle,
 ): RadioProgressionState {
   const prev = getUniqueContactProgress(radio, uniqueId);
+  const next: UniqueContactProgress = {
+    lifecycle,
+  };
+  if (typeof prev.discoveredAtRun === "number") next.discoveredAtRun = prev.discoveredAtRun;
+  if (prev.distressHeard || lifecycle === "DISTRESS_SIGNAL") next.distressHeard = true;
+  if (prev.transmissionSettled) next.transmissionSettled = true;
   return {
     ...radio,
     uniqueContacts: {
       ...radio.uniqueContacts,
-      [uniqueId]: {
-        ...prev,
-        lifecycle,
-        ...(lifecycle !== "HIDDEN" && prev.discoveredAtRun == null
-          ? {}
-          : prev.discoveredAtRun != null
-            ? { discoveredAtRun: prev.discoveredAtRun }
-            : {}),
-        ...(lifecycle === "DISTRESS_SIGNAL" || prev.distressHeard
-          ? { distressHeard: true }
-          : {}),
-      },
+      [uniqueId]: next,
     },
   };
+}
+
+/** Acknowledge / clear active unique transmission (e.g. post-Wolf network briefing). */
+export function settleUniqueTransmission(
+  radio: RadioProgressionState,
+  uniqueId: string,
+): RadioProgressionState {
+  const prev = getUniqueContactProgress(radio, uniqueId);
+  if (prev.transmissionSettled) return radio;
+  return {
+    ...radio,
+    uniqueContacts: {
+      ...radio.uniqueContacts,
+      [uniqueId]: { ...prev, transmissionSettled: true },
+    },
+  };
+}
+
+/** Player-facing Radio: show unique only when not archived after recruitment. */
+export function isUniqueContactActiveTransmission(
+  prog: UniqueContactProgress,
+): boolean {
+  if (prog.lifecycle === "HIDDEN") return false;
+  if (prog.lifecycle === "RECRUITED" && prog.transmissionSettled) return false;
+  return true;
 }
 
 export function uniqueContactRequirementsMet(

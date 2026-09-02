@@ -85,6 +85,8 @@ export interface UniqueContactProgress {
   discoveredAtRun?: number;
   /** First distress transmission already shown (idempotent). */
   distressHeard?: boolean;
+  /** Post-recruit (or other) active transmission acknowledged — clears Radio surface. */
+  transmissionSettled?: boolean;
 }
 
 export function freshRadioProgression(): RadioProgressionState {
@@ -333,6 +335,7 @@ export function applyProgressionModifier(
       lifecycle: modifier.lifecycle,
       ...(prev?.discoveredAtRun != null ? { discoveredAtRun: prev.discoveredAtRun } : {}),
       ...(prev?.distressHeard ? { distressHeard: true } : {}),
+      ...(prev?.transmissionSettled ? { transmissionSettled: true } : {}),
     };
   }
   return next;
@@ -358,17 +361,21 @@ export function incrementRetransmissionCount(radio: RadioProgressionState): Radi
 /** Normalize legacy / partial radio progression. */
 export function normalizeRadioProgression(
   raw: Partial<RadioProgressionState> | undefined,
-  opts?: { hadRecruitmentCandidates?: boolean; hadHiredOperators?: boolean },
+  opts?: {
+    hadRecruitmentCandidates?: boolean;
+    hadHiredOperators?: boolean;
+    claimedQuestIds?: readonly string[];
+  },
 ): RadioProgressionState {
   if (!raw) {
     // Compatibility: existing saves that already had recruitment stay playable at NETWORKED.
     if (opts?.hadHiredOperators || opts?.hadRecruitmentCandidates) {
-      return {
+      return ensureNetworkCrewCapacityOnce({
         radioState: "NETWORKED",
         modifiers: [],
         retransmissionCount: 0,
         uniqueContacts: {},
-      };
+      }, opts.claimedQuestIds);
     }
     return freshRadioProgression();
   }
@@ -400,15 +407,46 @@ export function normalizeRadioProgression(
         lifecycle: life,
         ...(typeof prog.discoveredAtRun === "number" ? { discoveredAtRun: prog.discoveredAtRun } : {}),
         ...(prog.distressHeard ? { distressHeard: true } : {}),
+        ...(prog.transmissionSettled ? { transmissionSettled: true } : {}),
       };
     }
   }
-  return {
+  const radio: RadioProgressionState = {
     radioState: state,
     modifiers: Array.isArray(raw.modifiers) ? raw.modifiers.filter(Boolean) : [],
     retransmissionCount: Math.max(0, Number(raw.retransmissionCount) || 0),
     uniqueContacts,
   };
+  return ensureNetworkCrewCapacityOnce(radio, opts?.claimedQuestIds);
+}
+
+/**
+ * If Open Frequencies was already claimed under an older build that lacked the
+ * +1 crew capacity reward, apply that modifier once (idempotent by modifier id).
+ */
+export function ensureNetworkCrewCapacityOnce(
+  radio: RadioProgressionState,
+  claimedQuestIds?: readonly string[],
+): RadioProgressionState {
+  const networked =
+    radio.radioState === "NETWORKED" || claimedQuestIds?.includes("radio_network");
+  if (!networked) return radio;
+  const migrateId = "quest:radio_network:CREW_CAPACITY_BONUS:migrate";
+  if (
+    radio.modifiers.some(
+      (m) =>
+        m.kind === "CREW_CAPACITY_BONUS" &&
+        (m.id === migrateId || m.id.startsWith("quest:radio_network:CREW_CAPACITY_BONUS")),
+    )
+  ) {
+    return radio;
+  }
+  return applyProgressionModifier(radio, {
+    id: migrateId,
+    kind: "CREW_CAPACITY_BONUS",
+    source: "quest",
+    amount: 1,
+  });
 }
 
 /** Player-facing Radio copy for camp UI. */
