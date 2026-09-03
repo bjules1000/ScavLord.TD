@@ -182,10 +182,10 @@ describe("Balance Lab runtime overrides", () => {
   });
 
   it("current equipped item can consume updated effective stats", () => {
-    applyBalanceOverrides(setOverrideField(emptyBalanceOverrides(), "weapon", "pm", "damage", 20, 15), true, memStore());
+    applyBalanceOverrides(setOverrideField(emptyBalanceOverrides(), "weapon", "pm", "damage", 20, 10), true, memStore());
     expect(weaponDef("pm").damage).toBe(20);
     applyBalanceOverrides(emptyBalanceOverrides(), true, memStore());
-    expect(weaponDef("pm").damage).toBe(15);
+    expect(weaponDef("pm").damage).toBe(10);
   });
 
   it("DEV ADD/CLEAR still work", () => {

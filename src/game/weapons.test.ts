@@ -20,11 +20,11 @@ describe("starter weapon identities", () => {
     expect(WEAPONS["pm"]?.name).toBe("SIDEARM");
     expect(magSizeOf("pm")).toBe(7);
     expect(reloadTypeOf("pm")).toBe("MAGAZINE");
-    expect(reloadMsOf("pm")).toBe(1500);
+    expect(reloadMsOf("pm")).toBe(1700);
     expect(initAmmo("pm")).toBe(7);
-    expect(WEAPONS["pm"]?.damage).toBe(15);
-    expect(WEAPONS["pm"]?.range).toBe(92);
-    expect(WEAPONS["pm"]?.cooldown).toBe(400);
+    expect(WEAPONS["pm"]?.damage).toBe(10);
+    expect(WEAPONS["pm"]?.range).toBe(100);
+    expect(WEAPONS["pm"]?.cooldown).toBe(550);
   });
 
   it("gives the sawed-off interruptible per-round loading", () => {
@@ -32,10 +32,10 @@ describe("starter weapon identities", () => {
     expect(WEAPONS["toz"]?.name).toBe("SAWED-OFF");
     expect(magSizeOf("toz")).toBe(2);
     expect(reloadTypeOf("toz")).toBe("PER_ROUND");
-    expect(reloadMsOf("toz")).toBe(950);
+    expect(reloadMsOf("toz")).toBe(1150);
     expect(initAmmo("toz")).toBe(2);
-    expect((WEAPONS["toz"]!.damage) * (WEAPONS["toz"]!.pellets ?? 1)).toBe(63);
-    expect(WEAPONS["toz"]?.pellets).toBe(9);
+    expect((WEAPONS["toz"]!.damage) * (WEAPONS["toz"]!.pellets ?? 1)).toBe(56);
+    expect(WEAPONS["toz"]?.pellets).toBe(8);
     expect(WEAPONS["toz"]?.damage).toBe(7);
     expect(WEAPONS["toz"]?.range).toBeLessThan(WEAPONS["pm"]!.range);
     expect(WEAPONS["toz"]?.cooldown).toBeGreaterThan(WEAPONS["pm"]!.cooldown);
@@ -66,12 +66,12 @@ describe("pistol magazine", () => {
   it("empty magazine starts a full reload that restores 7", () => {
     let ammo = 0;
     let reloadLeft = maybeStartReload(ammo, 0, mag, reloadMs, "MAGAZINE", false);
-    expect(reloadLeft).toBe(1500);
+    expect(reloadLeft).toBe(reloadMs);
     const mid = tickReload(ammo, reloadLeft, 700, mag, reloadMs, "MAGAZINE", false);
     expect(mid.ammo).toBe(0);
-    expect(mid.reloadLeft).toBe(800);
+    expect(mid.reloadLeft).toBe(reloadMs - 700);
     expect(canShoot(mid.ammo, mid.reloadLeft)).toBe(false);
-    const done = tickReload(mid.ammo, mid.reloadLeft, 800, mag, reloadMs, "MAGAZINE", true);
+    const done = tickReload(mid.ammo, mid.reloadLeft, reloadMs - 700, mag, reloadMs, "MAGAZINE", true);
     expect(done.ammo).toBe(7);
     expect(done.reloadLeft).toBe(0);
     expect(canShoot(done.ammo, done.reloadLeft)).toBe(true);
@@ -95,25 +95,25 @@ describe("sawed-off per-round reload", () => {
   it("loads one shell at a time and can fire after the first shell", () => {
     let ammo = 0;
     let reloadLeft = maybeStartReload(ammo, 0, mag, reloadMs, "PER_ROUND", false);
-    expect(reloadLeft).toBe(950);
-    const first = tickReload(ammo, reloadLeft, 950, mag, reloadMs, "PER_ROUND", true);
+    expect(reloadLeft).toBe(reloadMs);
+    const first = tickReload(ammo, reloadLeft, reloadMs, mag, reloadMs, "PER_ROUND", true);
     expect(first.ammo).toBe(1);
     expect(first.reloadLeft).toBe(0);
     expect(canShoot(first.ammo, first.reloadLeft)).toBe(true);
   });
 
   it("interrupts further loading when a target is available after a shell seats", () => {
-    const afterFirst = tickReload(0, 950, 950, mag, reloadMs, "PER_ROUND", true);
+    const afterFirst = tickReload(0, reloadMs, reloadMs, mag, reloadMs, "PER_ROUND", true);
     expect(afterFirst).toEqual({ ammo: 1, reloadLeft: 0 });
     const idleTopUp = maybeStartReload(1, 0, mag, reloadMs, "PER_ROUND", true);
     expect(idleTopUp).toBe(0);
   });
 
   it("continues loading the second shell when idle", () => {
-    const afterFirst = tickReload(0, 950, 950, mag, reloadMs, "PER_ROUND", false);
+    const afterFirst = tickReload(0, reloadMs, reloadMs, mag, reloadMs, "PER_ROUND", false);
     expect(afterFirst.ammo).toBe(1);
-    expect(afterFirst.reloadLeft).toBe(950);
-    const full = tickReload(afterFirst.ammo, afterFirst.reloadLeft, 950, mag, reloadMs, "PER_ROUND", false);
+    expect(afterFirst.reloadLeft).toBe(reloadMs);
+    const full = tickReload(afterFirst.ammo, afterFirst.reloadLeft, reloadMs, mag, reloadMs, "PER_ROUND", false);
     expect(full).toEqual({ ammo: 2, reloadLeft: 0 });
   });
 
@@ -121,11 +121,11 @@ describe("sawed-off per-round reload", () => {
     let ammo = consumeRound(1);
     expect(ammo).toBe(0);
     let reloadLeft = maybeStartReload(ammo, 0, mag, reloadMs, "PER_ROUND", false);
-    const seated = tickReload(ammo, reloadLeft, 950, mag, reloadMs, "PER_ROUND", false);
+    const seated = tickReload(ammo, reloadLeft, reloadMs, mag, reloadMs, "PER_ROUND", false);
     expect(seated.ammo).toBe(1);
     ammo = consumeRound(seated.ammo);
     reloadLeft = maybeStartReload(ammo, 0, mag, reloadMs, "PER_ROUND", false);
-    const again = tickReload(ammo, reloadLeft, 950, mag, reloadMs, "PER_ROUND", false);
+    const again = tickReload(ammo, reloadLeft, reloadMs, mag, reloadMs, "PER_ROUND", false);
     expect(again.ammo).toBe(1);
   });
 });
