@@ -168,6 +168,15 @@ export function listScavActionsForWeapon(
   return SCAV_BENCH_ACTIONS.filter((a) => canApplyScavAction(weaponId, resolved, a.id).ok);
 }
 
+/** Bench actions that write the given visual slot and are currently valid. */
+export function listScavActionsForSlot(
+  weaponId: string,
+  state: WeaponVisualState | null | undefined,
+  slot: WeaponVisualSlot,
+): ScavBenchAction[] {
+  return listScavActionsForWeapon(weaponId, state).filter((a) => a.slot === slot);
+}
+
 export function getScavAction(actionId: string): ScavBenchAction | null {
   return SCAV_BENCH_ACTIONS.find((a) => a.id === actionId) ?? null;
 }

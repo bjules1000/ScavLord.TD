@@ -28,6 +28,11 @@ export type WeaponVisualState = {
 
 export type Anchor = { x: number; y: number };
 
+/** Clickable region in platform logical coordinates (same space as anchors). */
+export type Hitbox = { x: number; y: number; w: number; h: number };
+
+export type SlotAnchor = Anchor & { hitbox?: Hitbox };
+
 export type WeaponVisualPlatform = {
   id: WeaponVisualPlatformId;
   /** Catalog weapon ids that use this visual platform. */
@@ -37,7 +42,7 @@ export type WeaponVisualPlatform = {
   width: number;
   height: number;
   baseSprite: string;
-  anchors: Record<WeaponVisualSlot, Anchor>;
+  anchors: Record<WeaponVisualSlot, SlotAnchor>;
   /** Back-to-front paint order. */
   layerOrder: readonly ("base" | WeaponVisualSlot)[];
   defaultParts: Record<WeaponVisualSlot, string | null>;
@@ -77,11 +82,11 @@ export const WEAPON_VISUAL_PLATFORMS: Record<WeaponVisualPlatformId, WeaponVisua
     height: 48,
     baseSprite: "/game/weapons/ak/base.png",
     anchors: {
-      stock: { x: 8, y: 22 },
-      magazine: { x: 78, y: 34 },
-      optic: { x: 72, y: 10 },
-      underbarrel: { x: 92, y: 36 },
-      muzzle: { x: 142, y: 20 },
+      stock: { x: 8, y: 22, hitbox: { x: 0, y: 8, w: 42, h: 36 } },
+      magazine: { x: 78, y: 34, hitbox: { x: 68, y: 28, w: 28, h: 20 } },
+      optic: { x: 72, y: 10, hitbox: { x: 58, y: 0, w: 40, h: 16 } },
+      underbarrel: { x: 92, y: 36, hitbox: { x: 84, y: 30, w: 36, h: 18 } },
+      muzzle: { x: 142, y: 20, hitbox: { x: 128, y: 10, w: 32, h: 24 } },
     },
     layerOrder: ["stock", "base", "muzzle", "magazine", "underbarrel", "optic"],
     defaultParts: {
@@ -101,11 +106,11 @@ export const WEAPON_VISUAL_PLATFORMS: Record<WeaponVisualPlatformId, WeaponVisua
     height: 48,
     baseSprite: "/game/weapons/sks/base.png",
     anchors: {
-      stock: { x: 6, y: 22 },
-      magazine: { x: 74, y: 34 },
-      optic: { x: 70, y: 10 },
-      underbarrel: { x: 96, y: 36 },
-      muzzle: { x: 150, y: 20 },
+      stock: { x: 6, y: 22, hitbox: { x: 0, y: 8, w: 48, h: 36 } },
+      magazine: { x: 74, y: 34, hitbox: { x: 64, y: 28, w: 26, h: 18 } },
+      optic: { x: 70, y: 10, hitbox: { x: 56, y: 0, w: 42, h: 16 } },
+      underbarrel: { x: 96, y: 36, hitbox: { x: 88, y: 30, w: 34, h: 18 } },
+      muzzle: { x: 150, y: 20, hitbox: { x: 136, y: 10, w: 32, h: 24 } },
     },
     layerOrder: ["stock", "base", "muzzle", "magazine", "underbarrel", "optic"],
     defaultParts: {
@@ -394,6 +399,28 @@ export function slotLabel(slot: WeaponVisualSlot): string {
     case "muzzle":
       return "BARREL";
   }
+}
+
+/** Resolve clickable hotspots for supported slots only. */
+export function resolveSlotHitAreas(
+  weaponId: string,
+): { slot: WeaponVisualSlot; hitbox: Hitbox; label: string }[] | null {
+  const platform = platformForWeaponId(weaponId);
+  if (!platform) return null;
+  const out: { slot: WeaponVisualSlot; hitbox: Hitbox; label: string }[] = [];
+  for (const slot of platform.supportedSlots) {
+    const anchor = platform.anchors[slot];
+    const hitbox =
+      anchor.hitbox ??
+      ({
+        x: Math.max(0, anchor.x - 12),
+        y: Math.max(0, anchor.y - 10),
+        w: 28,
+        h: 22,
+      } satisfies Hitbox);
+    out.push({ slot, hitbox, label: slotLabel(slot) });
+  }
+  return out;
 }
 
 export function currentPartLabel(
