@@ -54,12 +54,12 @@ describe("equipped weight", () => {
   });
 
   it("installed attachment weight is included", () => {
-    expect(ATTACHMENTS["optic"]!.weight).toBe(0.25);
-    expect(getEquippedWeight({ weapon: "m4", attachments: ["optic"] })).toBeCloseTo(3.75);
+    expect(ATTACHMENTS["optic"]!.weight).toBe(0.5);
+    expect(getEquippedWeight({ weapon: "m4", attachments: ["optic"] })).toBeCloseTo(4);
   });
 
   it("multiple installed attachments sum correctly", () => {
-    expect(getEquippedWeight({ weapon: "m4", attachments: ["optic", "brake", "mag"] })).toBeCloseTo(4.75);
+    expect(getEquippedWeight({ weapon: "m4", attachments: ["optic", "brake", "mag"] })).toBeCloseTo(5);
   });
 
   it("detached backpack attachment is not included", () => {

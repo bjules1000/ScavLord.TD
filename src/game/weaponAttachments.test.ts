@@ -35,12 +35,15 @@ describe("weapon mounts", () => {
 describe("compatibility", () => {
   it("allows category-compatible magazine attachments", () => {
     expect(canInstallAttachmentOnWeapon("adar", "ar_drum").ok).toBe(true);
+    expect(canInstallAttachmentOnWeapon("m4", "ar_drum").ok).toBe(true);
     expect(canInstallAttachmentOnWeapon("pm", "pistol_ext").ok).toBe(true);
   });
 
-  it("rejects wrong category magazines", () => {
+  it("rejects wrong category or weapon magazines", () => {
     expect(canInstallAttachmentOnWeapon("pm", "ar_drum").ok).toBe(false);
+    expect(canInstallAttachmentOnWeapon("ak74", "ar_drum").ok).toBe(false);
     expect(canInstallAttachmentOnWeapon("adar", "pistol_ext").ok).toBe(false);
+    expect(canInstallAttachmentOnWeapon("m4", "ak_drum").ok).toBe(false);
   });
 
   it("supports explicit weapon ID restrictions", () => {
@@ -64,18 +67,18 @@ describe("compatibility", () => {
 
 describe("atomic installation", () => {
   it("installs into empty mount", () => {
-    const result = installAttachmentInMounts("pm", [], "optic");
+    const result = installAttachmentInMounts("pm", [], "red_dot");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.attachments).toEqual(["optic"]);
+    expect(result.attachments).toEqual(["red_dot"]);
     expect(result.replaced).toBeNull();
   });
 
   it("replaces occupied mount", () => {
-    const result = installAttachmentInMounts("pm", ["optic"], "thermal");
+    const result = installAttachmentInMounts("m4", ["optic"], "optic_2x");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.attachments).toEqual(["thermal"]);
+    expect(result.attachments).toEqual(["optic_2x"]);
     expect(result.replaced).toBe("optic");
   });
 });

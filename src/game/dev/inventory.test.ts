@@ -109,7 +109,7 @@ describe("DEV ADD backpack", () => {
     const result = mustAdd("a_optic", [], 5, 3);
     expect(result.item.kind).toBe("attachment");
     expect(result.item.ref).toBe("optic");
-    const equipped = equipAttachment(result.item, [], result.backpack, 2, 7, "pm");
+    const equipped = equipAttachment(result.item, [], result.backpack, 4, 7, "m4");
     expect(equipped.ok).toBe(true);
     if (!equipped.ok) return;
     expect(equipped.attachments).toEqual(["optic"]);
