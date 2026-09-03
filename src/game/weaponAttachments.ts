@@ -333,5 +333,39 @@ export function fittedWeaponStats(
     range: mods.range,
     damage: mods.damage,
     cooldown: mods.cooldown,
+    spread: mods.spread,
   };
+}
+
+/** Compact modifier lines for stash / equipment UI. */
+export function attachmentModifierLines(attachId: string): string[] {
+  const att = attachmentDef(attachId);
+  if (!att) return [];
+  const lines: string[] = [];
+  if (att.magSizeAdd) lines.push(`MAG +${att.magSizeAdd}`);
+  if (att.accuracy) lines.push(`ACC ${att.accuracy > 0 ? "+" : ""}${Math.round(att.accuracy * 100)}%`);
+  if (att.rangeAdd) lines.push(`RNG +${att.rangeAdd}`);
+  if (att.spreadAdd) lines.push(`SPREAD ${att.spreadAdd > 0 ? "+" : ""}${att.spreadAdd.toFixed(2)}`);
+  if (att.reloadTimeMult && att.reloadTimeMult !== 1) {
+    const pct = Math.round((att.reloadTimeMult - 1) * 100);
+    lines.push(`RELOAD ${pct > 0 ? "+" : ""}${pct}%`);
+  }
+  if (att.weight) lines.push(`WT +${att.weight.toFixed(2)}`);
+  if (att.pen) lines.push(`PEN +${att.pen}`);
+  return lines;
+}
+
+export function kitResolvedStatLines(weaponId: string, attachments: readonly string[]) {
+  const base = weaponDef(weaponId);
+  const fitted = fittedWeaponStats(weaponId, attachments);
+  const rows: { label: string; value: string }[] = [
+    { label: "MAG", value: String(fitted.magSize) },
+    { label: "ACC", value: fitted.accuracy.toFixed(2) },
+    { label: "RNG", value: String(Math.round(fitted.range)) },
+    { label: "RLD", value: `${(fitted.reloadMs / 1000).toFixed(1)}s` },
+  ];
+  if (base.spread != null && fitted.spread != null) {
+    rows.push({ label: "SPREAD", value: fitted.spread.toFixed(2) });
+  }
+  return rows;
 }

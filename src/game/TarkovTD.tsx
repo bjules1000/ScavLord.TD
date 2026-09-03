@@ -497,6 +497,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
     magSize: folded.magSize,
     reloadMs: folded.reloadMs,
     reloadType: folded.reloadType,
+    spread: folded.spread,
   };
 }
 
@@ -1574,7 +1575,7 @@ export default function TarkovTD() {
                 range: st.range,
                 hitRadius: PELLET_HIT_RADIUS,
                 pelletCount: shotgunPelletCount(st.weapon),
-                spread: st.weapon.spread ?? 0,
+                spread: st.spread ?? st.weapon.spread ?? 0,
                 primaryDamage: st.damage,
                 secondaryMult: shotgunSecondaryMult(st.weapon),
                 maxHits: shotgunMaxHits(st.weapon),

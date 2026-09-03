@@ -294,50 +294,174 @@ export interface AttachmentDef {
   compatibility?: AttachmentCompatibility;
   damageMult: number;
   rangeMult: number;
+  /** Flat range added after multipliers. */
+  rangeAdd?: number;
   rofMult: number;
   accuracy: number;
   pen: number;
   /** Extra loaded rounds. Combat still reloads from infinite reserve. */
   magSizeAdd?: number;
+  /** Multiplicative reload duration; stacks across attachments. */
+  reloadTimeMult?: number;
+  /** Additive pellet cone half-angle (shotguns). */
+  spreadAdd?: number;
   /** Gameplay weight units. Installed attachments add to equipped load. */
   weight: number;
 }
 
+const att = (
+  id: string,
+  name: string,
+  slot: AttachMount,
+  partial: Partial<Omit<AttachmentDef, "id" | "name" | "slot">> & Pick<AttachmentDef, "weight">,
+): AttachmentDef => ({
+  id,
+  name,
+  slot,
+  damageMult: 1,
+  rangeMult: 1,
+  rofMult: 1,
+  accuracy: 0,
+  pen: 0,
+  ...partial,
+});
+
 export const ATTACHMENTS: Record<string, AttachmentDef> = {
-  optic: { id: "optic", name: "4x SCOPE", slot: "optic", damageMult: 1, rangeMult: 1.18, rofMult: 1, accuracy: 0.12, pen: 0, weight: 0.25 },
-  thermal: { id: "thermal", name: "THERMAL SIGHT", slot: "optic", damageMult: 1, rangeMult: 1.3, rofMult: 1, accuracy: 0.2, pen: 0, weight: 0.5 },
-  grip: { id: "grip", name: "FOREGRIP", slot: "underbarrel", damageMult: 1, rangeMult: 1, rofMult: 1, accuracy: 0.14, pen: 0, weight: 0.25 },
-  brake: { id: "brake", name: "MUZZLE BRAKE", slot: "muzzle", damageMult: 1, rangeMult: 1.04, rofMult: 1.05, accuracy: 0.1, pen: 0, weight: 0.25 },
-  mag: { id: "mag", name: "DRUM MAG", slot: "magazine", damageMult: 1, rangeMult: 1, rofMult: 1.28, accuracy: -0.02, pen: 0, magSizeAdd: 4, weight: 0.75 },
-  supp: { id: "supp", name: "SUPPRESSOR", slot: "muzzle", damageMult: 1.12, rangeMult: 1.06, rofMult: 1, accuracy: 0.07, pen: 0, weight: 0.5 },
-  m995: { id: "m995", name: "AP ROUNDS", slot: "underbarrel", damageMult: 1.1, rangeMult: 1, rofMult: 1, accuracy: 0, pen: 6, weight: 0.25 },
-  laser: { id: "laser", name: "TAC LASER", slot: "underbarrel", damageMult: 1, rangeMult: 1, rofMult: 1.08, accuracy: 0.13, pen: 0, weight: 0.25 },
-  ar_drum: {
-    id: "ar_drum",
-    name: "AR DRUM MAG",
-    slot: "magazine",
-    compatibility: { weaponCategories: ["ar"] },
+  // —— Optics ——
+  red_dot: att("red_dot", "RED DOT", "optic", {
+    compatibility: { weaponCategories: ["pistol", "ar", "shotgun"] },
+    accuracy: 0.03,
+    weight: 0.15,
+  }),
+  optic_2x: att("optic_2x", "2X COMBAT OPTIC", "optic", {
+    compatibility: { weaponCategories: ["ar", "lmg"] },
+    accuracy: 0.03,
+    rangeAdd: 8,
+    weight: 0.3,
+  }),
+  optic: att("optic", "4X SCOPE", "optic", {
+    compatibility: { weaponCategories: ["ar", "sniper"] },
+    accuracy: 0.05,
+    rangeAdd: 16,
+    weight: 0.5,
+  }),
+  marksman_scope: att("marksman_scope", "MARKSMAN SCOPE", "optic", {
+    compatibility: { weaponCategories: ["sniper"] },
+    accuracy: 0.07,
+    rangeAdd: 24,
+    weight: 0.75,
+  }),
+  thermal: att("thermal", "THERMAL SIGHT", "optic", {
     damageMult: 1,
-    rangeMult: 1,
-    rofMult: 1,
-    accuracy: -0.03,
-    pen: 0,
+    rangeMult: 1.3,
+    accuracy: 0.2,
+    weight: 0.5,
+  }),
+
+  // —— Muzzle ——
+  light_comp: att("light_comp", "LIGHT COMPENSATOR", "muzzle", {
+    compatibility: { weaponCategories: ["pistol", "ar"] },
+    accuracy: 0.02,
+    reloadTimeMult: 1.03,
+    weight: 0.15,
+  }),
+  brake: att("brake", "MUZZLE BRAKE", "muzzle", {
+    compatibility: { weaponCategories: ["ar", "lmg"] },
+    accuracy: 0.03,
+    weight: 0.25,
+  }),
+  tight_choke: att("tight_choke", "TIGHT CHOKE", "muzzle", {
+    compatibility: { weaponCategories: ["shotgun"] },
+    spreadAdd: -0.1,
+    rangeAdd: 6,
+    weight: 0.15,
+  }),
+  wide_choke: att("wide_choke", "WIDE CHOKE", "muzzle", {
+    compatibility: { weaponCategories: ["shotgun"] },
+    spreadAdd: 0.12,
+    rangeAdd: -5,
+    weight: 0.1,
+  }),
+  supp: att("supp", "SUPPRESSOR", "muzzle", {
+    damageMult: 1.12,
+    rangeMult: 1.06,
+    accuracy: 0.07,
+    weight: 0.5,
+  }),
+
+  // —— Magazines ——
+  ar_drum: att("ar_drum", "STANAG DRUM", "magazine", {
+    compatibility: { weaponIds: ["adar", "m4"] },
     magSizeAdd: 30,
+    reloadTimeMult: 1.12,
     weight: 2.2,
-  },
-  pistol_ext: {
-    id: "pistol_ext",
-    name: "EXTENDED MAG",
-    slot: "magazine",
+  }),
+  ak_drum: att("ak_drum", "AK DRUM", "magazine", {
+    compatibility: { weaponIds: ["ak74"] },
+    magSizeAdd: 30,
+    reloadTimeMult: 1.15,
+    weight: 2.4,
+  }),
+  pistol_ext: att("pistol_ext", "EXTENDED MAG", "magazine", {
     compatibility: { weaponCategories: ["pistol"] },
-    damageMult: 1,
-    rangeMult: 1,
-    rofMult: 1,
-    accuracy: 0,
-    pen: 0,
     magSizeAdd: 8,
     weight: 0.4,
-  },
+  }),
+  pistol_drum: att("pistol_drum", "PISTOL DRUM", "magazine", {
+    compatibility: { weaponIds: ["pm"] },
+    magSizeAdd: 20,
+    reloadTimeMult: 1.12,
+    weight: 0.9,
+  }),
+  stanag_ext: att("stanag_ext", "STANAG EXTENDED MAG", "magazine", {
+    compatibility: { weaponIds: ["adar", "m4"] },
+    magSizeAdd: 10,
+    weight: 0.45,
+  }),
+  quick_mag: att("quick_mag", "QUICK MAG", "magazine", {
+    compatibility: { weaponIds: ["adar", "m4", "ak74"] },
+    reloadTimeMult: 0.82,
+    weight: 0.25,
+  }),
+  dvl_ext: att("dvl_ext", "DVL EXTENDED MAG", "magazine", {
+    compatibility: { weaponIds: ["dvl10"] },
+    magSizeAdd: 5,
+    weight: 0.45,
+  }),
+  mag: att("mag", "DRUM MAG", "magazine", {
+    rofMult: 1.28,
+    accuracy: -0.02,
+    magSizeAdd: 4,
+    weight: 0.75,
+  }),
+
+  // —— Underbarrel ——
+  grip: att("grip", "VERTICAL GRIP", "underbarrel", {
+    compatibility: { weaponCategories: ["ar", "lmg"] },
+    accuracy: 0.04,
+    weight: 0.35,
+  }),
+  angled_grip: att("angled_grip", "ANGLED GRIP", "underbarrel", {
+    compatibility: { weaponCategories: ["ar"] },
+    accuracy: 0.02,
+    reloadTimeMult: 0.92,
+    weight: 0.25,
+  }),
+  heavy_grip: att("heavy_grip", "HEAVY FOREGRIP", "underbarrel", {
+    compatibility: { weaponCategories: ["ar", "lmg"] },
+    accuracy: 0.06,
+    weight: 0.7,
+  }),
+  laser: att("laser", "TAC LASER", "underbarrel", {
+    rofMult: 1.08,
+    accuracy: 0.13,
+    weight: 0.25,
+  }),
+  m995: att("m995", "AP ROUNDS", "underbarrel", {
+    damageMult: 1.1,
+    pen: 6,
+    weight: 0.25,
+  }),
 };
 
 /** Canonical attachment folding. Combat and the operator sidebar both read this. */
@@ -352,27 +476,36 @@ export function applyAttachmentMods(
   let accuracy = weapon.accuracy;
   let pen = 0;
   let magSize = weapon.magSize;
+  let reloadMs = weapon.reloadMs;
+  let reloadTimeMult = 1;
+  let spread = weapon.spread;
   for (const id of attachments) {
     const a = lookup(id);
     if (!a) continue;
     damage *= a.damageMult;
     range *= a.rangeMult;
+    range += a.rangeAdd ?? 0;
     cooldown /= a.rofMult;
     accuracy += a.accuracy;
     pen += a.pen;
     magSize += a.magSizeAdd ?? 0;
+    reloadTimeMult *= a.reloadTimeMult ?? 1;
+    if (spread != null) spread += a.spreadAdd ?? 0;
   }
+  reloadMs = Math.max(100, Math.round(reloadMs * reloadTimeMult));
+  if (spread != null) spread = Math.max(0.05, spread);
   return {
     damage,
-    range,
+    range: Math.max(1, range),
     cooldown,
     accuracy: Math.max(0.15, Math.min(0.99, accuracy)),
     pen,
     magSize: Math.max(1, magSize),
     splash: weapon.splash,
     slots: weapon.slots,
-    reloadMs: weapon.reloadMs,
+    reloadMs,
     reloadType: weapon.reloadType,
+    spread,
   };
 }
 
@@ -446,16 +579,29 @@ export const ITEMS: ItemDef[] = [
   { id: "w_dvl10", kind: "weapon", ref: "dvl10", name: "LONG RIFLE", rarity: "epic", value: 1500, desc: "150 dmg one-shot cannon, 4 mod slots.", price: 7200 },
   { id: "w_m32", kind: "weapon", ref: "m32", name: "ROTARY GL", rarity: "epic", value: 950, desc: "Frag rounds, area damage.", price: 4600 },
   // attachments
-  { id: "a_grip", kind: "attachment", ref: "grip", name: "FOREGRIP", rarity: "common", value: 110, desc: "+14% hit chance.", price: 450 },
-  { id: "a_brake", kind: "attachment", ref: "brake", name: "MUZZLE BRAKE", rarity: "common", value: 130, desc: "+10% hit chance, small ROF/range.", price: 500 },
-  { id: "a_optic", kind: "attachment", ref: "optic", name: "4x SCOPE", rarity: "rare", value: 240, desc: "+18% range, +12% hit chance.", price: 950 },
-  { id: "a_mag", kind: "attachment", ref: "mag", name: "DRUM MAG", rarity: "rare", value: 220, desc: "+28% rate of fire, +4 magazine capacity.", price: 900 },
+  { id: "a_red_dot", kind: "attachment", ref: "red_dot", name: "RED DOT", rarity: "common", value: 90, desc: "ACC +3%. Light general-purpose optic.", price: 320 },
+  { id: "a_optic_2x", kind: "attachment", ref: "optic_2x", name: "2X COMBAT OPTIC", rarity: "rare", value: 180, desc: "ACC +3%, RNG +8. Mid-range optic.", price: 680 },
+  { id: "a_optic", kind: "attachment", ref: "optic", name: "4X SCOPE", rarity: "rare", value: 280, desc: "ACC +5%, RNG +16. Long-lane optic.", price: 1050 },
+  { id: "a_marksman", kind: "attachment", ref: "marksman_scope", name: "MARKSMAN SCOPE", rarity: "epic", value: 520, desc: "ACC +7%, RNG +24. Precision sniper glass.", price: 2200 },
+  { id: "a_thermal", kind: "attachment", ref: "thermal", name: "THERMAL SIGHT", rarity: "epic", value: 560, desc: "+30% range, +20% hit chance.", price: 2400 },
+  { id: "a_light_comp", kind: "attachment", ref: "light_comp", name: "LIGHT COMPENSATOR", rarity: "common", value: 95, desc: "ACC +2%. Light muzzle control.", price: 340 },
+  { id: "a_brake", kind: "attachment", ref: "brake", name: "MUZZLE BRAKE", rarity: "rare", value: 150, desc: "ACC +3%. Sustained-fire muzzle control.", price: 560 },
+  { id: "a_tight_choke", kind: "attachment", ref: "tight_choke", name: "TIGHT CHOKE", rarity: "rare", value: 160, desc: "Tighter spread, +6 range.", price: 580 },
+  { id: "a_wide_choke", kind: "attachment", ref: "wide_choke", name: "WIDE CHOKE", rarity: "rare", value: 140, desc: "Wider spread, -5 range. Crowd coverage.", price: 520 },
+  { id: "a_ar_drum", kind: "attachment", ref: "ar_drum", name: "STANAG DRUM", rarity: "epic", value: 520, desc: "MAG +30, WT +2.2, RLD +12%. ADAR/M4 only.", price: 1800 },
+  { id: "a_ak_drum", kind: "attachment", ref: "ak_drum", name: "AK DRUM", rarity: "epic", value: 540, desc: "MAG +30, WT +2.4, RLD +15%. AK74 only.", price: 1900 },
+  { id: "a_pistol_ext", kind: "attachment", ref: "pistol_ext", name: "EXTENDED MAG", rarity: "rare", value: 140, desc: "MAG +8. Pistols only.", price: 420 },
+  { id: "a_pistol_drum", kind: "attachment", ref: "pistol_drum", name: "PISTOL DRUM", rarity: "epic", value: 380, desc: "MAG +20, WT +0.9. PM only.", price: 1400 },
+  { id: "a_stanag_ext", kind: "attachment", ref: "stanag_ext", name: "STANAG EXTENDED MAG", rarity: "rare", value: 200, desc: "MAG +10. ADAR/M4 only.", price: 720 },
+  { id: "a_quick_mag", kind: "attachment", ref: "quick_mag", name: "QUICK MAG", rarity: "epic", value: 360, desc: "RLD -18%. No extra capacity. ADAR/M4/AK74.", price: 1300 },
+  { id: "a_dvl_ext", kind: "attachment", ref: "dvl_ext", name: "DVL EXTENDED MAG", rarity: "epic", value: 420, desc: "MAG +5. DVL10 only.", price: 1600 },
+  { id: "a_grip", kind: "attachment", ref: "grip", name: "VERTICAL GRIP", rarity: "rare", value: 130, desc: "ACC +4%. Stable underbarrel grip.", price: 500 },
+  { id: "a_angled_grip", kind: "attachment", ref: "angled_grip", name: "ANGLED GRIP", rarity: "epic", value: 280, desc: "ACC +2%, RLD -8%. Handling grip.", price: 980 },
+  { id: "a_heavy_grip", kind: "attachment", ref: "heavy_grip", name: "HEAVY FOREGRIP", rarity: "epic", value: 320, desc: "ACC +6%, WT +0.7. Heavy stability grip.", price: 1100 },
+  { id: "a_mag", kind: "attachment", ref: "mag", name: "DRUM MAG", rarity: "rare", value: 220, desc: "Legacy +4 magazine, +ROF.", price: 900 },
   { id: "a_supp", kind: "attachment", ref: "supp", name: "SUPPRESSOR", rarity: "rare", value: 300, desc: "+12% damage, +6% range, +7% hit chance.", price: 1200 },
   { id: "a_laser", kind: "attachment", ref: "laser", name: "TAC LASER", rarity: "rare", value: 260, desc: "+13% hit chance, +8% ROF.", price: 1000 },
   { id: "a_m995", kind: "attachment", ref: "m995", name: "AP ROUNDS", rarity: "epic", value: 420, desc: "+6 armor pen, +10% damage.", price: 1800 },
-  { id: "a_thermal", kind: "attachment", ref: "thermal", name: "THERMAL SIGHT", rarity: "epic", value: 560, desc: "+30% range, +20% hit chance.", price: 2400 },
-  { id: "a_ar_drum", kind: "attachment", ref: "ar_drum", name: "AR DRUM MAG", rarity: "rare", value: 380, desc: "+30 magazine capacity. AR rifles only. Heavy.", price: 1400 },
-  { id: "a_pistol_ext", kind: "attachment", ref: "pistol_ext", name: "EXTENDED MAG", rarity: "common", value: 120, desc: "+8 magazine capacity. Pistols only.", price: 380 },
   // body armor — only your operator can wear it
   { id: "ar_paca", kind: "armor", ref: "paca", name: "SOFT VEST", rarity: "common", value: 220, desc: "-18% incoming, 110 durability.", price: 700 },
   { id: "ar_6b23", kind: "armor", ref: "sixb23", name: "RIOT PLATES", rarity: "rare", value: 480, desc: "-30% incoming, 190 durability.", price: 1600 },

@@ -51,10 +51,13 @@ export type AttachmentOverride = Partial<
     | "weight"
     | "damageMult"
     | "rangeMult"
+    | "rangeAdd"
     | "rofMult"
     | "accuracy"
     | "pen"
     | "magSizeAdd"
+    | "reloadTimeMult"
+    | "spreadAdd"
     | "slot"
     | "compatibility"
   >
@@ -328,6 +331,9 @@ export function fittedStatRows(weaponId: string, attachments: readonly string[])
     { label: "RELOAD", base: base.reloadMs / 1000, fitted: fitted.reloadMs / 1000 },
     { label: "ACCURACY", base: base.accuracy, fitted: fitted.accuracy },
     { label: "RANGE", base: base.range, fitted: fitted.range },
+    ...(base.spread != null && fitted.spread != null
+      ? [{ label: "SPREAD", base: base.spread, fitted: fitted.spread }]
+      : []),
   ];
 }
 
@@ -370,11 +376,14 @@ export function armorLabFields(): LabField[] {
 export function attachmentLabFields(def: AttachmentDef): LabField[] {
   const fields: LabField[] = [
     { key: "weight", label: "Weight", step: 0.05 },
+    { key: "accuracy", label: "Accuracy", step: 0.01 },
+    { key: "rangeAdd", label: "Range +", step: 1 },
     { key: "damageMult", label: "Damage ×", step: 0.01 },
     { key: "rangeMult", label: "Range ×", step: 0.01 },
     { key: "rofMult", label: "ROF ×", step: 0.01 },
-    { key: "accuracy", label: "Accuracy", step: 0.01 },
     { key: "pen", label: "Pen", step: 1 },
+    { key: "reloadTimeMult", label: "Reload ×", step: 0.01 },
+    { key: "spreadAdd", label: "Spread +", step: 0.01 },
   ];
   if (def.magSizeAdd != null) fields.push({ key: "magSizeAdd", label: "Mag +", step: 1 });
   return fields;

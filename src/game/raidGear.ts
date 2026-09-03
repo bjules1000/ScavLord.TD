@@ -24,14 +24,27 @@ export type { AttachMount };
 export { MOUNT_LABEL as SLOT_LABEL, slotOf };
 
 export const ATTACH_SLOT: Record<string, AttachMount> = {
+  red_dot: "optic",
+  optic_2x: "optic",
   optic: "optic",
+  marksman_scope: "optic",
   thermal: "optic",
+  light_comp: "muzzle",
   brake: "muzzle",
+  tight_choke: "muzzle",
+  wide_choke: "muzzle",
   supp: "muzzle",
-  mag: "magazine",
   ar_drum: "magazine",
+  ak_drum: "magazine",
   pistol_ext: "magazine",
+  pistol_drum: "magazine",
+  stanag_ext: "magazine",
+  quick_mag: "magazine",
+  dvl_ext: "magazine",
+  mag: "magazine",
   grip: "underbarrel",
+  angled_grip: "underbarrel",
+  heavy_grip: "underbarrel",
   laser: "underbarrel",
   m995: "underbarrel",
 };
