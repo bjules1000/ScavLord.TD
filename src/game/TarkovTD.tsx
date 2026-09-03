@@ -159,6 +159,7 @@ import {
   clipWorldSegment,
   hasLineOfSight,
   wallAlongLimit,
+  type SightPos,
 } from "./los";
 import {
   armorItemId,
@@ -172,6 +173,16 @@ import {
   swapRaidWeapon,
 } from "./raidGear";
 import { mountRowsForWeapon } from "./weaponAttachments";
+import {
+  ENEMY_HIT_RADIUS,
+  aimAngleTo,
+  combatRng,
+  getShotDispersion,
+  isInFiringSector,
+  resolvePhysicalShot,
+  resolveShotPattern,
+  type PhysicalShotResult,
+} from "./shooting";
 import {
   aliveOperators,
   capabilityFromMeta,
@@ -623,6 +634,7 @@ export default function TarkovTD() {
   const [choices, setChoices] = useState<Item[]>([]);
   const [pendingLoot, setPendingLoot] = useState<Item | null>(null);
   const [swapUid, setSwapUid] = useState<number | null>(null);
+  const [holdAnglePending, setHoldAnglePending] = useState<number | null>(null);
   const [sellValuableUids, setSellValuableUids] = useState<Set<number>>(() => new Set());
   const [leaveUids, setLeaveUids] = useState<Set<number>>(() => new Set());
   const [loadout, setLoadout] = useState<Item[]>([]);
@@ -1574,7 +1586,22 @@ export default function TarkovTD() {
         const locked =
           t.targetMode === "MANUAL" ? pickManualTarget(t.manualTargetId, origin, st.range, live) : null;
         const best = selectTarget(t.targetMode, origin, st.range, live, t.manualTargetId, visible);
-        const hasTarget = !!best;
+
+        // HOLD_ANGLE: check if any enemy is in the held sector
+        let holdAngleCanFire = false;
+        if (t.targetMode === "HOLD_ANGLE" && t.holdAngle != null) {
+          const halfCone = getShotDispersion(st.accuracy) + 0.15; // sector = dispersion + base sector width
+          for (const e of live) {
+            if (!inRange(origin, st.range, e)) continue;
+            if (!visible(e)) continue;
+            if (isInFiringSector(cx, cy - 4, t.holdAngle, halfCone, e.x, e.y)) {
+              holdAngleCanFire = true;
+              break;
+            }
+          }
+        }
+
+        const hasTarget = !!best || holdAngleCanFire;
         if (!moving && t.targetMode === "MANUAL" && t.manualTargetId != null && !locked) {
           t.manualTargetId = null;
         }
@@ -1590,61 +1617,59 @@ export default function TarkovTD() {
         t.ammo = reloaded.ammo;
         t.reloadLeft = reloaded.reloadLeft;
         t.engageTargetId = t.targetMode === "MANUAL" ? (locked?.id ?? null) : (best?.id ?? null);
-        if (t.targetMode === "MANUAL" && locked) {
+
+        // Update aim direction
+        if (t.targetMode === "HOLD_ANGLE" && t.holdAngle != null) {
+          t.angle = t.holdAngle;
+        } else if (t.targetMode === "MANUAL" && locked) {
           t.angle = Math.atan2(locked.y - cy - 4, locked.x - cx);
         } else if (best) {
           t.angle = Math.atan2(best.y - cy - 4, best.x - cx);
         }
-        if (best && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft) && operatorCanFire(t)) {
+
+        const canFire = (best || holdAngleCanFire) && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft) && operatorCanFire(t);
+        if (canFire) {
             t.cd = st.cooldown;
             t.flash = 0.06;
             t.ammo = consumeRound(t.ammo);
             const ox = cx + Math.cos(t.angle) * 12;
             const oy = cy - 4 + Math.sin(t.angle) * 12;
+            const shooterPos: SightPos = { x: ox, y: oy, surface: t.surface ?? "GROUND" };
+
             if (isShotgunWeapon(st.weapon)) {
-              const pelletOrigin = { x: ox, y: oy, surface: t.surface ?? "GROUND" };
-              const { strikes, angles, clipAlong } = resolveShotgunBlast({
+              // Physical shotgun: use unified shot pattern
+              const pattern = resolveShotPattern({
                 origin: { x: ox, y: oy },
-                aim: t.angle,
+                shooterSurface: shooterPos,
+                aimAngle: t.angle,
+                accuracy: st.accuracy,
                 range: st.range,
-                hitRadius: PELLET_HIT_RADIUS,
-                pelletCount: shotgunPelletCount(st.weapon),
-                spread: st.spread ?? st.weapon.spread ?? 0,
-                primaryDamage: st.damage,
-                secondaryMult: shotgunSecondaryMult(st.weapon),
-                maxHits: shotgunMaxHits(st.weapon),
-                enemies: s.enemies,
-                armorOf: (e) => effectiveEnemy(e.kind).armor,
+                damage: st.damage,
                 pen: st.pen,
-                maxAlongOf: (angle) =>
-                  wallAlongLimit(
-                    mapRef.current,
-                    pelletOrigin,
-                    ox + Math.cos(angle) * st.range,
-                    oy + Math.sin(angle) * st.range,
-                  ),
-                ignoreEnemy: (e) =>
-                  bridgeDeckSeparates(mapRef.current, pelletOrigin, {
-                    x: e.x,
-                    y: e.y,
-                    surface: e.surface ?? "GROUND",
-                  }),
+                enemies: s.enemies,
+                armorOf: (e) => effectiveEnemy((e as unknown as { kind: EnemyKind }).kind).armor,
+                map: mapRef.current,
+                rayCount: shotgunPelletCount(st.weapon),
+                pelletSpread: st.spread ?? st.weapon.spread ?? 0,
+                hitRadius: ENEMY_HIT_RADIUS,
+                maxPenHits: shotgunMaxHits(st.weapon),
+                secondaryHitMult: shotgunSecondaryMult(st.weapon),
               });
-              for (const strike of strikes) {
-                const e = s.enemies.find((en) => en.id === strike.enemyId);
-                if (!e) continue;
-                e.hitFlash = 0.07;
-                spawnParticles(e.x, e.y, "#c94b3a", 2, 36);
+              for (const shot of pattern.shots) {
+                for (const hit of shot.hits) {
+                  const e = s.enemies.find((en) => en.id === hit.enemyId);
+                  if (!e) continue;
+                  e.hitFlash = 0.07;
+                  spawnParticles(e.x, e.y, "#c94b3a", 2, 36);
+                }
               }
-              for (let i = 0; i < angles.length; i++) {
-                const ang = angles[i]!;
-                const along = clipAlong[i] ?? st.range;
+              for (const tr of pattern.tracers) {
                 s.bullets.push({
                   id: s.nextId++,
                   x: ox,
                   y: oy,
-                  tx: ox + Math.cos(ang) * along,
-                  ty: oy + Math.sin(ang) * along,
+                  tx: tr.endpoint.x,
+                  ty: tr.endpoint.y,
                   targetId: 0,
                   speed: 540 * SCALE,
                   damage: 0,
@@ -1655,29 +1680,72 @@ export default function TarkovTD() {
                   trail: 0,
                 });
               }
-            } else {
-              const miss = Math.random() > st.accuracy;
-              const scatter = miss ? (Math.random() - 0.5) * TILE * 1.6 : 0;
-              const aimX = best.x + scatter;
-              const aimY = best.y + (miss ? (Math.random() - 0.5) * TILE * 1.6 : 0);
-              const clipped = clipWorldSegment(mapRef.current, { x: ox, y: oy }, aimX, aimY);
+            } else if (st.splash > 0) {
+              // Splash weapons: sample direction, trace to endpoint, AoE on arrival
+              const dispersion = getShotDispersion(st.accuracy);
+              const shotAngle = t.angle + (combatRng() * 2 - 1 + combatRng() * 2 - 1) / 2 * dispersion;
+              const ux = Math.cos(shotAngle);
+              const uy = Math.sin(shotAngle);
+              const endX = ox + ux * st.range;
+              const endY = oy + uy * st.range;
+              const clipped = clipWorldSegment(mapRef.current, shooterPos, endX, endY);
               s.bullets.push({
                 id: s.nextId++,
                 x: ox,
                 y: oy,
                 tx: clipped.x,
                 ty: clipped.y,
-                targetId: miss ? 0 : best.id,
-                speed:
-                  (st.weapon.cls === "sniper"
-                    ? 900
-                    : st.weapon.cls === "launcher"
-                      ? 340
-                      : 620) * SCALE,
+                targetId: 0,
+                speed: 340 * SCALE,
                 damage: st.damage,
                 splash: st.splash,
                 pen: st.pen,
-                miss,
+                miss: false,
+                color: st.weapon.accent,
+                trail: 0,
+              });
+            } else {
+              // Physical rifle shot: ray-based intersection
+              const result = resolvePhysicalShot({
+                origin: { x: ox, y: oy },
+                shooterSurface: shooterPos,
+                aimAngle: t.angle,
+                accuracy: st.accuracy,
+                range: st.range,
+                damage: st.damage,
+                pen: st.pen,
+                enemies: s.enemies,
+                armorOf: (e) => effectiveEnemy((e as unknown as { kind: EnemyKind }).kind).armor,
+                map: mapRef.current,
+                hitRadius: ENEMY_HIT_RADIUS,
+                maxPenHits: st.pen > 0 ? 2 : 1,
+              });
+              // Flash and particles for hits
+              for (const hit of result.hits) {
+                const e = s.enemies.find((en) => en.id === hit.enemyId);
+                if (e) {
+                  e.hitFlash = 0.07;
+                  spawnParticles(e.x, e.y, "#c94b3a", 4, 55);
+                }
+              }
+              if (result.miss) {
+                spawnParticles(result.endpoint.x, result.endpoint.y, "#8a8570", 3, 40);
+                s.floats.push({ x: result.endpoint.x, y: result.endpoint.y - 10, life: 0.4, text: "miss", color: "#9a9484" });
+              }
+              // Tracer bullet (visual only — damage already applied)
+              const speed = (st.weapon.cls === "sniper" ? 900 : 620) * SCALE;
+              s.bullets.push({
+                id: s.nextId++,
+                x: ox,
+                y: oy,
+                tx: result.endpoint.x,
+                ty: result.endpoint.y,
+                targetId: 0,
+                speed,
+                damage: 0,
+                splash: 0,
+                pen: 0,
+                tracer: true,
                 color: st.weapon.accent,
                 trail: 0,
               });
@@ -1992,6 +2060,31 @@ export default function TarkovTD() {
           ctx.lineWidth = 4;
           ctx.stroke();
         }
+        // Aim cone visualization
+        const coneHalf = getShotDispersion(st.accuracy);
+        const aimAngle = sel.angle;
+        const coneLen = st.range;
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+        ctx.arc(pos.x, pos.y, coneLen, aimAngle - coneHalf, aimAngle + coneHalf);
+        ctx.closePath();
+        ctx.fillStyle = sel.targetMode === "HOLD_ANGLE"
+          ? "rgba(232,140,48,0.10)"
+          : "rgba(110,220,255,0.08)";
+        ctx.fill();
+        ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
+          ? "rgba(232,140,48,0.45)"
+          : "rgba(110,220,255,0.35)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        // Aim direction line
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+        ctx.lineTo(pos.x + Math.cos(aimAngle) * coneLen, pos.y + Math.sin(aimAngle) * coneLen);
+        ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
+          ? "rgba(232,140,48,0.6)"
+          : "rgba(110,220,255,0.5)";
+        ctx.stroke();
         ctx.lineWidth = 1;
         if (sel.move?.path.length) {
           ctx.fillStyle = "rgba(110,220,255,0.35)";
@@ -2130,6 +2223,21 @@ export default function TarkovTD() {
       s.selectedId = existing.id === s.selectedId ? null : existing.id;
       s.selectedObstacle = null;
       s.place = null;
+      rerender();
+      return;
+    }
+
+    // HOLD_ANGLE placement: click on battlefield to set fixed aim direction
+    if (holdAnglePending != null) {
+      const sel = s.towers.find((t) => t.id === holdAnglePending);
+      if (sel) {
+        const world = toWorld(ev);
+        const pos = towerPos(sel);
+        sel.holdAngle = Math.atan2(world.y - pos.y + 4, world.x - pos.x);
+        sel.holdAnglePoint = { x: world.x, y: world.y };
+        sel.targetMode = "HOLD_ANGLE";
+      }
+      setHoldAnglePending(null);
       rerender();
       return;
     }
@@ -3425,6 +3533,7 @@ export default function TarkovTD() {
                   <StatRow label="DMG" value={st.damage.toFixed(1)} />
                   <StatRow label="RANGE" value={st.range.toFixed(0)} />
                   <StatRow label="ACC" value={`${Math.round(st.accuracy * 100)}%`} />
+                  <StatRow label="CONE" value={`±${(getShotDispersion(st.accuracy) * 180 / Math.PI).toFixed(1)}°`} />
                   <StatRow label="FIRE" value={`${(60000 / st.cooldown).toFixed(0)} RPM`} />
                   <StatRow
                     label="CYCLE"
@@ -3479,6 +3588,13 @@ export default function TarkovTD() {
                           onClick={() => {
                             selected.targetMode = mode;
                             if (mode !== "MANUAL") selected.manualTargetId = null;
+                            if (mode !== "HOLD_ANGLE") {
+                              selected.holdAngle = null;
+                              selected.holdAnglePoint = null;
+                            }
+                            if (mode === "HOLD_ANGLE") {
+                              setHoldAnglePending(selected.id);
+                            }
                             rerender();
                           }}
                         >

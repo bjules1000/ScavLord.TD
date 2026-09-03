@@ -1,6 +1,6 @@
-export type TargetMode = "FIRST" | "LAST" | "CLOSEST" | "STRONGEST" | "MANUAL";
+export type TargetMode = "FIRST" | "LAST" | "CLOSEST" | "STRONGEST" | "MANUAL" | "HOLD_ANGLE";
 
-export const TARGET_MODES: readonly TargetMode[] = ["FIRST", "LAST", "CLOSEST", "STRONGEST", "MANUAL"];
+export const TARGET_MODES: readonly TargetMode[] = ["FIRST", "LAST", "CLOSEST", "STRONGEST", "MANUAL", "HOLD_ANGLE"];
 
 export interface AimOrigin {
   x: number;
@@ -93,6 +93,11 @@ export function selectTarget<T extends Targetable>(
     const locked = pickManualTarget(manualId, origin, range, enemies);
     if (!locked || !visible(locked)) return null;
     return locked;
+  }
+  if (mode === "HOLD_ANGLE") {
+    // HOLD_ANGLE doesn't auto-select a specific target.
+    // Returns null; the firing loop checks sector eligibility separately.
+    return null;
   }
   return pickAutoTarget(mode, origin, range, enemies, visible);
 }
