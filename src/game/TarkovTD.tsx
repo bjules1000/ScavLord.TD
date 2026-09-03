@@ -229,6 +229,7 @@ import {
 } from "./operators/crewEquipment";
 import { getRaidOperatorTitle, getRaidOperatorDisplayName } from "./operators/raidIdentity";
 import CrewEquipmentPanel from "./CrewEquipmentPanel";
+import ArmoryPanel from "./ArmoryPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import {
@@ -590,7 +591,7 @@ export default function TarkovTD() {
   const metaRef = useRef<Meta>(loadMeta());
   const uidRef = useRef(1);
   const [mapId, setMapId] = useState<string>("kolkhoz");
-  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "supplies" | "radio">("hideout");
+  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "armory" | "supplies" | "radio">("hideout");
   const [editMode, setEditMode] = useState(false);
   const [suppliesTab, setSuppliesTab] = useState<"stash" | "market">("stash");
   const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew">("overview");
@@ -978,6 +979,39 @@ export default function TarkovTD() {
       m.stash = stashEntriesFromItems([...ns, ...loadout]);
       saveMeta(m);
       pushLog(result.message);
+      rerender();
+    },
+    [loadout, pushLog, rerender, selectedEquipOwnerId, stash, stashSlots],
+  );
+
+  /** Buy a shop attachment into stash, then install it on the selected operator. */
+  const armoryBuyAndInstall = useCallback(
+    (defId: string) => {
+      const def = effectiveItemDef(defId) ?? ITEM_BY_ID[defId];
+      const m = metaRef.current;
+      if (!def?.price || def.kind !== "attachment") return pushLog("Not a buyable attachment.");
+      const price = Math.round(def.price * skillMods(m.skills).buyMult);
+      if (m.bank < price) return pushLog("Not enough banked roubles.");
+      if (stash.length >= stashSlots) return pushLog("Stash is full.");
+      m.bank -= price;
+      const item = makeItem(defId, newUid())!;
+      const withPurchase = [...stash, item];
+      const ownerId = coerceEquipmentOwnerId(m, selectedEquipOwnerId);
+      const result = equipOnEquipmentOwner(m, ownerId, withPurchase, newUid(), item.uid, stashSlots);
+      if (!result.ok) {
+        // Purchase succeeded but install failed — keep item in stash.
+        setStash(withPurchase);
+        m.stash = stashEntriesFromItems([...withPurchase, ...loadout]);
+        saveMeta(m);
+        pushLog(`Bought ${def.name} for ${price}₽. ${result.reason}`);
+        rerender();
+        return;
+      }
+      const ns = result.stash.slice(0, stashSlots);
+      setStash(ns);
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
+      saveMeta(m);
+      pushLog(`Bought & installed ${def.name} for ${price}₽.`);
       rerender();
     },
     [loadout, pushLog, rerender, selectedEquipOwnerId, stash, stashSlots],
@@ -2960,6 +2994,31 @@ export default function TarkovTD() {
                     onPack={toLoadout}
                     onUnpack={fromLoadout}
                     onBack={() => setScreen("hideout")}
+                    onOpenArmory={() => setScreen("armory")}
+                  />
+                </Overlay>
+              )}
+
+              {s.phase === "hideout" && screen === "armory" && (
+                <Overlay
+                  title="ARMORY"
+                  subtitle="Inspect mounts · preview stats · install or buy parts for the selected operator."
+                  layout="fill"
+                >
+                  <ArmoryPanel
+                    meta={meta}
+                    selectedOwnerId={coerceEquipmentOwnerId(meta, selectedEquipOwnerId)}
+                    onSelectOwner={setSelectedEquipOwnerId}
+                    stash={stash}
+                    stashSlots={stashSlots}
+                    shopDefIds={shopIds}
+                    buyMult={mods.buyMult}
+                    bank={meta.bank}
+                    onInstallFromStash={equipOnSelectedOwner}
+                    onBuyAndInstall={armoryBuyAndInstall}
+                    onDetachMount={(idx) => unequipSelectedOwner(idx)}
+                    onBack={() => setScreen("hideout")}
+                    onOpenEquipment={() => setScreen("gear")}
                   />
                 </Overlay>
               )}

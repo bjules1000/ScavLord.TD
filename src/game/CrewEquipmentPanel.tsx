@@ -46,6 +46,7 @@ export default function CrewEquipmentPanel({
   onPack,
   onUnpack,
   onBack,
+  onOpenArmory,
 }: {
   meta: Meta;
   selectedOwnerId: EquipmentOwnerId;
@@ -62,6 +63,7 @@ export default function CrewEquipmentPanel({
   onPack: (uid: number) => void;
   onUnpack: (uid: number) => void;
   onBack: () => void;
+  onOpenArmory?: () => void;
 }) {
   const ownerId = coerceEquipmentOwnerId(meta, selectedOwnerId);
   const rows = listCrewEquipmentRows(meta);
@@ -267,9 +269,16 @@ export default function CrewEquipmentPanel({
         </div>
       </div>
 
-      <button type="button" onClick={onBack} className="pixel-btn pixel-btn-primary w-full shrink-0">
-        BACK TO CAMP
-      </button>
+      <div className="flex shrink-0 gap-2">
+        {onOpenArmory && (
+          <button type="button" onClick={onOpenArmory} className="pixel-btn flex-1">
+            OPEN ARMORY
+          </button>
+        )}
+        <button type="button" onClick={onBack} className="pixel-btn pixel-btn-primary flex-1">
+          BACK TO CAMP
+        </button>
+      </div>
     </div>
   );
 }
