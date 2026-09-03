@@ -91,9 +91,9 @@ describe("Balance Lab runtime overrides", () => {
   });
 
   it("attachment override changes effective modifier", () => {
-    const over = setOverrideField(emptyBalanceOverrides(), "attachment", "optic", "rangeMult", 1.4, 1.18);
-    expect(effectiveAttachment("optic", over, true)?.rangeMult).toBe(1.4);
-    expect(ATTACHMENTS["optic"]!.rangeMult).toBe(1.18);
+    const over = setOverrideField(emptyBalanceOverrides(), "attachment", "optic", "rangeAdd", 20, 16);
+    expect(effectiveAttachment("optic", over, true)?.rangeAdd).toBe(20);
+    expect(ATTACHMENTS["optic"]!.rangeAdd).toBe(16);
   });
 
   it("weight override changes equipped weight", () => {

@@ -10,7 +10,7 @@ import {
   type Item,
 } from "./gear";
 import type { RaidPrepAction } from "./hub/prep";
-import { raidPrepActions } from "./hub/prep";
+import { attachmentActionLabel, attachmentBlockReason, raidPrepActions } from "./hub/prep";
 import type { Meta } from "./meta";
 import {
   armorDisplayName,
@@ -23,6 +23,10 @@ import {
   weaponDisplayName,
   type EquipmentOwnerId,
 } from "./operators/crewEquipment";
+import {
+  attachmentModifierLines,
+  kitResolvedStatLines,
+} from "./weaponAttachments";
 
 type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable";
 
@@ -42,6 +46,7 @@ export default function CrewEquipmentPanel({
   onPack,
   onUnpack,
   onBack,
+  onOpenArmory,
 }: {
   meta: Meta;
   selectedOwnerId: EquipmentOwnerId;
@@ -58,6 +63,7 @@ export default function CrewEquipmentPanel({
   onPack: (uid: number) => void;
   onUnpack: (uid: number) => void;
   onBack: () => void;
+  onOpenArmory?: () => void;
 }) {
   const ownerId = coerceEquipmentOwnerId(meta, selectedOwnerId);
   const rows = listCrewEquipmentRows(meta);
@@ -65,7 +71,8 @@ export default function CrewEquipmentPanel({
   const eq = getOwnerEquipment(meta, ownerId);
   const kitActions = kitActionsForOwner(meta, ownerId);
   const load = ownerLoadSummary(meta, ownerId);
-  const slots = eq ? (WEAPONS[eq.weapon]?.slots ?? 1) : 1;
+  const mountRows = kitActions.mountRows;
+  const kitStats = eq ? kitResolvedStatLines(eq.weapon, eq.attachments) : [];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -118,13 +125,6 @@ export default function CrewEquipmentPanel({
               >
                 <div className="text-[8px] text-muted-foreground">WEAPON</div>
                 <div className="text-primary">{weaponDisplayName(eq.weapon)}</div>
-                {eq.attachments.length > 0 && (
-                  <ul className="mt-1 space-y-0.5 text-[8px] text-accent">
-                    {eq.attachments.map((att, i) => (
-                      <li key={`${att}-${i}`}>├ {attachmentDisplayName(att)}</li>
-                    ))}
-                  </ul>
-                )}
               </button>
               <button
                 type="button"
@@ -137,32 +137,25 @@ export default function CrewEquipmentPanel({
                 </div>
               </button>
               <div>
-                <div className="text-[8px] text-muted-foreground">
-                  MODS {eq.attachments.length}/{slots}
-                </div>
-                <div className="mt-1 grid grid-cols-2 gap-1">
-                  {Array.from({ length: slots }).map((_, i) => {
-                    const att = eq.attachments[i];
-                    if (!att) {
-                      return (
-                        <div
-                          key={`empty-mod-${i}`}
-                          className="h-[40px] border border-dashed border-border/60 bg-background/40"
-                        />
-                      );
-                    }
-                    return (
-                      <button
-                        key={`mod-${i}-${att}`}
-                        type="button"
-                        onClick={() => onUnequip(i)}
-                        title={ATTACHMENTS[att]?.name}
-                        className="h-[40px] overflow-hidden border-2 border-accent bg-background/70 p-1 text-left text-[8px] leading-tight text-accent hover:-translate-y-[2px]"
-                      >
-                        {ATTACHMENTS[att]?.name ?? att}
-                      </button>
-                    );
-                  })}
+                <div className="text-[8px] text-muted-foreground">MOUNTS</div>
+                <div className="mt-1 space-y-1">
+                  {mountRows.map((row, i) => (
+                    <div key={`${row.mount}-${i}`} className="grid grid-cols-[5.5rem_1fr] items-center gap-1 text-[8px]">
+                      <span className="text-muted-foreground">{row.label}</span>
+                      {row.attachmentId ? (
+                        <button
+                          type="button"
+                          onClick={() => onUnequip(i)}
+                          title={ATTACHMENTS[row.attachmentId]?.name}
+                          className="truncate border border-accent bg-background/70 px-1 py-0.5 text-left text-accent hover:-translate-y-[1px]"
+                        >
+                          {attachmentDisplayName(row.attachmentId)}
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground/60">—</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
               <div className="border border-border/40 bg-background/30 px-2 py-1.5">
@@ -177,6 +170,16 @@ export default function CrewEquipmentPanel({
                     <div className="text-foreground">{load.moveTilesPerSec.toFixed(2)} t/s</div>
                   </div>
                 </div>
+                {kitStats.length > 0 && (
+                  <div className="mt-2 grid grid-cols-3 gap-1 border-t border-border/30 pt-2 text-[8px]">
+                    {kitStats.map((row) => (
+                      <div key={row.label}>
+                        <div className="text-muted-foreground">{row.label}</div>
+                        <div className="text-foreground">{row.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -217,6 +220,7 @@ export default function CrewEquipmentPanel({
                   key={item.uid}
                   item={item}
                   actions={raidPrepActions(item, kitActions)}
+                  kit={kitActions}
                   onEquip={() => onEquip(item.uid)}
                   onPack={() => onPack(item.uid)}
                 />
@@ -265,9 +269,16 @@ export default function CrewEquipmentPanel({
         </div>
       </div>
 
-      <button type="button" onClick={onBack} className="pixel-btn pixel-btn-primary w-full shrink-0">
-        BACK TO CAMP
-      </button>
+      <div className="flex shrink-0 gap-2">
+        {onOpenArmory && (
+          <button type="button" onClick={onOpenArmory} className="pixel-btn flex-1">
+            OPEN ARMORY
+          </button>
+        )}
+        <button type="button" onClick={onBack} className="pixel-btn pixel-btn-primary flex-1">
+          BACK TO CAMP
+        </button>
+      </div>
     </div>
   );
 }
@@ -275,15 +286,23 @@ export default function CrewEquipmentPanel({
 function PrepItemRow({
   item,
   actions,
+  kit,
   onEquip,
   onPack,
 }: {
   item: Item;
   actions: RaidPrepAction[];
+  kit: { weaponId: string; attachments: string[] };
   onEquip: () => void;
   onPack: () => void;
 }) {
-  const equipLabel = item.kind === "attachment" ? "INSTALL" : "EQUIP";
+  const equipLabel =
+    item.kind === "attachment" ? attachmentActionLabel(actions) || "INSTALL" : "EQUIP";
+  const blockReason = item.kind === "attachment" ? attachmentBlockReason(item, {
+    ...kit,
+    attachmentSlots: 0,
+  }) : null;
+  const modLines = item.kind === "attachment" && item.ref ? attachmentModifierLines(item.ref) : [];
   return (
     <div className="flex items-center gap-2 border-b border-border/40 py-1.5">
       <div
@@ -296,6 +315,8 @@ function PrepItemRow({
           {item.kind === "weapon" && item.installed?.length
             ? ` · ${item.installed.length} mod${item.installed.length === 1 ? "" : "s"}`
             : ""}
+          {blockReason ? ` · ${blockReason}` : ""}
+          {modLines.length > 0 ? ` · ${modLines.join(" · ")}` : ""}
         </div>
       </div>
       {actions.includes("equip") && (

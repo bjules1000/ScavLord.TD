@@ -202,18 +202,14 @@ describe("loot sources", () => {
 
   it("changing one weight recalculates effective percentages", () => {
     const base = lootTableEntries(WOODS_CRATE, emptyEconomyOverrides(), true, 1);
-    const optic = base.find((r) => r.itemId === "a_optic")!;
-    const mag = base.find((r) => r.itemId === "a_mag")!;
-    expect(optic.poolShare).toBeCloseTo(mag.poolShare);
-    const bumped = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "a_optic", { weight: 3 });
+    const redDot = base.find((r) => r.itemId === "a_red_dot")!;
+    const bumped = setSourceProfileField(emptyEconomyOverrides(), WOODS_CRATE, "a_red_dot", { weight: 3 });
     expect(bumped.ok).toBe(true);
     if (!bumped.ok) return;
     const next = lootTableEntries(WOODS_CRATE, bumped.overrides, true, 1);
-    const optic2 = next.find((r) => r.itemId === "a_optic")!;
-    const mag2 = next.find((r) => r.itemId === "a_mag")!;
-    expect(optic2.poolShare).toBeGreaterThan(optic.poolShare);
-    expect(optic2.firstSlotChance).toBeGreaterThan(optic.firstSlotChance);
-    expect(mag2.poolShare).toBeLessThan(mag.poolShare);
+    const redDot2 = next.find((r) => r.itemId === "a_red_dot")!;
+    expect(redDot2.poolShare).toBeGreaterThan(redDot.poolShare);
+    expect(redDot2.firstSlotChance).toBeGreaterThan(redDot.firstSlotChance);
   });
 
   it("Pine Cut weight change does not alter The Works", () => {
@@ -282,7 +278,7 @@ describe("loot sources", () => {
     if (!draft.ok) return;
     const live = lootTableEntries(WOODS_CRATE, getEconomyOverrides(), true, 1).find((r) => r.itemId === "a_optic")!;
     const pending = lootTableEntries(WOODS_CRATE, draft.overrides, true, 1).find((r) => r.itemId === "a_optic")!;
-    expect(live.testWeight).toBe(CANONICAL_ITEM_WEIGHT);
+    expect(live.testWeight).toBeCloseTo(0.65);
     expect(pending.testWeight).toBe(9);
     expect(pending.firstSlotChance).toBeGreaterThan(live.firstSlotChance);
   });
@@ -478,7 +474,7 @@ describe("patch/export", () => {
     expect(text).toContain("PINE CUT / SUPPLY CRATE");
     expect(text).toContain("GRAPHICS CARD");
     expect(text).toContain("weight: 1 -> 2");
-    expect(text).not.toContain("4x SCOPE");
+    expect(text).not.toContain("4X SCOPE");
   });
 
   it("Reset removes corresponding patch entries", () => {
@@ -492,7 +488,7 @@ describe("patch/export", () => {
     over = resetEconomyItem(over, "v_gpu");
     const text = formatEconomyPatch(over);
     expect(text).not.toContain("GRAPHICS CARD");
-    expect(text).toContain("4x SCOPE");
+    expect(text).toContain("4X SCOPE");
     expect(text).toContain("weight: 1 -> 4");
     over = resetEconomySource(over, WOODS_CRATE);
     expect(formatEconomyPatch(over)).toContain("(no changes)");

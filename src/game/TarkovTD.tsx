@@ -161,7 +161,6 @@ import {
   wallAlongLimit,
 } from "./los";
 import {
-  SLOT_LABEL,
   armorItemId,
   detachArmor,
   detachAttachment,
@@ -170,10 +169,9 @@ import {
   equipArmor,
   equipAttachment,
   expandPackedWeapon,
-  slotOf,
   swapRaidWeapon,
-  type AttachSlot,
 } from "./raidGear";
+import { mountRowsForWeapon } from "./weaponAttachments";
 import {
   aliveOperators,
   capabilityFromMeta,
@@ -231,6 +229,7 @@ import {
 } from "./operators/crewEquipment";
 import { getRaidOperatorTitle, getRaidOperatorDisplayName } from "./operators/raidIdentity";
 import CrewEquipmentPanel from "./CrewEquipmentPanel";
+import ArmoryPanel from "./ArmoryPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import {
@@ -499,6 +498,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
     magSize: folded.magSize,
     reloadMs: folded.reloadMs,
     reloadType: folded.reloadType,
+    spread: folded.spread,
   };
 }
 
@@ -591,7 +591,7 @@ export default function TarkovTD() {
   const metaRef = useRef<Meta>(loadMeta());
   const uidRef = useRef(1);
   const [mapId, setMapId] = useState<string>("kolkhoz");
-  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "supplies" | "radio">("hideout");
+  const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "armory" | "supplies" | "radio">("hideout");
   const [editMode, setEditMode] = useState(false);
   const [suppliesTab, setSuppliesTab] = useState<"stash" | "market">("stash");
   const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew">("overview");
@@ -979,6 +979,39 @@ export default function TarkovTD() {
       m.stash = stashEntriesFromItems([...ns, ...loadout]);
       saveMeta(m);
       pushLog(result.message);
+      rerender();
+    },
+    [loadout, pushLog, rerender, selectedEquipOwnerId, stash, stashSlots],
+  );
+
+  /** Buy a shop attachment into stash, then install it on the selected operator. */
+  const armoryBuyAndInstall = useCallback(
+    (defId: string) => {
+      const def = effectiveItemDef(defId) ?? ITEM_BY_ID[defId];
+      const m = metaRef.current;
+      if (!def?.price || def.kind !== "attachment") return pushLog("Not a buyable attachment.");
+      const price = Math.round(def.price * skillMods(m.skills).buyMult);
+      if (m.bank < price) return pushLog("Not enough banked roubles.");
+      if (stash.length >= stashSlots) return pushLog("Stash is full.");
+      m.bank -= price;
+      const item = makeItem(defId, newUid())!;
+      const withPurchase = [...stash, item];
+      const ownerId = coerceEquipmentOwnerId(m, selectedEquipOwnerId);
+      const result = equipOnEquipmentOwner(m, ownerId, withPurchase, newUid(), item.uid, stashSlots);
+      if (!result.ok) {
+        // Purchase succeeded but install failed — keep item in stash.
+        setStash(withPurchase);
+        m.stash = stashEntriesFromItems([...withPurchase, ...loadout]);
+        saveMeta(m);
+        pushLog(`Bought ${def.name} for ${price}₽. ${result.reason}`);
+        rerender();
+        return;
+      }
+      const ns = result.stash.slice(0, stashSlots);
+      setStash(ns);
+      m.stash = stashEntriesFromItems([...ns, ...loadout]);
+      saveMeta(m);
+      pushLog(`Bought & installed ${def.name} for ${price}₽.`);
       rerender();
     },
     [loadout, pushLog, rerender, selectedEquipOwnerId, stash, stashSlots],
@@ -1576,7 +1609,7 @@ export default function TarkovTD() {
                 range: st.range,
                 hitRadius: PELLET_HIT_RADIUS,
                 pelletCount: shotgunPelletCount(st.weapon),
-                spread: st.weapon.spread ?? 0,
+                spread: st.spread ?? st.weapon.spread ?? 0,
                 primaryDamage: st.damage,
                 secondaryMult: shotgunSecondaryMult(st.weapon),
                 maxHits: shotgunMaxHits(st.weapon),
@@ -2961,6 +2994,31 @@ export default function TarkovTD() {
                     onPack={toLoadout}
                     onUnpack={fromLoadout}
                     onBack={() => setScreen("hideout")}
+                    onOpenArmory={() => setScreen("armory")}
+                  />
+                </Overlay>
+              )}
+
+              {s.phase === "hideout" && screen === "armory" && (
+                <Overlay
+                  title="ARMORY"
+                  subtitle="Inspect mounts · preview stats · install or buy parts for the selected operator."
+                  layout="fill"
+                >
+                  <ArmoryPanel
+                    meta={meta}
+                    selectedOwnerId={coerceEquipmentOwnerId(meta, selectedEquipOwnerId)}
+                    onSelectOwner={setSelectedEquipOwnerId}
+                    stash={stash}
+                    stashSlots={stashSlots}
+                    shopDefIds={shopIds}
+                    buyMult={mods.buyMult}
+                    bank={meta.bank}
+                    onInstallFromStash={equipOnSelectedOwner}
+                    onBuyAndInstall={armoryBuyAndInstall}
+                    onDetachMount={(idx) => unequipSelectedOwner(idx)}
+                    onBack={() => setScreen("hideout")}
+                    onOpenEquipment={() => setScreen("gear")}
                   />
                 </Overlay>
               )}
@@ -3431,43 +3489,23 @@ export default function TarkovTD() {
                   </div>
                   <div className="pt-1">
                     <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">ATTACHMENTS</div>
-                    {(["optic", "barrel", "magazine"] as AttachSlot[]).map((slot) => {
-                      const fitted = selected.attachments.find((a) => slotOf(a) === slot);
-                      return (
-                        <div key={slot} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
-                          <span className="text-muted-foreground">{SLOT_LABEL[slot]}</span>
-                          <span className="flex items-center gap-1 text-foreground">
-                            {fitted ? (ATTACHMENTS[fitted]?.name ?? fitted) : "EMPTY"}
-                            {fitted && (
-                              <button
-                                type="button"
-                                className="pixel-btn px-1 py-0 text-[8px]"
-                                onClick={() => detachFromTower(selected.id, fitted)}
-                              >
-                                DETACH
-                              </button>
-                            )}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {selected.attachments
-                      .filter((a) => slotOf(a) === "mod")
-                      .map((a) => (
-                        <div key={a} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
-                          <span className="text-muted-foreground">MOD</span>
-                          <span className="flex items-center gap-1 text-foreground">
-                            {ATTACHMENTS[a]?.name ?? a}
+                    {mountRowsForWeapon(selected.weapon, selected.attachments).map((row) => (
+                      <div key={row.mount} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
+                        <span className="text-muted-foreground">{row.label}</span>
+                        <span className="flex items-center gap-1 text-foreground">
+                          {row.attachmentId ? (ATTACHMENTS[row.attachmentId]?.name ?? row.attachmentId) : "EMPTY"}
+                          {row.attachmentId && (
                             <button
                               type="button"
                               className="pixel-btn px-1 py-0 text-[8px]"
-                              onClick={() => detachFromTower(selected.id, a)}
+                              onClick={() => detachFromTower(selected.id, row.attachmentId!)}
                             >
                               DETACH
                             </button>
-                          </span>
-                        </div>
-                      ))}
+                          )}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                   {selected.pmc ? (
                     <p className="text-[10px] text-destructive">

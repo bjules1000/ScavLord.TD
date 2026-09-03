@@ -3,35 +3,51 @@ import {
   ATTACHMENTS,
   ITEMS,
   WEAPONS,
-  applyAttachmentMods,
   makeItem,
   type Item,
 } from "./gear";
-import { clampAmmo, attachmentDef, weaponDef } from "./weapons";
+import { clampAmmo } from "./weapons";
+import {
+  canInstallAttachmentOnWeapon,
+  detachAttachmentFromMounts,
+  getEffectiveMagazineCapacity,
+  installAttachmentInMounts,
+  MOUNT_LABEL,
+  normalizeInstalledAttachments,
+  slotOf,
+  type AttachMount,
+  weaponMounts,
+} from "./weaponAttachments";
+import { attachmentDef, weaponDef } from "./weapons";
 
-export type AttachSlot = "optic" | "barrel" | "magazine" | "mod";
+export type { AttachMount };
+export { MOUNT_LABEL as SLOT_LABEL, slotOf };
 
-export const ATTACH_SLOT: Record<string, AttachSlot> = {
+export const ATTACH_SLOT: Record<string, AttachMount> = {
+  red_dot: "optic",
+  optic_2x: "optic",
   optic: "optic",
+  marksman_scope: "optic",
   thermal: "optic",
-  brake: "barrel",
-  supp: "barrel",
+  light_comp: "muzzle",
+  brake: "muzzle",
+  tight_choke: "muzzle",
+  wide_choke: "muzzle",
+  supp: "muzzle",
+  ar_drum: "magazine",
+  ak_drum: "magazine",
+  pistol_ext: "magazine",
+  pistol_drum: "magazine",
+  stanag_ext: "magazine",
+  quick_mag: "magazine",
+  dvl_ext: "magazine",
   mag: "magazine",
-  grip: "mod",
-  laser: "mod",
-  m995: "mod",
+  grip: "underbarrel",
+  angled_grip: "underbarrel",
+  heavy_grip: "underbarrel",
+  laser: "underbarrel",
+  m995: "underbarrel",
 };
-
-export const SLOT_LABEL: Record<AttachSlot, string> = {
-  optic: "OPTIC",
-  barrel: "BARREL",
-  magazine: "MAGAZINE",
-  mod: "MOD",
-};
-
-export function slotOf(attachId: string): AttachSlot | null {
-  return ATTACH_SLOT[attachId] ?? null;
-}
 
 export function weaponItemId(weaponId: string): string | null {
   return ITEMS.find((i) => i.kind === "weapon" && i.ref === weaponId)?.id ?? null;
@@ -50,16 +66,18 @@ export function packWeaponItem(weaponId: string, attachments: readonly string[],
   if (!id) return null;
   const item = makeItem(id, uid);
   if (!item) return null;
-  item.installed = [...attachments];
+  item.installed = normalizeInstalledAttachments(weaponId, attachments);
   return item;
 }
 
 export function equippedMagSize(weaponId: string, attachments: readonly string[]): number {
-  return applyAttachmentMods(weaponDef(weaponId), attachments, attachmentDef).magSize;
+  return getEffectiveMagazineCapacity(weaponId, attachments);
 }
 
-export function canEquipAttachment(attachId: string): boolean {
-  return !!ATTACHMENTS[attachId] && slotOf(attachId) != null;
+export function canEquipAttachment(attachId: string, weaponId?: string): boolean {
+  if (!ATTACHMENTS[attachId] || slotOf(attachId) == null) return false;
+  if (!weaponId) return true;
+  return canInstallAttachmentOnWeapon(weaponId, attachId).ok;
 }
 
 /** Unpack a packed raid weapon so extract/stash (defId-only) cannot lose installed mods. */
@@ -91,10 +109,6 @@ export type RaidEquipOk = {
 export type RaidEquipErr = { ok: false; reason: string };
 export type RaidEquipResult = RaidEquipOk | RaidEquipErr;
 
-function fittedInSlot(attachments: readonly string[], slot: AttachSlot): number {
-  return attachments.findIndex((id) => slotOf(id) === slot);
-}
-
 export function detachAttachment(
   attachId: string,
   attachments: readonly string[],
@@ -104,13 +118,14 @@ export function detachAttachment(
   ammo: number,
   weaponId: string,
 ): RaidEquipResult {
-  if (!attachments.includes(attachId)) return { ok: false, reason: "Nothing to detach." };
+  const detached = detachAttachmentFromMounts(attachments, attachId);
+  if (!detached.ok) return detached;
   if (backpack.length >= capacity) return { ok: false, reason: "BACKPACK FULL" };
   const aid = attachItemId(attachId);
   if (!aid) return { ok: false, reason: "Unknown attachment." };
   const item = makeItem(aid, uid);
   if (!item) return { ok: false, reason: "Unknown attachment." };
-  const next = attachments.filter((id) => id !== attachId);
+  const next = detached.attachments;
   return {
     ok: true,
     attachments: next,
@@ -125,46 +140,37 @@ export function equipAttachment(
   item: Item,
   attachments: readonly string[],
   backpack: readonly Item[],
-  slots: number,
+  _slots: number,
   ammo: number,
   weaponId: string,
 ): RaidEquipResult {
   if (item.kind !== "attachment" || !item.ref) return { ok: false, reason: "Not an attachment." };
-  if (!canEquipAttachment(item.ref)) return { ok: false, reason: "Incompatible attachment." };
-  if (attachments.includes(item.ref)) return { ok: false, reason: "Already installed." };
-  const slot = slotOf(item.ref)!;
+  if (!canEquipAttachment(item.ref, weaponId)) {
+    const check = canInstallAttachmentOnWeapon(weaponId, item.ref);
+    return { ok: false, reason: check.ok ? "Incompatible attachment." : check.reason };
+  }
+
+  const install = installAttachmentInMounts(weaponId, attachments, item.ref);
+  if (!install.ok) return install;
+
   const idx = backpack.findIndex((i) => i.uid === item.uid);
   if (idx < 0) return { ok: false, reason: "Item is not in the raid backpack." };
-  const occupied = slot === "mod" ? -1 : fittedInSlot(attachments, slot);
-  if (occupied >= 0) {
-    const oldId = attachments[occupied]!;
-    const oldAid = attachItemId(oldId);
+
+  let nextPack = backpack.filter((it) => it.uid !== item.uid);
+  if (install.replaced) {
+    const oldAid = attachItemId(install.replaced);
     const oldItem = oldAid ? makeItem(oldAid, item.uid) : null;
     if (!oldItem) return { ok: false, reason: "Unknown attachment." };
-    const next = [...attachments];
-    next[occupied] = item.ref;
-    const nextPack = backpack.map((it, i) => (i === idx ? { ...oldItem, uid: item.uid } : it));
-    return {
-      ok: true,
-      attachments: next,
-      backpack: nextPack,
-      ammo: clampAmmo(ammo, equippedMagSize(weaponId, next)),
-      weapon: weaponId,
-      message: `${item.name} swapped in.`,
-    };
+    nextPack = backpack.map((it, i) => (i === idx ? { ...oldItem, uid: item.uid } : it));
   }
-  if (attachments.length >= slots) {
-    return { ok: false, reason: `${weaponDef(weaponId).name} has no free slots (${slots}).` };
-  }
-  const next = [...attachments, item.ref];
-  const nextPack = backpack.filter((it) => it.uid !== item.uid);
+
   return {
     ok: true,
-    attachments: next,
+    attachments: install.attachments,
     backpack: nextPack,
-    ammo: clampAmmo(ammo, equippedMagSize(weaponId, next)),
+    ammo: clampAmmo(ammo, equippedMagSize(weaponId, install.attachments)),
     weapon: weaponId,
-    message: `${item.name} installed.`,
+    message: install.message,
   };
 }
 
@@ -181,7 +187,10 @@ export function swapRaidWeapon(
   if (idx < 0) return { ok: false, reason: "Item is not in the raid backpack." };
   const packed = packWeaponItem(currentWeapon, currentAttachments, incoming.uid);
   if (!packed) return { ok: false, reason: "Unknown weapon." };
-  const installed = [...(incoming.installed ?? [])].slice(0, weaponDef(incoming.ref).slots);
+  const installed = normalizeInstalledAttachments(
+    incoming.ref,
+    [...(incoming.installed ?? [])],
+  );
   const nextPack = backpack.map((it, i) => (i === idx ? packed : it));
   return {
     ok: true,
@@ -282,4 +291,8 @@ export function detachArmor(
     armorHp: 0,
     message: `${item.name} detached.`,
   };
+}
+
+export function weaponAttachmentCapacity(weaponId: string): number {
+  return weaponMounts(weaponDef(weaponId)).length;
 }

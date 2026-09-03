@@ -3,9 +3,19 @@ import {
   ATTACHMENTS,
   WEAPONS,
   type ArmorDef,
+  type AttachMount,
+  type AttachmentCompatibility,
   type AttachmentDef,
+  type WeaponCategory,
   type WeaponDef,
 } from "../gear";
+import {
+  canInstallAttachment,
+  fittedWeaponStats,
+  listCompatibilityPreview,
+  weaponCategoryOf,
+  weaponMounts,
+} from "../weaponAttachments";
 import { burstDps, damagePerShot, moveSpeedWithWeaponOnly, sustainedDps, weaponRpm } from "./compareMetrics";
 import { DEV_TOOLS_ENABLED } from "./tools";
 
@@ -27,16 +37,33 @@ export type WeaponOverride = Partial<
     | "maxPelletHits"
     | "secondaryHitMult"
     | "splash"
+    | "category"
+    | "attachmentSlots"
   >
 >;
 
 export type ArmorOverride = Partial<Pick<ArmorDef, "name" | "weight" | "reduction" | "durability">>;
 
 export type AttachmentOverride = Partial<
-  Pick<AttachmentDef, "name" | "weight" | "damageMult" | "rangeMult" | "rofMult" | "accuracy" | "pen" | "magSizeAdd">
+  Pick<
+    AttachmentDef,
+    | "name"
+    | "weight"
+    | "damageMult"
+    | "rangeMult"
+    | "rangeAdd"
+    | "rofMult"
+    | "accuracy"
+    | "pen"
+    | "magSizeAdd"
+    | "reloadTimeMult"
+    | "spreadAdd"
+    | "slot"
+    | "compatibility"
+  >
 >;
 
-export type OverrideScalar = number | string;
+export type OverrideScalar = number | string | AttachMount[] | AttachmentCompatibility;
 
 export type BalanceOverrides = {
   weapons: Record<string, WeaponOverride>;
@@ -277,6 +304,67 @@ export function weaponLabFields(def: WeaponDef): LabField[] {
   return fields;
 }
 
+export function effectiveWeaponMounts(
+  id: string,
+  overrides: BalanceOverrides = getBalanceOverrides(),
+  enabled = DEV_TOOLS_ENABLED,
+): AttachMount[] {
+  const weapon = effectiveWeapon(id, overrides, enabled);
+  return weapon ? weaponMounts(weapon) : [];
+}
+
+export function effectiveWeaponCategory(
+  id: string,
+  overrides: BalanceOverrides = getBalanceOverrides(),
+  enabled = DEV_TOOLS_ENABLED,
+): WeaponCategory {
+  const weapon = effectiveWeapon(id, overrides, enabled);
+  return weapon ? weaponCategoryOf(weapon) : "ar";
+}
+
+export function fittedStatRows(weaponId: string, attachments: readonly string[]) {
+  const base = weaponDefForLab(weaponId);
+  const fitted = fittedWeaponStats(weaponId, attachments);
+  return [
+    { label: "MAG", base: base.magSize, fitted: fitted.magSize },
+    { label: "WEIGHT", base: base.weight, fitted: fitted.weight },
+    { label: "RELOAD", base: base.reloadMs / 1000, fitted: fitted.reloadMs / 1000 },
+    { label: "ACCURACY", base: base.accuracy, fitted: fitted.accuracy },
+    { label: "RANGE", base: base.range, fitted: fitted.range },
+    ...(base.spread != null && fitted.spread != null
+      ? [{ label: "SPREAD", base: base.spread, fitted: fitted.spread }]
+      : []),
+  ];
+}
+
+export function weaponDefForLab(id: string): WeaponDef {
+  return effectiveWeapon(id) ?? WEAPONS[id]!;
+}
+
+export function attachmentDefForLab(id: string): AttachmentDef {
+  return effectiveAttachment(id) ?? ATTACHMENTS[id]!;
+}
+
+export function attachmentCompatibilityPreview(id: string) {
+  return listCompatibilityPreview(attachmentDefForLab(id));
+}
+
+export function testFitLegal(
+  weaponId: string,
+  attachments: readonly string[],
+  overrides: BalanceOverrides = getBalanceOverrides(),
+): { legal: string[]; illegal: string[] } {
+  const weapon = effectiveWeapon(weaponId, overrides, true) ?? WEAPONS[weaponId]!;
+  const legal: string[] = [];
+  const illegal: string[] = [];
+  for (const attId of attachments) {
+    const att = effectiveAttachment(attId, overrides, true) ?? ATTACHMENTS[attId];
+    if (!att || !canInstallAttachment(weapon, att).ok) illegal.push(attId);
+    else legal.push(attId);
+  }
+  return { legal, illegal };
+}
+
 export function armorLabFields(): LabField[] {
   return [
     { key: "weight", label: "Weight", step: 0.25 },
@@ -288,11 +376,14 @@ export function armorLabFields(): LabField[] {
 export function attachmentLabFields(def: AttachmentDef): LabField[] {
   const fields: LabField[] = [
     { key: "weight", label: "Weight", step: 0.05 },
+    { key: "accuracy", label: "Accuracy", step: 0.01 },
+    { key: "rangeAdd", label: "Range +", step: 1 },
     { key: "damageMult", label: "Damage ×", step: 0.01 },
     { key: "rangeMult", label: "Range ×", step: 0.01 },
     { key: "rofMult", label: "ROF ×", step: 0.01 },
-    { key: "accuracy", label: "Accuracy", step: 0.01 },
     { key: "pen", label: "Pen", step: 1 },
+    { key: "reloadTimeMult", label: "Reload ×", step: 0.01 },
+    { key: "spreadAdd", label: "Spread +", step: 0.01 },
   ];
   if (def.magSizeAdd != null) fields.push({ key: "magSizeAdd", label: "Mag +", step: 1 });
   return fields;
@@ -366,7 +457,7 @@ export function setOverrideField(
   const same =
     normalized === undefined ||
     normalized === "" ||
-    normalized === canonical ||
+    JSON.stringify(normalized) === JSON.stringify(canonical) ||
     (typeof normalized === "number" && typeof canonical === "number" && nearlyEqualNum(normalized, canonical));
   if (same) delete cur[key];
   else cur[key] = normalized as OverrideScalar;

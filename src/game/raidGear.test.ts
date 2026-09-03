@@ -52,6 +52,9 @@ describe("direct attachment swap", () => {
 
   it("rejects incompatible attachments", () => {
     expect(canEquipAttachment("pm")).toBe(false);
+    expect(canEquipAttachment("red_dot", "pm")).toBe(true);
+    expect(canEquipAttachment("optic", "pm")).toBe(false);
+    expect(canEquipAttachment("ar_drum", "pm")).toBe(false);
     const gun = mustItem("w_pm", 1);
     const result = equipAttachment(gun, [], [gun], 2, 7, "pm");
     expect(result.ok).toBe(false);
@@ -63,10 +66,13 @@ describe("direct attachment swap", () => {
 describe("attachment combat stats", () => {
   it("updates canonical weapon stats used by combat and the operator sidebar", () => {
     const stock = applyAttachmentMods(WEAPONS["pm"]!, []);
-    const scoped = applyAttachmentMods(WEAPONS["pm"]!, ["optic"]);
-    expect(scoped.range).toBeCloseTo(stock.range * 1.18);
+    const scoped = applyAttachmentMods(WEAPONS["pm"]!, ["red_dot"]);
+    expect(scoped.range).toBe(stock.range);
     expect(scoped.accuracy).toBeGreaterThan(stock.accuracy);
-    expect(scoped.magSize).toBe(stock.magSize);
+    const m4stock = applyAttachmentMods(WEAPONS["m4"]!, []);
+    const m4scoped = applyAttachmentMods(WEAPONS["m4"]!, ["optic"]);
+    expect(m4scoped.range).toBe(m4stock.range + 16);
+    expect(m4scoped.accuracy).toBeGreaterThan(m4stock.accuracy);
     const drummed = applyAttachmentMods(WEAPONS["pm"]!, ["mag"]);
     expect(drummed.magSize).toBe(11);
     expect(drummed.cooldown).toBeLessThan(stock.cooldown);

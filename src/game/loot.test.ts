@@ -121,14 +121,13 @@ describe("injected rng crate generation", () => {
   it("honors weights when picking inside a known pool", () => {
     const rareAtt = ITEMS.filter((i) => i.kind === "attachment" && i.rarity === "rare");
     expect(rareAtt.length).toBeGreaterThan(1);
-    const target = rareAtt[1]!;
-    const others = rareAtt.filter((i) => i.id !== target.id);
-    const weights = Object.fromEntries(others.map((i) => [i.id, 0]));
-    weights[target.id] = 10;
+    const target = rareAtt.find((i) => i.id === "a_optic") ?? rareAtt[1]!;
+    const pool = rareAtt;
+    const weights = Object.fromEntries(pool.map((i) => [i.id, i.id === target.id ? 10 : 0]));
     const values = [0.9, 0.2, 0.7, 0];
     let i = 0;
     const rng = () => values[i++] ?? 0.5;
-    const crate = generateCrate(1, 1, 1, { catalog: ITEMS, weights, rng });
+    const crate = generateCrate(1, 1, 1, { catalog: pool, weights, rng });
     expect(crate.length).toBe(1);
     expect(crate[0]!.kind).toBe("attachment");
     expect(crate[0]!.id).toBe(target.id);
