@@ -174,14 +174,16 @@ import {
 } from "./raidGear";
 import { mountRowsForWeapon } from "./weaponAttachments";
 import {
+  DEFAULT_BULLET_SPEED,
   ENEMY_HIT_RADIUS,
-  aimAngleTo,
-  combatRng,
   getShotDispersion,
   isInFiringSector,
-  resolvePhysicalShot,
-  resolveShotPattern,
-  type PhysicalShotResult,
+  spawnRifleShot,
+  spawnShotgunBlast,
+  tickProjectile,
+  type Projectile,
+  type ProjectileHitEvent,
+  type ProjectileTickEnemy,
 } from "./shooting";
 import {
   aliveOperators,
@@ -335,6 +337,8 @@ interface GameState {
   towers: Tower[];
   enemies: Enemy[];
   bullets: Bullet[];
+  /** Traveling physical projectiles (damage on impact). */
+  projectiles: Projectile[];
   particles: Particle[];
   floats: FloatText[];
   drops: Drop[];
@@ -369,6 +373,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     towers: [],
     enemies: [],
     bullets: [],
+    projectiles: [],
     particles: [],
     floats: [],
     drops: [],
@@ -1634,121 +1639,46 @@ export default function TarkovTD() {
             t.ammo = consumeRound(t.ammo);
             const ox = cx + Math.cos(t.angle) * 12;
             const oy = cy - 4 + Math.sin(t.angle) * 12;
-            const shooterPos: SightPos = { x: ox, y: oy, surface: t.surface ?? "GROUND" };
+            const nextProjId = () => s.nextId++;
 
             if (isShotgunWeapon(st.weapon)) {
-              // Physical shotgun: use unified shot pattern
-              const pattern = resolveShotPattern({
+              const pellets = spawnShotgunBlast({
+                nextId: nextProjId,
+                shooterId: t.id,
                 origin: { x: ox, y: oy },
-                shooterSurface: shooterPos,
                 aimAngle: t.angle,
                 accuracy: st.accuracy,
                 range: st.range,
                 damage: st.damage,
                 pen: st.pen,
-                enemies: s.enemies,
-                armorOf: (e) => effectiveEnemy((e as unknown as { kind: EnemyKind }).kind).armor,
-                map: mapRef.current,
-                rayCount: shotgunPelletCount(st.weapon),
+                pelletCount: shotgunPelletCount(st.weapon),
                 pelletSpread: st.spread ?? st.weapon.spread ?? 0,
-                hitRadius: ENEMY_HIT_RADIUS,
                 maxPenHits: shotgunMaxHits(st.weapon),
                 secondaryHitMult: shotgunSecondaryMult(st.weapon),
-              });
-              for (const shot of pattern.shots) {
-                for (const hit of shot.hits) {
-                  const e = s.enemies.find((en) => en.id === hit.enemyId);
-                  if (!e) continue;
-                  e.hitFlash = 0.07;
-                  spawnParticles(e.x, e.y, "#c94b3a", 2, 36);
-                }
-              }
-              for (const tr of pattern.tracers) {
-                s.bullets.push({
-                  id: s.nextId++,
-                  x: ox,
-                  y: oy,
-                  tx: tr.endpoint.x,
-                  ty: tr.endpoint.y,
-                  targetId: 0,
-                  speed: 540 * SCALE,
-                  damage: 0,
-                  splash: 0,
-                  pen: 0,
-                  tracer: true,
-                  color: st.weapon.accent,
-                  trail: 0,
-                });
-              }
-            } else if (st.splash > 0) {
-              // Splash weapons: sample direction, trace to endpoint, AoE on arrival
-              const dispersion = getShotDispersion(st.accuracy);
-              const shotAngle = t.angle + (combatRng() * 2 - 1 + combatRng() * 2 - 1) / 2 * dispersion;
-              const ux = Math.cos(shotAngle);
-              const uy = Math.sin(shotAngle);
-              const endX = ox + ux * st.range;
-              const endY = oy + uy * st.range;
-              const clipped = clipWorldSegment(mapRef.current, shooterPos, endX, endY);
-              s.bullets.push({
-                id: s.nextId++,
-                x: ox,
-                y: oy,
-                tx: clipped.x,
-                ty: clipped.y,
-                targetId: 0,
-                speed: 340 * SCALE,
-                damage: st.damage,
-                splash: st.splash,
-                pen: st.pen,
-                miss: false,
                 color: st.weapon.accent,
-                trail: 0,
+                surface: t.surface ?? "GROUND",
               });
+              s.projectiles.push(...pellets);
             } else {
-              // Physical rifle shot: ray-based intersection
-              const result = resolvePhysicalShot({
+              // Rifle / sniper / splash — all become traveling projectiles
+              const proj = spawnRifleShot({
+                nextId: nextProjId,
+                shooterId: t.id,
                 origin: { x: ox, y: oy },
-                shooterSurface: shooterPos,
                 aimAngle: t.angle,
                 accuracy: st.accuracy,
                 range: st.range,
                 damage: st.damage,
                 pen: st.pen,
-                enemies: s.enemies,
-                armorOf: (e) => effectiveEnemy((e as unknown as { kind: EnemyKind }).kind).armor,
-                map: mapRef.current,
-                hitRadius: ENEMY_HIT_RADIUS,
+                splash: st.splash,
                 maxPenHits: st.pen > 0 ? 2 : 1,
-              });
-              // Flash and particles for hits
-              for (const hit of result.hits) {
-                const e = s.enemies.find((en) => en.id === hit.enemyId);
-                if (e) {
-                  e.hitFlash = 0.07;
-                  spawnParticles(e.x, e.y, "#c94b3a", 4, 55);
-                }
-              }
-              if (result.miss) {
-                spawnParticles(result.endpoint.x, result.endpoint.y, "#8a8570", 3, 40);
-                s.floats.push({ x: result.endpoint.x, y: result.endpoint.y - 10, life: 0.4, text: "miss", color: "#9a9484" });
-              }
-              // Tracer bullet (visual only — damage already applied)
-              const speed = (st.weapon.cls === "sniper" ? 900 : 620) * SCALE;
-              s.bullets.push({
-                id: s.nextId++,
-                x: ox,
-                y: oy,
-                tx: result.endpoint.x,
-                ty: result.endpoint.y,
-                targetId: 0,
-                speed,
-                damage: 0,
-                splash: 0,
-                pen: 0,
-                tracer: true,
                 color: st.weapon.accent,
-                trail: 0,
+                surface: t.surface ?? "GROUND",
+                speed: st.weapon.cls === "sniper" ? DEFAULT_BULLET_SPEED * 1.4
+                  : st.weapon.cls === "launcher" ? DEFAULT_BULLET_SPEED * 0.55
+                  : DEFAULT_BULLET_SPEED,
               });
+              s.projectiles.push(proj);
             }
             spawnParticles(cx + Math.cos(t.angle) * 14, cy - 4 + Math.sin(t.angle) * 14, "#d8c98a", 2, 30);
         }
@@ -1762,7 +1692,42 @@ export default function TarkovTD() {
         );
       }
 
-      // bullets
+      // physical projectiles (traveling bullets — damage on impact)
+      {
+        const armorOfEnemy = (e: ProjectileTickEnemy) => effectiveEnemy((e as unknown as { kind: EnemyKind }).kind).armor;
+        const liveProjectiles: Projectile[] = [];
+        for (const p of s.projectiles) {
+          const result = tickProjectile(p, dt, s.enemies, armorOfEnemy, mapRef.current, ENEMY_HIT_RADIUS);
+          for (const hit of result.hits) {
+            const e = s.enemies.find((en) => en.id === hit.enemyId);
+            if (e) {
+              e.hitFlash = 0.07;
+              spawnParticles(e.x, e.y, "#c94b3a", p.pellet ? 2 : 4, p.pellet ? 36 : 55);
+            }
+          }
+          for (const splash of result.splashes) {
+            spawnParticles(splash.x, splash.y, "#ffb347", 18, 120);
+            spawnParticles(splash.x, splash.y, "#5a5142", 10, 90);
+            s.shake = Math.max(s.shake, 4);
+            for (const e of s.enemies) {
+              const dd = Math.hypot(e.x - splash.x, e.y - splash.y);
+              if (dd <= splash.radius) {
+                hurtEnemy(e, splash.damage * (1 - (dd / splash.radius) * 0.5), splash.pen);
+              }
+            }
+          }
+          for (const miss of result.misses) {
+            if (p.hitIds.length === 0 && !p.pellet) {
+              spawnParticles(miss.x, miss.y, "#8a8570", 3, 40);
+              s.floats.push({ x: miss.x, y: miss.y - 10, life: 0.4, text: "miss", color: "#9a9484" });
+            }
+          }
+          if (!p.dead) liveProjectiles.push(p);
+        }
+        s.projectiles = liveProjectiles;
+      }
+
+      // bullets (legacy: hostile enemy bullets + old tracers)
       const liveBullets: Bullet[] = [];
       for (const b of s.bullets) {
         if (b.hostile) {
@@ -2118,6 +2083,11 @@ export default function TarkovTD() {
         ctx.fillStyle = b.hostile ? "#ff6b4a" : b.color;
         const sz = b.splash > 0 ? 5 : 3;
         ctx.fillRect(Math.round(b.x) - 1, Math.round(b.y) - 1, sz, sz);
+      }
+      for (const proj of s.projectiles) {
+        ctx.fillStyle = proj.color;
+        const sz = proj.splash > 0 ? 5 : proj.pellet ? 2 : 3;
+        ctx.fillRect(Math.round(proj.x) - 1, Math.round(proj.y) - 1, sz, sz);
       }
       for (const p of s.particles) {
         ctx.globalAlpha = Math.max(0, p.life / p.maxLife);

@@ -1,15 +1,13 @@
 /**
- * Physical shooting model: aim direction, dispersion cone, ray tracing,
- * and world intersection for all ranged weapons.
+ * Physical shooting model: aim direction, dispersion cone, traveling
+ * projectiles, and runtime collision for all ranged weapons.
  *
- * Replaces the old abstract accuracy → hit/miss roll with:
- *   aim direction → dispersion cone → sampled ray → physical intersection
+ * Damage is applied ONLY on physical projectile impact, never at trigger time.
  */
 
 import { TILE } from "./data";
 import { applyHit, isSettledOut, type KillState } from "./combat";
 import {
-  traceLineOfSight,
   wallAlongLimit,
   bridgeDeckSeparates,
   type SightPos,
@@ -19,22 +17,24 @@ import type { GameMap } from "./map";
 import { mulberry32 } from "./operators/rng";
 
 // ---------------------------------------------------------------------------
-// Canonical enemy hit radius
+// Canonical constants
 // ---------------------------------------------------------------------------
 
 /** Circle radius used for all ray–enemy intersection tests. */
 export const ENEMY_HIT_RADIUS = TILE * 0.4;
 
+/**
+ * Canonical gameplay bullet speed in pixels per second.
+ * Fast enough to feel responsive, slow enough to be readable.
+ */
+export const DEFAULT_BULLET_SPEED = 18 * TILE; // ~18 tiles/sec
+
 // ---------------------------------------------------------------------------
 // Aim direction helpers
 // ---------------------------------------------------------------------------
 
-/** Normalized 2D direction from origin toward target. */
 export function aimDirectionTo(
-  ox: number,
-  oy: number,
-  tx: number,
-  ty: number,
+  ox: number, oy: number, tx: number, ty: number,
 ): { x: number; y: number } {
   const dx = tx - ox;
   const dy = ty - oy;
@@ -44,10 +44,7 @@ export function aimDirectionTo(
 }
 
 export function aimAngleTo(
-  ox: number,
-  oy: number,
-  tx: number,
-  ty: number,
+  ox: number, oy: number, tx: number, ty: number,
 ): number {
   return Math.atan2(ty - oy, tx - ox);
 }
@@ -56,18 +53,8 @@ export function aimAngleTo(
 // Accuracy → dispersion mapping
 // ---------------------------------------------------------------------------
 
-/**
- * Convert effective accuracy [0.15 … 0.99] to cone half-angle in radians.
- *
- * Mapping is tunable via two parameters:
- *   MAX_CONE  – half-angle at accuracy = 0.15 (worst)
- *   MIN_CONE  – half-angle at accuracy = 0.99 (best)
- *
- * Uses inverse-linear interpolation so mid-range accuracy yields a
- * proportionally noticeable difference.
- */
-export const MAX_CONE_RAD = Math.PI / 6;   // 30° half = 60° total at worst accuracy
-export const MIN_CONE_RAD = Math.PI / 90;  // 2° half = 4° total at best accuracy
+export const MAX_CONE_RAD = Math.PI / 6;   // 30° half at worst accuracy
+export const MIN_CONE_RAD = Math.PI / 90;  // 2° half at best accuracy
 const ACC_MIN = 0.15;
 const ACC_MAX = 0.99;
 
@@ -76,40 +63,24 @@ export function accuracyToDispersion(accuracy: number): number {
   return MAX_CONE_RAD + (MIN_CONE_RAD - MAX_CONE_RAD) * t;
 }
 
-/**
- * Canonical shot dispersion for a weapon/operator.
- * Call once at stat resolution time.
- */
 export function getShotDispersion(effectiveAccuracy: number): number {
   return accuracyToDispersion(effectiveAccuracy);
 }
 
 // ---------------------------------------------------------------------------
-// Shot sampling (center-weighted distribution)
+// Shot sampling — UNIFORM distribution across full cone
 // ---------------------------------------------------------------------------
 
 /**
  * Sample an angular deviation within [-halfAngle, +halfAngle].
- * Uses the average of two uniform samples (triangular distribution)
- * for a simple center-weighted feel.
- *
- * @param rng – returns [0,1). Injectable for determinism.
- * @param halfAngle – cone half-angle in radians.
+ * Uniform distribution: every direction in the cone is equally likely.
  */
 export function sampleShotAngle(rng: () => number, halfAngle: number): number {
-  const u1 = rng() * 2 - 1; // [-1, 1]
-  const u2 = rng() * 2 - 1;
-  const t = (u1 + u2) / 2;  // triangular, [-1, 1], peaks at 0
-  return t * halfAngle;
+  return (rng() * 2 - 1) * halfAngle;
 }
 
-/**
- * Sample a full aim angle = base + deviation.
- */
 export function sampleShotDirection(
-  rng: () => number,
-  aimAngle: number,
-  halfAngle: number,
+  rng: () => number, aimAngle: number, halfAngle: number,
 ): number {
   return aimAngle + sampleShotAngle(rng, halfAngle);
 }
@@ -120,7 +91,6 @@ export function sampleShotDirection(
 
 let _combatRng: (() => number) | null = null;
 
-/** Override combat RNG for testing. Pass null to restore Math.random. */
 export function setCombatRng(rng: (() => number) | null): void {
   _combatRng = rng;
 }
@@ -129,30 +99,23 @@ export function combatRng(): number {
   return _combatRng ? _combatRng() : Math.random();
 }
 
-/** Create a deterministic combat RNG from a seed. */
 export function deterministicCombatRng(seed: number): () => number {
   return mulberry32(seed);
 }
 
 // ---------------------------------------------------------------------------
-// Ray–circle intersection
+// Ray–circle intersection (used by projectile tick collision)
 // ---------------------------------------------------------------------------
 
 /**
- * Ray from (ox,oy) in direction `angle` up to `maxDist`.
- * Returns distance along ray to the closest point of a circle at (cx,cy,r),
- * or null if no intersection within range.
- *
- * Reuses the same math as shotgun.ts rayHitAlong but returns the entry point.
+ * Segment-circle intersection test.
+ * Returns distance along segment from (ox,oy) to first intersection with
+ * circle at (cx,cy,r), or null if no intersection within maxDist.
  */
 export function rayCircleIntersect(
-  ox: number,
-  oy: number,
-  angle: number,
-  maxDist: number,
-  cx: number,
-  cy: number,
-  radius: number,
+  ox: number, oy: number,
+  angle: number, maxDist: number,
+  cx: number, cy: number, radius: number,
 ): number | null {
   const ux = Math.cos(angle);
   const uy = Math.sin(angle);
@@ -163,14 +126,395 @@ export function rayCircleIntersect(
   const px = ox + ux * along;
   const py = oy + uy * along;
   if (Math.hypot(cx - px, cy - py) > radius) return null;
-  // Return the closest approach (entry), clamped to >= 0
   const disc = radius * radius - ((cx - px) * (cx - px) + (cy - py) * (cy - py));
   const entry = along - Math.sqrt(Math.max(0, disc));
   return entry >= 0 ? entry : along;
 }
 
+/**
+ * Segment-circle intersection for a segment from (ax,ay) to (bx,by).
+ * Returns parametric t in [0,1] of first intersection, or null.
+ */
+export function segmentCircleHit(
+  ax: number, ay: number,
+  bx: number, by: number,
+  cx: number, cy: number, radius: number,
+): number | null {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return null;
+  const ux = dx / len;
+  const uy = dy / len;
+  const vx = cx - ax;
+  const vy = cy - ay;
+  const along = vx * ux + vy * uy;
+  if (along < -radius || along > len + radius) return null;
+  const clampedAlong = Math.max(0, Math.min(len, along));
+  const px = ax + ux * clampedAlong;
+  const py = ay + uy * clampedAlong;
+  if (Math.hypot(cx - px, cy - py) > radius) return null;
+  const disc = radius * radius - ((cx - (ax + ux * along)) * (cx - (ax + ux * along)) + (cy - (ay + uy * along)) * (cy - (ay + uy * along)));
+  const entry = along - Math.sqrt(Math.max(0, disc));
+  const t = Math.max(0, entry) / len;
+  return t >= 0 && t <= 1 ? t : (along >= 0 && along <= len ? Math.max(0, along / len) : null);
+}
+
 // ---------------------------------------------------------------------------
-// Physical ray trace through the world
+// Projectile runtime type
+// ---------------------------------------------------------------------------
+
+export interface Projectile {
+  id: number;
+  /** Shooter tower id for kill attribution. */
+  shooterId: number;
+  /** Position. */
+  x: number;
+  y: number;
+  /** Previous position (for segment collision). */
+  px: number;
+  py: number;
+  /** Fixed direction unit vector. */
+  dx: number;
+  dy: number;
+  /** Fixed angle. */
+  angle: number;
+  /** Speed in px/sec. */
+  speed: number;
+  /** Remaining travel distance in px. */
+  remaining: number;
+  /** Damage to apply on hit. */
+  damage: number;
+  /** Penetration value for armor. */
+  pen: number;
+  /** Splash radius (0 = none). */
+  splash: number;
+  /** Remaining penetrations through enemies (0 = stop on first). */
+  remainingPen: number;
+  /** IDs of enemies already hit by this projectile. */
+  hitIds: number[];
+  /** Weapon accent color. */
+  color: string;
+  /** Shooter surface for bridge separation. */
+  surface: string;
+  /** Damage multiplier for secondary pen hits. */
+  penDamageMult: number;
+  /** Whether this is a shotgun pellet. */
+  pellet?: boolean | undefined;
+  /** Mark for removal. */
+  dead?: boolean | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Spawn projectile at trigger time (NO damage applied)
+// ---------------------------------------------------------------------------
+
+export interface SpawnProjectileArgs {
+  id: number;
+  shooterId: number;
+  origin: { x: number; y: number };
+  angle: number;
+  speed?: number | undefined;
+  range: number;
+  damage: number;
+  pen: number;
+  splash?: number | undefined;
+  maxPenHits?: number | undefined;
+  color: string;
+  surface: string;
+  penDamageMult?: number | undefined;
+  pellet?: boolean | undefined;
+}
+
+export function spawnProjectile(args: SpawnProjectileArgs): Projectile {
+  const dx = Math.cos(args.angle);
+  const dy = Math.sin(args.angle);
+  return {
+    id: args.id,
+    shooterId: args.shooterId,
+    x: args.origin.x,
+    y: args.origin.y,
+    px: args.origin.x,
+    py: args.origin.y,
+    dx,
+    dy,
+    angle: args.angle,
+    speed: args.speed ?? DEFAULT_BULLET_SPEED,
+    remaining: args.range,
+    damage: args.damage,
+    pen: args.pen,
+    splash: args.splash ?? 0,
+    remainingPen: (args.maxPenHits ?? (args.pen > 0 ? 2 : 1)) - 1,
+    hitIds: [],
+    color: args.color,
+    surface: args.surface,
+    penDamageMult: args.penDamageMult ?? 0.5,
+    pellet: args.pellet,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Projectile tick: advance + collision
+// ---------------------------------------------------------------------------
+
+export interface ProjectileTickEnemy {
+  id: number;
+  x: number;
+  y: number;
+  hp: number;
+  surface?: string;
+  leaked?: boolean;
+  counted?: boolean;
+  kind?: string;
+}
+
+export interface ProjectileHitEvent {
+  projectileId: number;
+  shooterId: number;
+  enemyId: number;
+  x: number;
+  y: number;
+  damage: number;
+  pen: number;
+  killed: boolean;
+}
+
+export interface ProjectileTickResult {
+  hits: ProjectileHitEvent[];
+  /** Splash detonation events. */
+  splashes: Array<{ x: number; y: number; radius: number; damage: number; pen: number; shooterId: number }>;
+  /** Miss endpoints for VFX. */
+  misses: Array<{ x: number; y: number }>;
+}
+
+/**
+ * Advance a single projectile by dt seconds.
+ * Tests segment (old pos → new pos) against enemies and walls.
+ * Mutates the projectile in place. Sets `dead = true` when finished.
+ * Returns hit events for the caller to process (kill credit, FX, etc.).
+ */
+export function tickProjectile(
+  p: Projectile,
+  dt: number,
+  enemies: readonly ProjectileTickEnemy[],
+  armorOf: (e: ProjectileTickEnemy) => number,
+  map: GameMap,
+  hitRadius: number = ENEMY_HIT_RADIUS,
+): ProjectileTickResult {
+  if (p.dead) return { hits: [], splashes: [], misses: [] };
+
+  const step = p.speed * dt;
+  const travel = Math.min(step, p.remaining);
+  if (travel <= 0) {
+    p.dead = true;
+    return { hits: [], splashes: [], misses: [{ x: p.x, y: p.y }] };
+  }
+
+  // Store previous position
+  p.px = p.x;
+  p.py = p.y;
+
+  // Compute new position
+  const nx = p.x + p.dx * travel;
+  const ny = p.y + p.dy * travel;
+
+  // Check wall collision along this segment
+  const shooterSurface: SightPos = { x: p.px, y: p.py, surface: p.surface as "GROUND" | "HIGH" };
+  const wallDist = wallAlongLimit(map, shooterSurface, nx, ny);
+  let effectiveTravel = travel;
+  let hitWall = false;
+  if (wallDist != null) {
+    // wallDist is distance from shooterSurface to wall point
+    // We need to check if wall is within our travel segment
+    const segLen = Math.hypot(nx - p.px, ny - p.py);
+    if (wallDist < segLen + 1) {
+      effectiveTravel = Math.min(travel, wallDist * (travel / Math.max(1e-9, segLen)));
+      hitWall = true;
+    }
+  }
+
+  // Test enemy collisions along the segment [px,py] → [px + dx*effectiveTravel, py + dy*effectiveTravel]
+  const ex = p.px + p.dx * effectiveTravel;
+  const ey = p.py + p.dy * effectiveTravel;
+  const segLen = Math.hypot(ex - p.px, ey - p.py);
+
+  const hits: ProjectileHitEvent[] = [];
+  const splashes: ProjectileTickResult["splashes"] = [];
+
+  // Collect all enemy intersections along this segment
+  const candidates: { enemy: ProjectileTickEnemy; t: number }[] = [];
+  for (const e of enemies) {
+    if (isSettledOut(e as KillState)) continue;
+    if (p.hitIds.includes(e.id)) continue;
+    // Bridge separation
+    if (bridgeDeckSeparates(map, shooterSurface, {
+      x: e.x, y: e.y, surface: (e.surface as "GROUND" | "HIGH") ?? "GROUND",
+    })) continue;
+    const t = segmentCircleHit(p.px, p.py, ex, ey, e.x, e.y, hitRadius);
+    if (t != null) candidates.push({ enemy: e, t });
+  }
+  candidates.sort((a, b) => a.t - b.t);
+
+  for (const c of candidates) {
+    if (p.dead) break;
+    const e = c.enemy;
+    if (isSettledOut(e as KillState)) continue;
+
+    const hitX = p.px + (ex - p.px) * c.t;
+    const hitY = p.py + (ey - p.py) * c.t;
+
+    // Splash: detonate at impact point
+    if (p.splash > 0) {
+      splashes.push({ x: hitX, y: hitY, radius: p.splash, damage: p.damage, pen: p.pen, shooterId: p.shooterId });
+      p.dead = true;
+      p.x = hitX;
+      p.y = hitY;
+      break;
+    }
+
+    // Apply damage via canonical applyHit
+    const dmgMult = p.hitIds.length === 0 ? 1 : p.penDamageMult;
+    const dealt = applyHit(e as KillState, p.damage * dmgMult, armorOf(e), p.pen);
+    p.hitIds.push(e.id);
+
+    const killed = (e as KillState).hp <= 0;
+    hits.push({
+      projectileId: p.id,
+      shooterId: p.shooterId,
+      enemyId: e.id,
+      x: hitX,
+      y: hitY,
+      damage: dealt,
+      pen: p.pen,
+      killed,
+    });
+
+    if (p.remainingPen <= 0) {
+      p.dead = true;
+      p.x = hitX;
+      p.y = hitY;
+      break;
+    }
+    p.remainingPen--;
+  }
+
+  if (!p.dead) {
+    if (hitWall) {
+      p.x = p.px + p.dx * effectiveTravel;
+      p.y = p.py + p.dy * effectiveTravel;
+      p.dead = true;
+    } else {
+      p.x = nx;
+      p.y = ny;
+      p.remaining -= travel;
+      if (p.remaining <= 0) {
+        p.dead = true;
+      }
+    }
+  }
+
+  const misses: ProjectileTickResult["misses"] = [];
+  if (p.dead && hits.length === 0 && splashes.length === 0) {
+    misses.push({ x: p.x, y: p.y });
+  }
+
+  return { hits, splashes, misses };
+}
+
+// ---------------------------------------------------------------------------
+// Spawn helpers for firing loop
+// ---------------------------------------------------------------------------
+
+/**
+ * Create projectile(s) for a rifle shot.
+ * Samples direction from uniform cone. Does NOT apply damage.
+ */
+export function spawnRifleShot(args: {
+  nextId: () => number;
+  shooterId: number;
+  origin: { x: number; y: number };
+  aimAngle: number;
+  accuracy: number;
+  range: number;
+  damage: number;
+  pen: number;
+  splash?: number | undefined;
+  maxPenHits?: number | undefined;
+  color: string;
+  surface: string;
+  speed?: number | undefined;
+  rng?: (() => number) | undefined;
+}): Projectile {
+  const rng = args.rng ?? (() => combatRng());
+  const dispersion = getShotDispersion(args.accuracy);
+  const shotAngle = sampleShotDirection(rng, args.aimAngle, dispersion);
+  return spawnProjectile({
+    id: args.nextId(),
+    shooterId: args.shooterId,
+    origin: args.origin,
+    angle: shotAngle,
+    speed: args.speed,
+    range: args.range,
+    damage: args.damage,
+    pen: args.pen,
+    splash: args.splash,
+    maxPenHits: args.maxPenHits,
+    color: args.color,
+    surface: args.surface,
+  });
+}
+
+/**
+ * Create projectiles for a shotgun blast.
+ * Each pellet is its own traveling projectile.
+ */
+export function spawnShotgunBlast(args: {
+  nextId: () => number;
+  shooterId: number;
+  origin: { x: number; y: number };
+  aimAngle: number;
+  accuracy: number;
+  range: number;
+  damage: number;
+  pen: number;
+  pelletCount: number;
+  pelletSpread: number;
+  maxPenHits?: number | undefined;
+  secondaryHitMult?: number | undefined;
+  color: string;
+  surface: string;
+  speed?: number | undefined;
+  rng?: (() => number) | undefined;
+}): Projectile[] {
+  const rng = args.rng ?? (() => combatRng());
+  const pellets: Projectile[] = [];
+  const aimDispersion = getShotDispersion(args.accuracy) * 0.3;
+  for (let i = 0; i < args.pelletCount; i++) {
+    const t = args.pelletCount === 1 ? 0 : i / (args.pelletCount - 1);
+    const baseAngle = args.aimAngle + (t - 0.5) * 2 * args.pelletSpread;
+    const deviation = sampleShotAngle(rng, aimDispersion);
+    const pelletAngle = baseAngle + deviation;
+    pellets.push(spawnProjectile({
+      id: args.nextId(),
+      shooterId: args.shooterId,
+      origin: args.origin,
+      angle: pelletAngle,
+      speed: args.speed ?? DEFAULT_BULLET_SPEED * 0.85,
+      range: args.range,
+      damage: args.damage,
+      pen: args.pen,
+      maxPenHits: args.maxPenHits ?? 2,
+      color: args.color,
+      surface: args.surface,
+      penDamageMult: args.secondaryHitMult ?? 0.5,
+      pellet: true,
+    }));
+  }
+  return pellets;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy resolvers (kept for tests that use them)
 // ---------------------------------------------------------------------------
 
 export interface RayHit {
@@ -184,23 +528,9 @@ export interface RayHit {
 export interface ShotResult {
   angle: number;
   hits: RayHit[];
-  /** Final endpoint of the ray (miss or last hit). */
   endpoint: WorldPos;
 }
 
-/**
- * Trace a physical shot ray through the world and collect intersections.
- *
- * @param origin – pixel position of the shooter
- * @param angle – sampled shot direction
- * @param maxDist – effective weapon range in pixels
- * @param enemies – live enemy list
- * @param hitRadius – enemy hit circle radius
- * @param map – game map for wall/terrain checks
- * @param shooterSurface – surface of the shooter for bridge separation
- * @param pen – penetration value; number of enemies the ray can pass through
- * @param maxPenHits – max enemies hit including first (default 1 = no pen)
- */
 export function traceShot<T extends KillState & { id: number; x: number; y: number; surface?: string }>(args: {
   origin: { x: number; y: number };
   shooterSurface: SightPos;
@@ -219,25 +549,17 @@ export function traceShot<T extends KillState & { id: number; x: number; y: numb
   const endX = origin.x + ux * maxDist;
   const endY = origin.y + uy * maxDist;
 
-  // Find wall distance
   const wallDist = wallAlongLimit(map, shooterSurface, endX, endY);
   const effectiveDist = wallDist != null ? Math.min(maxDist, wallDist) : maxDist;
 
-  // Find all enemy intersections within effective distance
   const enemyHits: { id: number; along: number }[] = [];
   for (const e of enemies) {
     if (isSettledOut(e)) continue;
-    // Bridge deck separation check
     if (bridgeDeckSeparates(map, shooterSurface, {
       x: e.x, y: e.y, surface: (e.surface as "GROUND" | "HIGH") ?? "GROUND",
     })) continue;
-    const along = rayCircleIntersect(
-      origin.x, origin.y, angle, effectiveDist,
-      e.x, e.y, hitRadius,
-    );
-    if (along != null) {
-      enemyHits.push({ id: e.id, along });
-    }
+    const along = rayCircleIntersect(origin.x, origin.y, angle, effectiveDist, e.x, e.y, hitRadius);
+    if (along != null) enemyHits.push({ id: e.id, along });
   }
   enemyHits.sort((a, b) => a.along - b.along);
 
@@ -245,243 +567,34 @@ export function traceShot<T extends KillState & { id: number; x: number; y: numb
   let hitCount = 0;
   for (const eh of enemyHits) {
     if (hitCount >= maxPenHits) break;
-    hits.push({
-      type: "enemy",
-      enemyId: eh.id,
-      along: eh.along,
-      x: origin.x + ux * eh.along,
-      y: origin.y + uy * eh.along,
-    });
+    hits.push({ type: "enemy", enemyId: eh.id, along: eh.along, x: origin.x + ux * eh.along, y: origin.y + uy * eh.along });
     hitCount++;
   }
-
-  // Add wall hit if present and closer than endpoint
   if (wallDist != null && wallDist < maxDist) {
-    hits.push({
-      type: "wall",
-      along: wallDist,
-      x: origin.x + ux * wallDist,
-      y: origin.y + uy * wallDist,
-    });
+    hits.push({ type: "wall", along: wallDist, x: origin.x + ux * wallDist, y: origin.y + uy * wallDist });
   }
-
   hits.sort((a, b) => a.along - b.along);
-
-  // Determine endpoint
   const lastHit = hits[hits.length - 1];
-  const endpoint = lastHit
-    ? { x: lastHit.x, y: lastHit.y }
-    : { x: origin.x + ux * effectiveDist, y: origin.y + uy * effectiveDist };
-
+  const endpoint = lastHit ? { x: lastHit.x, y: lastHit.y } : { x: origin.x + ux * effectiveDist, y: origin.y + uy * effectiveDist };
   return { angle, hits, endpoint };
 }
 
 // ---------------------------------------------------------------------------
-// Resolve a single physical rifle shot
-// ---------------------------------------------------------------------------
-
-export interface PhysicalShotConfig {
-  origin: { x: number; y: number };
-  shooterSurface: SightPos;
-  aimAngle: number;
-  accuracy: number;
-  range: number;
-  damage: number;
-  pen: number;
-  enemies: Array<KillState & { id: number; x: number; y: number; surface?: string }>;
-  armorOf: (e: { id: number; kind?: string }) => number;
-  map: GameMap;
-  hitRadius?: number;
-  maxPenHits?: number;
-  rng?: () => number;
-}
-
-export interface PhysicalShotResult {
-  shotAngle: number;
-  dispersion: number;
-  hits: Array<{ enemyId: number; along: number; damage: number }>;
-  endpoint: WorldPos;
-  miss: boolean;
-}
-
-/**
- * Resolve a single physical firearm shot.
- * This is the canonical replacement for the old accuracy→hit/miss roll.
- */
-export function resolvePhysicalShot(cfg: PhysicalShotConfig): PhysicalShotResult {
-  const rng = cfg.rng ?? (() => combatRng());
-  const dispersion = getShotDispersion(cfg.accuracy);
-  const shotAngle = sampleShotDirection(rng, cfg.aimAngle, dispersion);
-  const hitRadius = cfg.hitRadius ?? ENEMY_HIT_RADIUS;
-  const maxPenHits = cfg.maxPenHits ?? (cfg.pen > 0 ? 2 : 1);
-
-  const trace = traceShot({
-    origin: cfg.origin,
-    shooterSurface: cfg.shooterSurface,
-    angle: shotAngle,
-    maxDist: cfg.range,
-    enemies: cfg.enemies,
-    hitRadius,
-    map: cfg.map,
-    pen: cfg.pen,
-    maxPenHits,
-  });
-
-  const hits: PhysicalShotResult["hits"] = [];
-  const enemyHits = trace.hits.filter((h) => h.type === "enemy");
-
-  // Apply damage through wall-truncated hits only
-  // First, find where walls stop the ray
-  const firstWall = trace.hits.find((h) => h.type === "wall");
-  const wallAlong = firstWall?.along ?? Infinity;
-
-  for (let i = 0; i < enemyHits.length; i++) {
-    const h = enemyHits[i]!;
-    if (h.along > wallAlong) break; // wall stops further penetration
-    const enemy = cfg.enemies.find((e) => e.id === h.enemyId);
-    if (!enemy || isSettledOut(enemy)) continue;
-    const dmgMult = i === 0 ? 1 : 0.5; // penetration damage falloff
-    const dmg = cfg.damage * dmgMult;
-    const armor = cfg.armorOf(enemy);
-    const dealt = applyHit(enemy, dmg, armor, cfg.pen);
-    hits.push({ enemyId: h.enemyId!, along: h.along, damage: dealt });
-  }
-
-  return {
-    shotAngle,
-    dispersion,
-    hits,
-    endpoint: trace.endpoint,
-    miss: hits.length === 0,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Unified shot pattern resolver (rifle = 1 ray, shotgun = N rays)
-// ---------------------------------------------------------------------------
-
-export interface ShotPatternConfig {
-  origin: { x: number; y: number };
-  shooterSurface: SightPos;
-  aimAngle: number;
-  accuracy: number;
-  range: number;
-  damage: number;
-  pen: number;
-  enemies: Array<KillState & { id: number; x: number; y: number; surface?: string }>;
-  armorOf: (e: { id: number; kind?: string }) => number;
-  map: GameMap;
-  /** Number of rays. 1 = rifle, N = shotgun pellets. */
-  rayCount: number;
-  /** Shotgun pellet spread half-angle. 0 for rifles. */
-  pelletSpread?: number;
-  hitRadius?: number;
-  maxPenHits?: number;
-  /** Shotgun secondary hit damage multiplier. */
-  secondaryHitMult?: number;
-  rng?: () => number;
-}
-
-export interface ShotPatternResult {
-  shots: PhysicalShotResult[];
-  /** All tracer endpoints for rendering. */
-  tracers: Array<{ angle: number; endpoint: WorldPos }>;
-}
-
-/**
- * Resolve a complete shot pattern.
- * For rifles: single ray with aim dispersion.
- * For shotguns: multiple pellet rays spread around aim direction.
- */
-export function resolveShotPattern(cfg: ShotPatternConfig): ShotPatternResult {
-  const rng = cfg.rng ?? (() => combatRng());
-  const shots: PhysicalShotResult[] = [];
-  const tracers: ShotPatternResult["tracers"] = [];
-
-  if (cfg.rayCount <= 1) {
-    // Single rifle shot
-    const result = resolvePhysicalShot({ ...cfg, rng });
-    shots.push(result);
-    tracers.push({ angle: result.shotAngle, endpoint: result.endpoint });
-  } else {
-    // Shotgun: pellets evenly spread, each with aim dispersion overlay
-    const pelletSpread = cfg.pelletSpread ?? 0;
-    for (let i = 0; i < cfg.rayCount; i++) {
-      const t = cfg.rayCount === 1 ? 0 : i / (cfg.rayCount - 1);
-      const baseAngle = cfg.aimAngle + (t - 0.5) * 2 * pelletSpread;
-      // Add smaller dispersion per pellet for organic feel
-      const pelletDispersion = getShotDispersion(cfg.accuracy) * 0.3;
-      const deviation = sampleShotAngle(rng, pelletDispersion);
-      const pelletAngle = baseAngle + deviation;
-
-      const trace = traceShot({
-        origin: cfg.origin,
-        shooterSurface: cfg.shooterSurface,
-        angle: pelletAngle,
-        maxDist: cfg.range,
-        enemies: cfg.enemies,
-        hitRadius: cfg.hitRadius ?? ENEMY_HIT_RADIUS,
-        map: cfg.map,
-        pen: cfg.pen,
-        maxPenHits: cfg.maxPenHits ?? 2,
-      });
-
-      const enemyHits = trace.hits.filter((h) => h.type === "enemy");
-      const firstWall = trace.hits.find((h) => h.type === "wall");
-      const wallAlong = firstWall?.along ?? Infinity;
-      const pelletHits: PhysicalShotResult["hits"] = [];
-
-      for (let j = 0; j < enemyHits.length; j++) {
-        const h = enemyHits[j]!;
-        if (h.along > wallAlong) break;
-        const enemy = cfg.enemies.find((e) => e.id === h.enemyId);
-        if (!enemy || isSettledOut(enemy)) continue;
-        const mult = j === 0 ? 1 : (cfg.secondaryHitMult ?? 0.5);
-        const dmg = cfg.damage * mult;
-        const armor = cfg.armorOf(enemy);
-        const dealt = applyHit(enemy, dmg, armor, cfg.pen);
-        pelletHits.push({ enemyId: h.enemyId!, along: h.along, damage: dealt });
-      }
-
-      shots.push({
-        shotAngle: pelletAngle,
-        dispersion: pelletDispersion,
-        hits: pelletHits,
-        endpoint: trace.endpoint,
-        miss: pelletHits.length === 0,
-      });
-      tracers.push({ angle: pelletAngle, endpoint: trace.endpoint });
-    }
-  }
-
-  return { shots, tracers };
-}
-
-// ---------------------------------------------------------------------------
-// HOLD ANGLE state
+// HOLD ANGLE
 // ---------------------------------------------------------------------------
 
 export interface HoldAngleState {
   angle: number;
-  /** World point the player clicked. For UI. */
   targetPoint: WorldPos;
 }
 
-/**
- * Check if an enemy is inside a firing sector defined by a center angle
- * and half-angle width.
- */
 export function isInFiringSector(
-  originX: number,
-  originY: number,
-  centerAngle: number,
-  halfAngle: number,
-  enemyX: number,
-  enemyY: number,
+  originX: number, originY: number,
+  centerAngle: number, halfAngle: number,
+  enemyX: number, enemyY: number,
 ): boolean {
   const angleToEnemy = Math.atan2(enemyY - originY, enemyX - originX);
   let diff = angleToEnemy - centerAngle;
-  // Normalize to [-PI, PI]
   while (diff > Math.PI) diff -= 2 * Math.PI;
   while (diff < -Math.PI) diff += 2 * Math.PI;
   return Math.abs(diff) <= halfAngle;
