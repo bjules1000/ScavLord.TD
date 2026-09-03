@@ -85,11 +85,11 @@ describe("atomic installation", () => {
 
 describe("magazine capacity", () => {
   it("keeps base weapon mag unchanged", () => {
-    expect(WEAPONS["adar"]!.magSize).toBe(20);
+    expect(WEAPONS["adar"]!.magSize).toBe(10);
   });
 
   it("resolves AR drum +30", () => {
-    expect(getEffectiveMagazineCapacity("adar", ["ar_drum"])).toBe(50);
+    expect(getEffectiveMagazineCapacity("adar", ["ar_drum"])).toBe(40);
     expect(getEffectiveMagazineCapacity("m4", ["ar_drum"])).toBe(60);
   });
 

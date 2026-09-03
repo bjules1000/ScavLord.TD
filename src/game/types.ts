@@ -76,6 +76,10 @@ export interface Tower {
   manualTargetId: number | null;
   /** Last chosen target this tick, for UI. */
   engageTargetId: number | null;
+  /** Fixed aim direction for HOLD_ANGLE mode. Angle in radians. */
+  holdAngle?: number | null;
+  /** World point the player clicked for HOLD_ANGLE (UI display). */
+  holdAnglePoint?: { x: number; y: number } | null;
 }
 
 export type EnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";

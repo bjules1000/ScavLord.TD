@@ -97,60 +97,60 @@ describe("weapon compare categories", () => {
 
 describe("weapon compare derived combat metrics", () => {
   it("conventional damage/shot is the authored damage", () => {
-    expect(damagePerShot(pm)).toBe(15);
-    expect(damagePerShot(ak74)).toBe(19);
+    expect(damagePerShot(pm)).toBe(10);
+    expect(damagePerShot(ak74)).toBe(21);
     expect(weaponCombatMetrics(pm).pelletDamage).toBeNull();
   });
 
   it("shotgun blast damage is pellets × pellet damage", () => {
-    expect(damagePerShot(toz)).toBe(7 * 9);
+    expect(damagePerShot(toz)).toBe(7 * 8);
     expect(damagePerShot(mp133)).toBe(11 * 7);
     expect(weaponCombatMetrics(toz).pelletDamage).toBe(7);
-    expect(weaponCombatMetrics(toz).pelletCount).toBe(9);
+    expect(weaponCombatMetrics(toz).pelletCount).toBe(8);
   });
 
   it("RPM is 60000 / cycle ms", () => {
-    expect(weaponRpm(pm)).toBeCloseTo(60000 / 400);
-    expect(weaponRpm(ak74)).toBeCloseTo(60000 / 380);
-    expect(weaponRpm(toz)).toBeCloseTo(60000 / 720);
+    expect(weaponRpm(pm)).toBeCloseTo(60000 / 550);
+    expect(weaponRpm(ak74)).toBeCloseTo(60000 / 420);
+    expect(weaponRpm(toz)).toBeCloseTo(60000 / 810);
   });
 
   it("burst DPS is raw-per-shot / cycle seconds", () => {
-    expect(burstDps(pm)).toBeCloseTo(15 * 1000 / 400);
-    expect(burstDps(toz)).toBeCloseTo(63 * 1000 / 720);
-    expect(burstDps(ak74)).toBeCloseTo(19 * 1000 / 380);
+    expect(burstDps(pm)).toBeCloseTo(10 * 1000 / 550);
+    expect(burstDps(toz)).toBeCloseTo(56 * 1000 / 810);
+    expect(burstDps(ak74)).toBeCloseTo(21 * 1000 / 420);
   });
 
   it("magazine weapon sustained DPS includes overlapping reload", () => {
     const cycle = magazineSustainedCycleMs(pm);
-    expect(cycle).toBe((7 - 1) * 400 + 1500);
-    expect(sustainedDps(pm)).toBeCloseTo((7 * 15 * 1000) / cycle);
+    expect(cycle).toBe((7 - 1) * 550 + 1700);
+    expect(sustainedDps(pm)).toBeCloseTo((7 * 10 * 1000) / cycle);
     const akCycle = magazineSustainedCycleMs(ak74);
-    expect(akCycle).toBe(29 * 380 + 2400);
-    expect(sustainedDps(ak74)).toBeCloseTo((30 * 19 * 1000) / akCycle);
+    expect(akCycle).toBe(29 * 420 + 2500);
+    expect(sustainedDps(ak74)).toBeCloseTo((30 * 21 * 1000) / akCycle);
   });
 
   it("per-round shotgun sustained DPS follows combat one-shell reload", () => {
-    expect(perRoundSustainedCycleMs(toz)).toBe(950);
-    expect(sustainedDps(toz)).toBeCloseTo((63 * 1000) / 950);
+    expect(perRoundSustainedCycleMs(toz)).toBe(1150);
+    expect(sustainedDps(toz)).toBeCloseTo((56 * 1000) / 1150);
     expect(perRoundSustainedCycleMs(mp133)).toBe(800);
     expect(sustainedDps(mp133)).toBeCloseTo((77 * 1000) / 800);
-    expect(sustainedDps(toz)).not.toBeCloseTo((2 * 63 * 1000) / (720 + 950));
+    expect(sustainedDps(toz)).not.toBeCloseTo((2 * 56 * 1000) / (810 + 1150));
   });
 
   it("runtime/test overrides affect derived metrics", () => {
-    const over = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 21, 19);
+    const over = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 24, 21);
     const test = mergeWeaponDef(ak74, over.weapons["ak74"]);
-    expect(damagePerShot(test)).toBe(21);
-    expect(burstDps(test)).toBeCloseTo(21 * 1000 / 380);
-    expect(damagePerShot(ak74)).toBe(19);
+    expect(damagePerShot(test)).toBe(24);
+    expect(burstDps(test)).toBeCloseTo(24 * 1000 / 420);
+    expect(damagePerShot(ak74)).toBe(21);
   });
 
   it("canonical source values remain unchanged", () => {
     const over = setOverrideField(emptyBalanceOverrides(), "weapon", "toz", "damage", 9, 7);
     mergeWeaponDef(toz, over.weapons["toz"]);
     expect(WEAPONS["toz"]!.damage).toBe(7);
-    expect(WEAPONS["toz"]!.pellets).toBe(9);
+    expect(WEAPONS["toz"]!.pellets).toBe(8);
   });
 });
 
@@ -247,39 +247,39 @@ describe("weapon compare BASE vs TEST", () => {
   });
 
   it("drafted stat change exposes BASE and TEST values", () => {
-    const test = mergeWeaponDef(ak74, { damage: 21 });
+    const test = mergeWeaponDef(ak74, { damage: 24 });
     const pair = metricPairForWeapon(ak74, test, "damage");
-    expect(pair.base).toBe(19);
-    expect(pair.test).toBe(21);
+    expect(pair.base).toBe(21);
+    expect(pair.test).toBe(24);
     expect(pair.changed).toBe(true);
   });
 
   it("unapplied draft affects Compare", () => {
-    const draft = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 21, 19);
+    const draft = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 24, 21);
     const applied = emptyBalanceOverrides();
     const fromDraft = mergeWeaponDef(ak74, draft.weapons["ak74"]);
     const fromApplied = mergeWeaponDef(ak74, applied.weapons["ak74"]);
-    expect(damagePerShot(fromDraft)).toBe(21);
-    expect(damagePerShot(fromApplied)).toBe(19);
+    expect(damagePerShot(fromDraft)).toBe(24);
+    expect(damagePerShot(fromApplied)).toBe(21);
   });
 
   it("APPLY keeps effective comparison consistent", () => {
-    const applied = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 21, 19);
+    const applied = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 24, 21);
     const pair = metricPairForWeapon(ak74, mergeWeaponDef(ak74, applied.weapons["ak74"]), "damage");
-    expect(pair.test).toBe(21);
-    expect(pair.base).toBe(19);
+    expect(pair.test).toBe(24);
+    expect(pair.base).toBe(21);
   });
 
   it("RESET ITEM restores canonical comparison", () => {
-    let over = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 21, 19);
+    let over = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 24, 21);
     over = resetOverrideItem(over, "weapon", "ak74");
     const pair = metricPairForWeapon(ak74, mergeWeaponDef(ak74, over.weapons["ak74"]), "damage");
     expect(pair.changed).toBe(false);
-    expect(pair.test).toBe(19);
+    expect(pair.test).toBe(21);
   });
 
   it("RESET ALL restores all canonical comparisons", () => {
-    let over = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 21, 19);
+    let over = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 24, 21);
     over = setOverrideField(over, "weapon", "toz", "weight", 4, 2);
     over = emptyBalanceOverrides();
     const ak = metricPairForWeapon(ak74, mergeWeaponDef(ak74, over.weapons["ak74"]), "damage");
@@ -349,14 +349,14 @@ describe("weapon editor arsenal benchmark", () => {
     session = setCompareCategory(session, "RIFLES");
     session = switchLabView(session, "compare");
     session = { ...session, query: "kalash" };
-    const draft = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 21, 19);
+    const draft = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 24, 21);
     session = selectCompareWeapon(session, "ak74");
     expect(session.view).toBe("editor");
     expect(session.selectedId).toBe("ak74");
     expect(session.selectedKind).toBe("weapon");
     expect(session.compareCategory).toBe("RIFLES");
     expect(session.query).toBe("kalash");
-    expect(draft.weapons["ak74"]?.damage).toBe(21);
+    expect(draft.weapons["ak74"]?.damage).toBe(24);
   });
 });
 
@@ -417,7 +417,7 @@ describe("Item Editor stat benchmarks", () => {
     const testOf = (w: typeof mp133) => (w.id === "mp133" ? mergeWeaponDef(w, { range: 400 }) : w);
     const bench = editorFieldBenchmark(mp133, testOf, all, "all", "range")!;
     expect(bench.changed).toBe(true);
-    expect(bench.base).toBe(74);
+    expect(bench.base).toBe(105);
     expect(bench.test).toBe(400);
     expect(bench.testRank).toBe(1);
     expect(bench.rankChanged).toBe(true);
@@ -446,7 +446,7 @@ describe("Item Editor stat benchmarks", () => {
 
   it("RESET ALL restores original rankings", () => {
     let over = setOverrideField(emptyBalanceOverrides(), "weapon", "mp133", "weight", 5, 3);
-    over = setOverrideField(over, "weapon", "ak74", "damage", 40, 19);
+    over = setOverrideField(over, "weapon", "ak74", "damage", 40, 21);
     over = emptyBalanceOverrides();
     const pump = editorFieldBenchmark(mp133, (w) => mergeWeaponDef(w, over.weapons[w.id]), all, "all", "weight")!;
     const ak = editorFieldBenchmark(ak74, (w) => mergeWeaponDef(w, over.weapons[w.id]), all, "all", "damage")!;
@@ -542,7 +542,7 @@ describe("stacked Weapon Compare pipeline", () => {
     const view = composeStackedCompare(all, identity, "RIFLES", "range", "", "desc");
     expect(view.weapons.every((w) => w.cls === "rifle")).toBe(true);
     expect(view.metric).toBe("range");
-    expect(view.order[0]).toBe("m4");
+    expect(view.order[0]).toBe("adar");
   });
 
   it("search composes with category and stat", () => {
@@ -566,11 +566,11 @@ describe("stacked Weapon Compare pipeline", () => {
     const testOf = (w: typeof ak74) => (w.id === "ak74" ? mergeWeaponDef(w, { damage: 40 }) : w);
     const view = composeStackedCompare(all, testOf, "RIFLES", "damage", "", "desc");
     const ak = view.rows.find((r) => r.id === "ak74")!;
-    expect(ak.base).toBe(19);
+    expect(ak.base).toBe(21);
     expect(ak.test).toBe(40);
     expect(ak.changed).toBe(true);
     expect(view.order[0]).toBe("ak74");
-    expect(WEAPONS["ak74"]!.damage).toBe(19);
+    expect(WEAPONS["ak74"]!.damage).toBe(21);
   });
 
   it("shared domain covers every visible weapon", () => {

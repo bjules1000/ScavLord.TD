@@ -49,8 +49,10 @@ describe("shotgun catalog", () => {
       expect(shotgunPelletCount(w)).toBeGreaterThan(1);
       expect(w.spread).toBeGreaterThan(0);
       expect(shotgunMaxHits(w)).toBe(2);
-      expect(shotgunSecondaryMult(w)).toBe(0.5);
+      expect(shotgunSecondaryMult(w)).toBe(w.secondaryHitMult ?? 0.5);
     }
+    expect(shotgunSecondaryMult(WEAPONS["toz"]!)).toBe(0.3);
+    expect(shotgunSecondaryMult(WEAPONS["mp133"]!)).toBe(0.5);
   });
 
   it("leaves pistols on single-hit behavior", () => {
@@ -58,19 +60,19 @@ describe("shotgun catalog", () => {
     expect(isShotgunWeapon(pm)).toBe(false);
     expect(pm.pellets).toBeUndefined();
     expect(pm.spread).toBeUndefined();
-    expect(pm.damage).toBe(15);
+    expect(pm.damage).toBe(10);
   });
 });
 
 describe("TOZ pellet profile", () => {
-  it("fires 9 pellets at 7 primary damage", () => {
+  it("fires 8 pellets at 7 primary damage", () => {
     const toz = WEAPONS["toz"]!;
-    expect(shotgunPelletCount(toz)).toBe(9);
+    expect(shotgunPelletCount(toz)).toBe(8);
     expect(toz.damage).toBe(7);
-    expect(toz.damage * shotgunPelletCount(toz)).toBe(63);
-    const angles = pelletAngles(0, 9, toz.spread ?? 0);
-    expect(angles).toHaveLength(9);
-    expect(angles[4]).toBeCloseTo(0);
+    expect(toz.damage * shotgunPelletCount(toz)).toBe(56);
+    const angles = pelletAngles(0, 8, toz.spread ?? 0);
+    expect(angles).toHaveLength(8);
+    expect(angles[3]! + angles[4]!).toBeCloseTo(0);
   });
 });
 
