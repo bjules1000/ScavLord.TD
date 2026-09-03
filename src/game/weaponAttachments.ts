@@ -10,6 +10,7 @@ import {
 } from "./gear";
 import { effectiveAttachment, effectiveWeapon } from "./dev/balance";
 import { attachmentDef, weaponDef } from "./weapons";
+import { scavVisualMods, type WeaponVisualState } from "./weaponVisuals";
 
 export type { AttachMount, AttachmentCompatibility, WeaponCategory } from "./gear";
 
@@ -318,6 +319,7 @@ export function listCompatibilityPreview(
 export function fittedWeaponStats(
   weaponId: string,
   attachments: readonly string[],
+  scavMods?: WeaponVisualState | null,
 ) {
   const weapon = weaponDef(weaponId);
   const mods = applyAttachmentMods(weapon, attachments, attachmentDef);
@@ -325,15 +327,20 @@ export function fittedWeaponStats(
   for (const id of attachments) {
     attachWeight += effectiveAttachment(id)?.weight ?? ATTACHMENTS[id]?.weight ?? 0;
   }
+  const scav = scavVisualMods(weaponId, scavMods);
+  let accuracy = Math.max(0.15, Math.min(0.99, mods.accuracy + scav.accuracyAdd));
+  let range = Math.max(1, (mods.range + scav.rangeAdd) * scav.rangeMult);
+  let reloadMs = Math.max(100, Math.round(mods.reloadMs * scav.reloadTimeMult));
   return {
     magSize: mods.magSize,
-    weight: weapon.weight + attachWeight,
-    reloadMs: mods.reloadMs,
-    accuracy: mods.accuracy,
-    range: mods.range,
+    weight: weapon.weight + attachWeight + scav.weightAdd,
+    reloadMs,
+    accuracy,
+    range,
     damage: mods.damage,
     cooldown: mods.cooldown,
     spread: mods.spread,
+    moveMult: scav.moveMult,
   };
 }
 

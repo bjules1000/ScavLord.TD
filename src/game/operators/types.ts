@@ -19,6 +19,8 @@ export interface OperatorEquipment {
   weapon: string;
   attachments: string[];
   armor: string | null;
+  /** Improvised Bench visual/build state for this equipped gun instance. */
+  scavMods?: import("../weaponVisuals").WeaponVisualState | null;
 }
 
 export interface OperatorProgression {

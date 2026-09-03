@@ -80,6 +80,8 @@ export interface Tower {
   holdAngle?: number | null;
   /** World point the player clicked for HOLD_ANGLE (UI display). */
   holdAnglePoint?: { x: number; y: number } | null;
+  /** Improvised Bench visual/build state carried into raid. */
+  scavMods?: import("./weaponVisuals").WeaponVisualState | null;
 }
 
 export type EnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";

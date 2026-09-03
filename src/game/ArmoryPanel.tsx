@@ -1,5 +1,6 @@
 /**
- * Camp Armory / Gunsmith — inspect mounts, preview stats, install / buy attachments.
+ * Camp Gun Bench — factory mounts + scav improvised Bench work.
+ * Evolved from the Armory / Gunsmith panel.
  */
 
 import { useMemo, useState } from "react";
@@ -25,13 +26,30 @@ import {
   weaponDisplayName,
   type EquipmentOwnerId,
 } from "./operators/crewEquipment";
+import {
+  applyScavAction,
+  ensureVisualState,
+  listScavActionsForWeapon,
+  previewScavAction,
+  type ScavBenchAction,
+} from "./scavWeaponMods";
 import { attachmentModifierLines } from "./weaponAttachments";
+import {
+  currentPartLabel,
+  platformForWeaponId,
+  slotLabel,
+  type WeaponVisualSlot,
+  type WeaponVisualState,
+} from "./weaponVisuals";
+import WeaponSprite from "./WeaponSprite";
 
 function toneClass(tone: ArmoryStatTone): string {
   if (tone === "good") return "text-emerald-400";
   if (tone === "bad") return "text-red-400";
   return "text-muted-foreground";
 }
+
+const BENCH_SLOTS: WeaponVisualSlot[] = ["stock", "magazine", "underbarrel", "optic", "muzzle"];
 
 export default function ArmoryPanel({
   meta,
@@ -45,6 +63,7 @@ export default function ArmoryPanel({
   onInstallFromStash,
   onBuyAndInstall,
   onDetachMount,
+  onApplyScavMods,
   onBack,
   onOpenEquipment,
 }: {
@@ -59,20 +78,28 @@ export default function ArmoryPanel({
   onInstallFromStash: (stashUid: number) => void;
   onBuyAndInstall: (shopDefId: string) => void;
   onDetachMount: (mountIndex: number) => void;
+  onApplyScavMods: (next: WeaponVisualState) => void;
   onBack: () => void;
   onOpenEquipment: () => void;
 }) {
   const ownerId = coerceEquipmentOwnerId(meta, selectedOwnerId);
   const rows = listCrewEquipmentRows(meta);
-  const selectedRow = rows.find((r) => r.ownerId === ownerId) ?? rows[0]!;
   const eq = getOwnerEquipment(meta, ownerId);
   const load = ownerLoadSummary(meta, ownerId);
   const [activeMount, setActiveMount] = useState<AttachMount | null>(null);
   const [hoverCandidate, setHoverCandidate] = useState<ArmoryCandidate | null>(null);
   const [previewRemove, setPreviewRemove] = useState(false);
+  const [hoverAction, setHoverAction] = useState<ScavBenchAction | null>(null);
 
   const mountRows = eq ? armoryMountRows(eq.weapon, eq.attachments) : [];
   const summary = eq ? weaponBuildSummary(eq.weapon, eq.attachments) : "NO WEAPON";
+  const platform = eq ? platformForWeaponId(eq.weapon) : null;
+  const scavState = eq ? ensureVisualState(eq.weapon, eq.scavMods) : null;
+
+  const previewScav = useMemo(() => {
+    if (!eq || !hoverAction) return scavState;
+    return previewScavAction(eq.weapon, scavState, hoverAction.id) ?? scavState;
+  }, [eq, hoverAction, scavState]);
 
   const previewAttachments = useMemo(() => {
     if (!eq || !activeMount) return eq?.attachments ?? [];
@@ -86,7 +113,14 @@ export default function ArmoryPanel({
   }, [eq, activeMount, hoverCandidate, previewRemove]);
 
   const stats = eq
-    ? armoryStatRows(eq.weapon, eq.attachments, previewAttachments, eq.armor)
+    ? armoryStatRows(
+        eq.weapon,
+        eq.attachments,
+        previewAttachments,
+        eq.armor,
+        scavState,
+        previewScav,
+      )
     : [];
 
   const candidates =
@@ -103,6 +137,8 @@ export default function ArmoryPanel({
         })
       : [];
 
+  const scavActions = eq ? listScavActionsForWeapon(eq.weapon, scavState) : [];
+
   const equippedOnMount = activeMount
     ? mountRows.find((r) => r.mount === activeMount)?.attachmentId
     : null;
@@ -111,6 +147,7 @@ export default function ArmoryPanel({
     setActiveMount(mount);
     setHoverCandidate(null);
     setPreviewRemove(false);
+    setHoverAction(null);
   };
 
   const runCandidate = (c: ArmoryCandidate) => {
@@ -134,13 +171,24 @@ export default function ArmoryPanel({
     setHoverCandidate(null);
   };
 
+  const runScavAction = (action: ScavBenchAction) => {
+    if (!eq) return;
+    const result = applyScavAction(eq.weapon, scavState, action.id);
+    if (!result.ok) return;
+    onApplyScavMods(result.state);
+    setHoverAction(null);
+  };
+
+  const showScavPreview = !!hoverAction;
+  const showAttachPreview = !!(hoverCandidate || previewRemove);
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="grid min-h-0 flex-1 gap-2 text-left lg:grid-cols-[minmax(150px,0.22fr)_minmax(0,0.45fr)_minmax(220px,0.33fr)] lg:items-stretch">
+      <div className="grid min-h-0 flex-1 gap-2 text-left lg:grid-cols-[minmax(150px,0.2fr)_minmax(0,0.48fr)_minmax(220px,0.32fr)] lg:items-stretch">
         {/* CREW */}
         <div className="pixel-card flex min-h-0 flex-col">
           <div className="font-display text-[10px] text-primary">CREW</div>
-          <p className="mt-1 font-mono text-[9px] text-muted-foreground">Who to mod</p>
+          <p className="mt-1 font-mono text-[9px] text-muted-foreground">Who to work on</p>
           <div className="pixel-scrollbar mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto">
             {rows.map((row) => {
               const active = row.ownerId === ownerId;
@@ -152,6 +200,7 @@ export default function ArmoryPanel({
                     onSelectOwner(row.ownerId);
                     setActiveMount(null);
                     setHoverCandidate(null);
+                    setHoverAction(null);
                   }}
                   className={`w-full border px-2 py-2 text-left font-mono ${
                     active ? "border-primary text-primary" : "border-border/50 text-foreground"
@@ -174,7 +223,7 @@ export default function ArmoryPanel({
           </button>
         </div>
 
-        {/* WEAPON + MOUNTS */}
+        {/* WEAPON BUILD */}
         <div className="pixel-card flex min-h-0 flex-col">
           {!eq ? (
             <div className="font-mono text-[10px] text-muted-foreground">No kit for this operator.</div>
@@ -182,7 +231,7 @@ export default function ArmoryPanel({
             <>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <div className="font-display text-[10px] text-primary">WEAPON</div>
+                  <div className="font-display text-[10px] text-primary">WEAPON BUILD</div>
                   <div className="mt-1 font-display text-[14px] tracking-wide text-foreground">
                     {weaponDisplayName(eq.weapon)}
                   </div>
@@ -193,11 +242,73 @@ export default function ArmoryPanel({
                 </div>
               </div>
 
-              {/* Schematic mount board */}
-              <div className="relative mt-4 flex min-h-[180px] flex-1 flex-col items-center justify-center border border-border/50 bg-background/40 px-3 py-6">
-                <div className="pointer-events-none absolute inset-x-8 top-1/2 h-[3px] -translate-y-1/2 bg-border/70" />
-                <div className="pointer-events-none absolute left-1/2 top-6 bottom-6 w-[3px] -translate-x-1/2 bg-border/40" />
-                <div className="relative z-[1] grid w-full max-w-md grid-cols-2 gap-3">
+              <div className="mt-3 flex justify-center border border-border/50 bg-[#141210] py-3">
+                <WeaponSprite
+                  weaponId={eq.weapon}
+                  scavMods={showScavPreview ? previewScav : scavState}
+                  scale={2}
+                />
+              </div>
+              {showScavPreview && hoverAction && (
+                <div className="mt-1 text-center font-mono text-[8px] text-accent">
+                  PREVIEW · {hoverAction.label}
+                </div>
+              )}
+
+              {platform && scavState && (
+                <div className="mt-3 grid grid-cols-2 gap-1 font-mono text-[9px]">
+                  {BENCH_SLOTS.filter((s) => platform.supportedSlots.includes(s)).map((slot) => (
+                    <div key={slot} className="border border-border/40 px-2 py-1">
+                      <div className="text-[7px] uppercase text-muted-foreground">{slotLabel(slot)}</div>
+                      <div className="truncate text-foreground">
+                        {currentPartLabel(eq.weapon, showScavPreview ? previewScav : scavState, slot)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {platform && (
+                <div className="mt-3 border-t border-border/50 pt-2">
+                  <div className="font-display text-[10px] text-primary">BENCH WORK</div>
+                  <p className="mt-0.5 font-mono text-[8px] text-muted-foreground">
+                    Cut · tape · weld · shorten
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {scavActions.length === 0 ? (
+                      <span className="font-mono text-[9px] text-muted-foreground">
+                        No work available for this build.
+                      </span>
+                    ) : (
+                      scavActions.map((action) => (
+                        <button
+                          key={action.id}
+                          type="button"
+                          className="pixel-btn px-2 py-1 text-[8px]"
+                          onMouseEnter={() => {
+                            setHoverAction(action);
+                            setHoverCandidate(null);
+                            setPreviewRemove(false);
+                          }}
+                          onMouseLeave={() => setHoverAction(null)}
+                          onClick={() => runScavAction(action)}
+                          title={action.desc}
+                        >
+                          {action.label}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Factory mounts */}
+              <div className="mt-3 border-t border-border/50 pt-2">
+                <div className="font-display text-[10px] text-primary">FACTORY PARTS</div>
+                <p className="mt-0.5 font-mono text-[8px] text-muted-foreground">
+                  Optics · muzzles · mags · grips
+                </p>
+                <div className="mt-2 grid grid-cols-2 gap-2">
                   {mountRows.map((row) => {
                     const selected = activeMount === row.mount;
                     const filled = !!row.attachmentId;
@@ -231,13 +342,12 @@ export default function ArmoryPanel({
                   })}
                 </div>
                 {mountRows.length === 0 && (
-                  <div className="font-mono text-[10px] text-muted-foreground">
-                    This weapon has no attachment mounts.
+                  <div className="mt-2 font-mono text-[10px] text-muted-foreground">
+                    No factory mounts on this weapon.
                   </div>
                 )}
               </div>
 
-              {/* Picker */}
               {activeMount && (
                 <div className="mt-3 min-h-0 flex-1 border-t border-border/50 pt-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -251,6 +361,7 @@ export default function ArmoryPanel({
                         onMouseEnter={() => {
                           setPreviewRemove(true);
                           setHoverCandidate(null);
+                          setHoverAction(null);
                         }}
                         onMouseLeave={() => setPreviewRemove(false)}
                         onClick={detachActive}
@@ -259,7 +370,7 @@ export default function ArmoryPanel({
                       </button>
                     )}
                   </div>
-                  <div className="pixel-scrollbar mt-2 max-h-[28vh] space-y-1 overflow-y-auto lg:max-h-[32vh]">
+                  <div className="pixel-scrollbar mt-2 max-h-[22vh] space-y-1 overflow-y-auto">
                     {candidates.length === 0 ? (
                       <div className="font-mono text-[9px] text-muted-foreground">
                         No compatible parts in stash or shop.
@@ -271,6 +382,7 @@ export default function ArmoryPanel({
                           candidate={c}
                           onHover={() => {
                             setPreviewRemove(false);
+                            setHoverAction(null);
                             setHoverCandidate(c.action === "KEEP" ? null : c);
                           }}
                           onLeave={() => setHoverCandidate(null)}
@@ -308,20 +420,25 @@ export default function ArmoryPanel({
                   <span className="text-muted-foreground">{row.display(row.base)}</span>
                   <span className="text-foreground">{row.display(row.current)}</span>
                   <span className={toneClass(row.tone)}>
-                    {hoverCandidate || previewRemove ? row.deltaLabel : "—"}
+                    {showAttachPreview || showScavPreview ? row.deltaLabel : "—"}
                   </span>
                 </div>
               ))}
-              {(hoverCandidate || previewRemove) && (
+              {(showAttachPreview || showScavPreview) && (
                 <div className="mt-2 border border-border/40 bg-background/40 px-2 py-1.5 font-mono text-[9px]">
                   <div className="text-muted-foreground">PREVIEW</div>
                   <div className="mt-0.5 text-foreground">
-                    {previewRemove
-                      ? `Remove ${equippedOnMount ? ATTACHMENTS[equippedOnMount]?.name ?? equippedOnMount : "mod"}`
-                      : hoverCandidate
-                        ? `${hoverCandidate.action.replace("_", " + ")} ${hoverCandidate.name}`
-                        : ""}
+                    {hoverAction
+                      ? hoverAction.label
+                      : previewRemove
+                        ? `Remove ${equippedOnMount ? ATTACHMENTS[equippedOnMount]?.name ?? equippedOnMount : "mod"}`
+                        : hoverCandidate
+                          ? `${hoverCandidate.action.replace("_", " + ")} ${hoverCandidate.name}`
+                          : ""}
                   </div>
+                  {hoverAction && (
+                    <div className="mt-1 text-[8px] text-accent">{hoverAction.desc}</div>
+                  )}
                   {hoverCandidate && hoverCandidate.effects.length > 0 && (
                     <div className="mt-1 text-[8px] text-accent">
                       {hoverCandidate.effects.join(" · ")}
@@ -374,10 +491,6 @@ function CandidateRow({
           ? "INSTALL"
           : "FITTED";
   const blocked = !!candidate.blockedReason;
-  const rarity =
-    Object.values(ATTACHMENTS).find((a) => a.id === candidate.attachId) != null
-      ? undefined
-      : undefined;
 
   return (
     <div
@@ -389,7 +502,7 @@ function CandidateRow({
     >
       <div className="min-w-0 flex-1 font-mono text-[10px] leading-snug">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="truncate text-foreground" style={rarity ? { color: RARITY_COLOR.common } : undefined}>
+          <span className="truncate text-foreground" style={{ color: RARITY_COLOR.common }}>
             {candidate.name}
           </span>
           <span className="text-[8px] uppercase text-muted-foreground">{sourceLabel}</span>
@@ -398,7 +511,9 @@ function CandidateRow({
           )}
         </div>
         <div className="mt-0.5 text-[8px] text-muted-foreground">
-          {candidate.effects.length ? candidate.effects.join(" · ") : attachmentModifierLines(candidate.attachId).join(" · ") || "—"}
+          {candidate.effects.length
+            ? candidate.effects.join(" · ")
+            : attachmentModifierLines(candidate.attachId).join(" · ") || "—"}
           {` · WT +${candidate.weight.toFixed(2)}`}
           {candidate.blockedReason ? ` · ${candidate.blockedReason}` : ""}
         </div>

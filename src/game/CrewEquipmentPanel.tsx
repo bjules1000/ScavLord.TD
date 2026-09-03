@@ -272,7 +272,7 @@ export default function CrewEquipmentPanel({
       <div className="flex shrink-0 gap-2">
         {onOpenArmory && (
           <button type="button" onClick={onOpenArmory} className="pixel-btn flex-1">
-            OPEN ARMORY
+            OPEN GUN BENCH
           </button>
         )}
         <button type="button" onClick={onBack} className="pixel-btn pixel-btn-primary flex-1">

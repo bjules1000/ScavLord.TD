@@ -172,7 +172,8 @@ import {
   expandPackedWeapon,
   swapRaidWeapon,
 } from "./raidGear";
-import { mountRowsForWeapon } from "./weaponAttachments";
+import { fittedWeaponStats, mountRowsForWeapon } from "./weaponAttachments";
+import { scavVisualMods } from "./weaponVisuals";
 import {
   DEFAULT_BULLET_SPEED,
   ENEMY_HIT_RADIUS,
@@ -238,6 +239,7 @@ import {
   coerceEquipmentOwnerId,
   equipOnEquipmentOwner,
   unequipFromEquipmentOwner,
+  setOwnerScavMods,
   type EquipmentOwnerId,
 } from "./operators/crewEquipment";
 import { getRaidOperatorTitle, getRaidOperatorDisplayName } from "./operators/raidIdentity";
@@ -474,13 +476,13 @@ function coverList(map: GameMap, s: GameState): CoverPiece[] {
 
 export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Meta) {
   const w = weaponDef(t.weapon);
-  const folded = applyAttachmentMods(w, t.attachments, attachmentDef);
-  let damage = folded.damage;
-  let range = folded.range * SCALE;
-  let cooldown = folded.cooldown;
-  let accuracy = folded.accuracy;
-  let pen = folded.pen;
-  const splash = folded.splash * SCALE;
+  const fitted = fittedWeaponStats(t.weapon, t.attachments, t.scavMods);
+  let damage = fitted.damage;
+  let range = fitted.range * SCALE;
+  let cooldown = fitted.cooldown;
+  let accuracy = fitted.accuracy;
+  let pen = applyAttachmentMods(w, t.attachments, attachmentDef).pen;
+  const splash = w.splash * SCALE;
   const operatorMods = t.operatorId && meta ? resolveCombatMods(findOperator(meta, t.operatorId) ?? { stats: { aim: 50, toughness: 50, handling: 50, mobility: 50 }, traitIds: [], perkIds: [] }) : null;
   if (t.pmc) {
     const lvl = t.level ?? 1;
@@ -510,11 +512,11 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
     accuracy,
     pen,
     splash,
-    slots: folded.slots,
-    magSize: folded.magSize,
-    reloadMs: folded.reloadMs,
-    reloadType: folded.reloadType,
-    spread: folded.spread,
+    slots: w.slots,
+    magSize: fitted.magSize,
+    reloadMs: fitted.reloadMs,
+    reloadType: w.reloadType,
+    spread: fitted.spread,
   };
 }
 
@@ -541,12 +543,13 @@ function pmcSpawnTile(map: GameMap, s: GameState) {
 
 function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
   const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
-  let weight = getEquippedWeight(kit);
+  const scav = scavVisualMods(t.weapon, t.scavMods);
+  let weight = getEquippedWeight(kit) + scav.weightAdd;
   if (t.operatorId && meta) {
     const op = findOperator(meta, t.operatorId);
-    if (op) weight = operatorEffectiveWeight(kit, resolveCombatMods(op));
+    if (op) weight = operatorEffectiveWeight(kit, resolveCombatMods(op)) + scav.weightAdd;
   }
-  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * TILE;
+  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * TILE;
 }
 
 function findDeployTiles(map: GameMap, s: GameState, count: number) {
@@ -596,6 +599,9 @@ function spawnPersistentOperatorTower(
     operatorId: op.id,
     armor: op.equipment.armor,
     armorHp: armorDef ? armorDef.durability : 0,
+    scavMods: op.equipment.scavMods
+      ? { ...op.equipment.scavMods, parts: { ...op.equipment.scavMods.parts } }
+      : null,
     ...weaponRuntimeFields(op.equipment.weapon),
   });
 }
@@ -740,6 +746,9 @@ export default function TarkovTD() {
       xp: m.pmc.xp,
       armor: m.pmc.armor,
       armorHp: armorDef ? armorDef.durability : 0,
+      scavMods: m.pmc.scavMods
+        ? { ...m.pmc.scavMods, parts: { ...m.pmc.scavMods.parts } }
+        : null,
       ...weaponRuntimeFields(m.pmc.weapon),
     });
     const crewDeploy = aliveOperators(m).filter((o) => deployOperatorIds.includes(o.id));
@@ -810,6 +819,10 @@ export default function TarkovTD() {
         m.pmc.weapon = keepBackpack ? pmc.weapon : STARTER_WEAPON_ID;
         m.pmc.attachments = keepBackpack ? [...pmc.attachments] : [];
         m.pmc.armor = keepBackpack ? (pmc.armor ?? null) : null;
+        m.pmc.scavMods =
+          keepBackpack && pmc.scavMods
+            ? { ...pmc.scavMods, parts: { ...pmc.scavMods.parts } }
+            : null;
       }
       for (const t of s.towers) {
         if (!t.operatorId) continue;
@@ -3079,8 +3092,8 @@ export default function TarkovTD() {
 
               {s.phase === "hideout" && screen === "armory" && (
                 <Overlay
-                  title="ARMORY"
-                  subtitle="Inspect mounts · preview stats · install or buy parts for the selected operator."
+                  title="GUN BENCH"
+                  subtitle="Clean it up · bolt on parts · make it work."
                   layout="fill"
                 >
                   <ArmoryPanel
@@ -3095,6 +3108,17 @@ export default function TarkovTD() {
                     onInstallFromStash={equipOnSelectedOwner}
                     onBuyAndInstall={armoryBuyAndInstall}
                     onDetachMount={(idx) => unequipSelectedOwner(idx)}
+                    onApplyScavMods={(next) => {
+                      const m = metaRef.current;
+                      const ownerId = coerceEquipmentOwnerId(m, selectedEquipOwnerId);
+                      const result = setOwnerScavMods(m, ownerId, next);
+                      if (!result.ok) {
+                        pushLog(result.reason);
+                        return;
+                      }
+                      saveMeta(m);
+                      rerender();
+                    }}
                     onBack={() => setScreen("hideout")}
                     onOpenEquipment={() => setScreen("gear")}
                   />
@@ -3532,9 +3556,15 @@ export default function TarkovTD() {
                   )}
                   <StatRow
                     label="MOVE"
-                    value={`${getOperatorMoveSpeed(selected).toFixed(2)} T/S`}
+                    value={`${(towerMoveSpeedPx(selected, metaRef.current) / TILE).toFixed(2)} T/S`}
                   />
-                  <StatRow label="LOAD" value={getEquippedWeight(selected).toFixed(1)} />
+                  <StatRow
+                    label="LOAD"
+                    value={(
+                      getEquippedWeight(selected) +
+                      scavVisualMods(selected.weapon, selected.scavMods).weightAdd
+                    ).toFixed(1)}
+                  />
                   <StatRow
                     label="COVER"
                     value={
