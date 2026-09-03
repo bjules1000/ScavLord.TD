@@ -23,6 +23,10 @@ import {
   weaponDisplayName,
   type EquipmentOwnerId,
 } from "./operators/crewEquipment";
+import {
+  attachmentModifierLines,
+  kitResolvedStatLines,
+} from "./weaponAttachments";
 
 type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable";
 
@@ -66,6 +70,7 @@ export default function CrewEquipmentPanel({
   const kitActions = kitActionsForOwner(meta, ownerId);
   const load = ownerLoadSummary(meta, ownerId);
   const mountRows = kitActions.mountRows;
+  const kitStats = eq ? kitResolvedStatLines(eq.weapon, eq.attachments) : [];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -163,6 +168,16 @@ export default function CrewEquipmentPanel({
                     <div className="text-foreground">{load.moveTilesPerSec.toFixed(2)} t/s</div>
                   </div>
                 </div>
+                {kitStats.length > 0 && (
+                  <div className="mt-2 grid grid-cols-3 gap-1 border-t border-border/30 pt-2 text-[8px]">
+                    {kitStats.map((row) => (
+                      <div key={row.label}>
+                        <div className="text-muted-foreground">{row.label}</div>
+                        <div className="text-foreground">{row.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -278,6 +293,7 @@ function PrepItemRow({
     ...kit,
     attachmentSlots: 0,
   }) : null;
+  const modLines = item.kind === "attachment" && item.ref ? attachmentModifierLines(item.ref) : [];
   return (
     <div className="flex items-center gap-2 border-b border-border/40 py-1.5">
       <div
@@ -291,6 +307,7 @@ function PrepItemRow({
             ? ` · ${item.installed.length} mod${item.installed.length === 1 ? "" : "s"}`
             : ""}
           {blockReason ? ` · ${blockReason}` : ""}
+          {modLines.length > 0 ? ` · ${modLines.join(" · ")}` : ""}
         </div>
       </div>
       {actions.includes("equip") && (

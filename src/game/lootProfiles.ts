@@ -54,13 +54,44 @@ export type LootSourceContext = {
 export const CANONICAL_PROFILE_MIN_WAVE = 1;
 export const CANONICAL_PROFILE_ENABLED = true;
 
+/**
+ * Conservative default loot gates for new attachment catalog items.
+ * Economy Lab can override per source; absent overrides use these seeds.
+ */
+export const ATTACHMENT_LOOT_SEEDS: Readonly<Record<string, LootProfileOverride>> = {
+  a_red_dot: { weight: 1.1 },
+  a_light_comp: { weight: 1.1 },
+  a_optic_2x: { weight: 0.85 },
+  a_brake: { weight: 0.85 },
+  a_tight_choke: { weight: 0.8 },
+  a_wide_choke: { weight: 0.8 },
+  a_pistol_ext: { weight: 0.9 },
+  a_stanag_ext: { weight: 0.75 },
+  a_grip: { weight: 0.85 },
+  a_optic: { weight: 0.65 },
+  a_quick_mag: { minWave: 10, weight: 0.45 },
+  a_angled_grip: { minWave: 10, weight: 0.45 },
+  a_heavy_grip: { minWave: 10, weight: 0.4 },
+  a_dvl_ext: { minWave: 10, weight: 0.35 },
+  a_marksman: { minWave: 10, weight: 0.3 },
+  a_ar_drum: { minWave: 10, weight: 0.28 },
+  a_ak_drum: { minWave: 10, weight: 0.25 },
+  a_pistol_drum: { minWave: 10, weight: 0.25 },
+  a_mag: { weight: 0.5 },
+  a_laser: { weight: 0.5 },
+  a_m995: { minWave: 10, weight: 0.35 },
+};
+
 export function canonicalProfileEntry(): LootProfileEntry {
   return {
     enabled: CANONICAL_PROFILE_ENABLED,
-    weight: 1,
+    weight: CANONICAL_PROFILE_ENTRY_WEIGHT,
     minWave: CANONICAL_PROFILE_MIN_WAVE,
   };
 }
+
+/** Default per-item weight before profile overrides / attachment seeds. */
+export const CANONICAL_PROFILE_ENTRY_WEIGHT = 1;
 
 export function lootSourceId(mapId: string, type: LootSourceType): LootSourceId {
   return `${mapId}:${type}`;
@@ -114,7 +145,11 @@ export function resolveProfileEntry(
   profile: LootProfile | undefined,
   fallbackWeight: number,
 ): LootProfileEntry {
-  const over = profile?.[itemId];
+  const seed =
+    profile?.[itemId] == null && fallbackWeight === CANONICAL_PROFILE_ENTRY_WEIGHT
+      ? ATTACHMENT_LOOT_SEEDS[itemId]
+      : undefined;
+  const over = { ...seed, ...profile?.[itemId] };
   const base = canonicalProfileEntry();
   const weight = typeof over?.weight === "number" && Number.isFinite(over.weight) ? over.weight : fallbackWeight;
   const minWave =
