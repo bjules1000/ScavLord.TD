@@ -277,6 +277,9 @@ export interface ProjectileHitEvent {
   damage: number;
   pen: number;
   killed: boolean;
+  /** Resolved physical hit zone id when zones are authored. */
+  hitZoneId?: string | null;
+  hitZoneMult?: number;
 }
 
 export interface ProjectileTickResult {
@@ -287,11 +290,21 @@ export interface ProjectileTickResult {
   misses: Array<{ x: number; y: number }>;
 }
 
+export type ProjectileHitZoneQuery = (
+  enemy: ProjectileTickEnemy,
+  hitX: number,
+  hitY: number,
+) => { damageMult: number; zoneId: string | null } | null;
+
 /**
  * Advance a single projectile by dt seconds.
  * Tests segment (old pos → new pos) against enemies and walls.
  * Mutates the projectile in place. Sets `dead = true` when finished.
  * Returns hit events for the caller to process (kill credit, FX, etc.).
+ *
+ * Hit-zone rule: broadphase circle first; then if `hitZoneOf` is provided,
+ * the impact point must land in an enabled zone. Missing zones → no damage.
+ * Overlap: highest zone priority wins (see enemyHitZones.resolveHitZoneAtPoint).
  */
 export function tickProjectile(
   p: Projectile,
@@ -300,6 +313,8 @@ export function tickProjectile(
   armorOf: (e: ProjectileTickEnemy) => number,
   map: GameMap,
   hitRadius: number = ENEMY_HIT_RADIUS,
+  hitZoneOf?: ProjectileHitZoneQuery,
+  radiusOf?: (e: ProjectileTickEnemy) => number,
 ): ProjectileTickResult {
   if (p.dead) return { hits: [], splashes: [], misses: [] };
 
@@ -324,8 +339,6 @@ export function tickProjectile(
   let effectiveTravel = travel;
   let hitWall = false;
   if (wallDist != null) {
-    // wallDist is distance from shooterSurface to wall point
-    // We need to check if wall is within our travel segment
     const segLen = Math.hypot(nx - p.px, ny - p.py);
     if (wallDist < segLen + 1) {
       effectiveTravel = Math.min(travel, wallDist * (travel / Math.max(1e-9, segLen)));
@@ -333,10 +346,8 @@ export function tickProjectile(
     }
   }
 
-  // Test enemy collisions along the segment [px,py] → [px + dx*effectiveTravel, py + dy*effectiveTravel]
   const ex = p.px + p.dx * effectiveTravel;
   const ey = p.py + p.dy * effectiveTravel;
-  const segLen = Math.hypot(ex - p.px, ey - p.py);
 
   const hits: ProjectileHitEvent[] = [];
   const splashes: ProjectileTickResult["splashes"] = [];
@@ -346,11 +357,11 @@ export function tickProjectile(
   for (const e of enemies) {
     if (isSettledOut(e as KillState)) continue;
     if (p.hitIds.includes(e.id)) continue;
-    // Bridge separation
     if (bridgeDeckSeparates(map, shooterSurface, {
       x: e.x, y: e.y, surface: (e.surface as "GROUND" | "HIGH") ?? "GROUND",
     })) continue;
-    const t = segmentCircleHit(p.px, p.py, ex, ey, e.x, e.y, hitRadius);
+    const r = radiusOf ? radiusOf(e) : hitRadius;
+    const t = segmentCircleHit(p.px, p.py, ex, ey, e.x, e.y, r);
     if (t != null) candidates.push({ enemy: e, t });
   }
   candidates.sort((a, b) => a.t - b.t);
@@ -363,17 +374,34 @@ export function tickProjectile(
     const hitX = p.px + (ex - p.px) * c.t;
     const hitY = p.py + (ey - p.py) * c.t;
 
-    // Splash: detonate at impact point
+    let zoneMult = 1;
+    let zoneId: string | null = null;
+    if (hitZoneOf) {
+      const zone = hitZoneOf(e, hitX, hitY);
+      if (!zone) {
+        // Broadphase hit but missed all enabled zones — skip this enemy.
+        continue;
+      }
+      zoneMult = zone.damageMult;
+      zoneId = zone.zoneId;
+    }
+
     if (p.splash > 0) {
-      splashes.push({ x: hitX, y: hitY, radius: p.splash, damage: p.damage, pen: p.pen, shooterId: p.shooterId });
+      splashes.push({
+        x: hitX,
+        y: hitY,
+        radius: p.splash,
+        damage: p.damage * zoneMult,
+        pen: p.pen,
+        shooterId: p.shooterId,
+      });
       p.dead = true;
       p.x = hitX;
       p.y = hitY;
       break;
     }
 
-    // Apply damage via canonical applyHit
-    const dmgMult = p.hitIds.length === 0 ? 1 : p.penDamageMult;
+    const dmgMult = (p.hitIds.length === 0 ? 1 : p.penDamageMult) * zoneMult;
     const dealt = applyHit(e as KillState, p.damage * dmgMult, armorOf(e), p.pen);
     p.hitIds.push(e.id);
 
@@ -387,6 +415,8 @@ export function tickProjectile(
       damage: dealt,
       pen: p.pen,
       killed,
+      hitZoneId: zoneId,
+      hitZoneMult: zoneMult,
     });
 
     if (p.remainingPen <= 0) {

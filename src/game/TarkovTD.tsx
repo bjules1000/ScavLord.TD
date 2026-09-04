@@ -187,6 +187,19 @@ import {
   type ProjectileTickEnemy,
 } from "./shooting";
 import {
+  enemyBroadphaseRadius,
+  enemyWorldBounds,
+  resolveEnemyHitZones,
+  resolveHitZoneAtPoint,
+} from "./enemyHitZones";
+import {
+  applyDamageReaction,
+  canFireNow,
+  freshBehaviorRuntime,
+  movementSpeedMult,
+  tickBehaviorRuntime,
+} from "./enemyBehavior";
+import {
   aliveOperators,
   capabilityFromMeta,
   crewOccupancy,
@@ -1341,6 +1354,10 @@ export default function TarkovTD() {
       const def = effectiveEnemy(e.kind);
       const dealt = applyHit(e, amount, def.armor, pen);
       e.hitFlash = 0.07;
+      if (dealt > 0 && def.behavior) {
+        if (!e.behaviorRuntime) e.behaviorRuntime = freshBehaviorRuntime();
+        applyDamageReaction(def.behavior, e.behaviorRuntime);
+      }
       return dealt;
     };
 
@@ -1428,18 +1445,63 @@ export default function TarkovTD() {
           muzzle: 0,
           leaked: false,
           counted: false,
+          lastHitZoneId: null,
+          behaviorRuntime: freshBehaviorRuntime(),
         });
       }
 
       // enemies — corpses do not walk, leak, or fight
       for (const e of s.enemies) {
         const def = effectiveEnemy(e.kind);
+        const behavior = def.behavior!;
+        if (!e.behaviorRuntime) e.behaviorRuntime = freshBehaviorRuntime();
+        const br = e.behaviorRuntime;
         e.hitFlash = Math.max(0, e.hitFlash - dt);
         e.slow = Math.max(0, e.slow - dt);
         if (isSettledOut(e)) continue;
+        tickBehaviorRuntime(br, dt * 1000);
+
+        // Target acquisition (sight range + optional LOS)
+        const mapNow = mapRef.current;
+        const sightPx = (behavior.canShoot ? behavior.sightRange || def.fireRange : 0) * SCALE;
+        let tgt: Tower | null = null;
+        let tgtD = Infinity;
+        let hasLos = false;
+        if (behavior.canShoot && sightPx > 0) {
+          for (const t of s.towers) {
+            const pos = towerPos(t);
+            const d = Math.hypot(pos.x - e.x, pos.y - e.y);
+            if (d >= sightPx || d >= tgtD) continue;
+            const los = hasLineOfSight(
+              mapNow,
+              { x: e.x, y: e.y, surface: e.surface ?? "GROUND" },
+              { x: pos.x, y: pos.y, surface: t.surface ?? "GROUND" },
+            );
+            if (behavior.requireLosToShoot && !los) continue;
+            tgtD = d;
+            tgt = t;
+            hasLos = los;
+          }
+        }
+
+        if (tgt) {
+          br.targetTowerId = tgt.id;
+          br.memoryLeftMs = behavior.targetMemoryMs;
+          if (br.state !== "REACTION" || br.reactionLeftMs <= 0) br.state = "ENGAGED";
+        } else if (br.memoryLeftMs > 0) {
+          br.targetTowerId = null;
+          if (br.state !== "REACTION" || br.reactionLeftMs <= 0) br.state = "ENGAGED";
+        } else {
+          br.targetTowerId = null;
+          if (br.state !== "REACTION" || br.reactionLeftMs <= 0) br.state = "ADVANCING";
+        }
+
+        const moveMult = movementSpeedMult(behavior, br);
         const route = laneRoute(mapRef.current, e.lane);
-        const sp = def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? WIRE_SPEED_MULT : 1);
+        const sp =
+          def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? WIRE_SPEED_MULT : 1) * moveMult;
         let move = sp * dt;
+        const wasMoving = move > 0.0001;
         while (move > 0 && e.seg < route.SEG_LEN.length) {
           const len = route.SEG_LEN[e.seg]!;
           const remain = (1 - e.t) * len;
@@ -1452,7 +1514,7 @@ export default function TarkovTD() {
             e.t = 0;
           }
         }
-        e.step += sp * dt * 0.25;
+        e.step += Math.max(sp, 0.01) * dt * 0.25;
         if (e.seg >= route.SEG_LEN.length) {
           if (leakIfAlive(e)) {
             s.lives -= def.damage;
@@ -1485,31 +1547,36 @@ export default function TarkovTD() {
         }
         if (isSettledOut(e)) continue;
 
-        // All current enemy attacks are ranged (fireRange + hostile bullet).
-        // Melee/contact damage does not exist; leak/wire stay LOS-free.
         e.muzzle = Math.max(0, e.muzzle - dt);
         e.fireCd -= dt * 1000;
-        let tgt: Tower | null = null;
-        let tgtD = Infinity;
-        const mapNow = mapRef.current;
-        for (const t of s.towers) {
-          const pos = towerPos(t);
-          const d = Math.hypot(pos.x - e.x, pos.y - e.y);
-          if (d >= def.fireRange * SCALE || d >= tgtD) continue;
-          if (
-            !hasLineOfSight(
+
+        // Prefer current engaged target within fire range
+        let fireTgt = tgt;
+        let fireLos = hasLos;
+        if (behavior.canShoot) {
+          let best: Tower | null = null;
+          let bestD = Infinity;
+          let bestLos = false;
+          for (const t of s.towers) {
+            const pos = towerPos(t);
+            const d = Math.hypot(pos.x - e.x, pos.y - e.y);
+            if (d >= def.fireRange * SCALE || d >= bestD) continue;
+            const los = hasLineOfSight(
               mapNow,
               { x: e.x, y: e.y, surface: e.surface ?? "GROUND" },
               { x: pos.x, y: pos.y, surface: t.surface ?? "GROUND" },
-            )
-          ) {
-            continue;
+            );
+            if (behavior.requireLosToShoot && !los) continue;
+            bestD = d;
+            best = t;
+            bestLos = los;
           }
-          tgtD = d;
-          tgt = t;
+          fireTgt = best;
+          fireLos = bestLos;
         }
-        if (tgt) {
-          const pos = towerPos(tgt);
+
+        if (fireTgt && canFireNow(behavior, br, fireLos, wasMoving && moveMult > 0.05)) {
+          const pos = towerPos(fireTgt);
           e.aim = Math.atan2(pos.y - e.y, pos.x - e.x);
           if (e.fireCd <= 0) {
             e.fireCd = def.fireCooldown * (0.75 + Math.random() * 0.5);
@@ -1527,7 +1594,7 @@ export default function TarkovTD() {
               color: "#ff6b4a",
               trail: 0,
               hostile: true,
-              towerId: tgt.id,
+              towerId: fireTgt.id,
               sx: e.x,
               sy: e.y,
             });
@@ -1707,15 +1774,52 @@ export default function TarkovTD() {
 
       // physical projectiles (traveling bullets — damage on impact)
       {
-        const armorOfEnemy = (e: ProjectileTickEnemy) => effectiveEnemy((e as unknown as { kind: EnemyKind }).kind).armor;
+        const armorOfEnemy = (e: ProjectileTickEnemy) =>
+          effectiveEnemy((e as unknown as { kind: EnemyKind }).kind).armor;
+        const radiusOf = (e: ProjectileTickEnemy) => {
+          const def = effectiveEnemy((e as unknown as { kind: EnemyKind }).kind);
+          return enemyBroadphaseRadius(def.size, SCALE);
+        };
+        const hitZoneOf = (e: ProjectileTickEnemy, hitX: number, hitY: number) => {
+          const def = effectiveEnemy((e as unknown as { kind: EnemyKind }).kind);
+          const zones = resolveEnemyHitZones(def.hitZones);
+          const bounds = enemyWorldBounds(e.x, e.y, def.size, SCALE);
+          const hit = resolveHitZoneAtPoint(zones, bounds, hitX, hitY);
+          if (!hit) return null;
+          return { damageMult: hit.damageMult, zoneId: hit.zone.id };
+        };
         const liveProjectiles: Projectile[] = [];
         for (const p of s.projectiles) {
-          const result = tickProjectile(p, dt, s.enemies, armorOfEnemy, mapRef.current, ENEMY_HIT_RADIUS);
+          const result = tickProjectile(
+            p,
+            dt,
+            s.enemies,
+            armorOfEnemy,
+            mapRef.current,
+            ENEMY_HIT_RADIUS,
+            hitZoneOf,
+            radiusOf,
+          );
           for (const hit of result.hits) {
             const e = s.enemies.find((en) => en.id === hit.enemyId);
             if (e) {
               e.hitFlash = 0.07;
+              e.lastHitZoneId = hit.hitZoneId ?? null;
+              const def = effectiveEnemy(e.kind);
+              if (def.behavior) {
+                if (!e.behaviorRuntime) e.behaviorRuntime = freshBehaviorRuntime();
+                applyDamageReaction(def.behavior, e.behaviorRuntime);
+              }
               spawnParticles(e.x, e.y, "#c94b3a", p.pellet ? 2 : 4, p.pellet ? 36 : 55);
+              if (DEV_TOOLS_ENABLED && hit.hitZoneId === "head") {
+                s.floats.push({
+                  x: e.x,
+                  y: e.y - 18,
+                  life: 0.55,
+                  text: "HEAD",
+                  color: "#f0b400",
+                });
+              }
             }
           }
           for (const splash of result.splashes) {

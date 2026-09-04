@@ -1,6 +1,9 @@
-import type { EnemyDef, EnemyKind, Perk, TowerDef, TowerKind } from "./types";
+import type { BuiltinEnemyKind, EnemyDef, EnemyKind, Perk, TowerDef, TowerKind } from "./types";
+import { defaultHitZones } from "./enemyHitZones";
+import { builtinBehaviorForKind } from "./enemyBehavior";
 
 export const TILE = 44;
+
 export const SCALE = TILE / 32;
 export const COLS = 20;
 export const ROWS = 13;
@@ -78,7 +81,7 @@ export const TOWERS: Record<TowerKind, TowerDef> = {
 
 export const TOWER_ORDER: TowerKind[] = ["scout", "sniper", "gunner", "grenadier"];
 
-export const ENEMIES: Record<EnemyKind, EnemyDef> = {
+export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyDef> = {
   scav: {
     kind: "scav",
     fireRange: 58, fireCooldown: 2100, towerDamage: 4,
@@ -91,7 +94,11 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     body: "#8a7a5c",
     gear: "#4b4030",
     size: 13,
-    },
+    attackProfile: "uzi",
+    artProfile: "light",
+    hitZones: defaultHitZones(),
+    behavior: builtinBehaviorForKind("scav"),
+  },
   sniperScav: {
     kind: "sniperScav",
     fireRange: 46, fireCooldown: 1700, towerDamage: 16,
@@ -104,6 +111,10 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     body: "#6b5340",
     gear: "#3a2a1c",
     size: 14,
+    attackProfile: "sg",
+    artProfile: "light",
+    hitZones: defaultHitZones(),
+    behavior: builtinBehaviorForKind("sniperScav"),
   },
   raider: {
     kind: "raider",
@@ -117,6 +128,10 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     body: "#5e6b4d",
     gear: "#2f3626",
     size: 15,
+    attackProfile: "ak",
+    artProfile: "heavy",
+    hitZones: defaultHitZones(),
+    behavior: builtinBehaviorForKind("raider"),
   },
   pmc: {
     kind: "pmc",
@@ -130,6 +145,10 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     body: "#3f4a55",
     gear: "#20272e",
     size: 16,
+    attackProfile: "ak",
+    artProfile: "heavy",
+    hitZones: defaultHitZones(),
+    behavior: builtinBehaviorForKind("pmc"),
   },
   boss: {
     kind: "boss",
@@ -143,6 +162,10 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     body: "#5a3a28",
     gear: "#241810",
     size: 22,
+    attackProfile: "ak",
+    artProfile: "heavy",
+    hitZones: defaultHitZones(),
+    behavior: builtinBehaviorForKind("boss"),
   },
 };
 
