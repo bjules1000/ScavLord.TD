@@ -78,6 +78,8 @@ export interface PmcState {
   weapon: string;
   attachments: string[];
   armor: string | null;
+  /** Improvised Bench visual/build state for the leader's equipped gun. */
+  scavMods?: import("./weaponVisuals").WeaponVisualState | null;
   deaths: number;
 }
 
@@ -107,6 +109,8 @@ export function rollDebuff(current: string[]): DebuffDef | null {
 export interface StashEntry {
   defId: string;
   installed?: string[];
+  /** Persisted scav Bench build when this stash entry is a packed weapon. */
+  scavMods?: import("./weaponVisuals").WeaponVisualState | null;
 }
 
 export interface Meta {
@@ -255,6 +259,7 @@ export function stashItems(m: Meta, uidStart: number): Item[] {
     .map((s, i) => {
       const item = makeItem(s.defId, uidStart + i);
       if (item && s.installed?.length) item.installed = [...s.installed];
+      if (item && s.scavMods) item.scavMods = { ...s.scavMods, parts: { ...s.scavMods.parts } };
       return item;
     })
     .filter((x): x is Item => x !== null);

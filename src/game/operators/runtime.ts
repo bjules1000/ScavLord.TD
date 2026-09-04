@@ -62,7 +62,12 @@ export function operatorEffectiveWeight(
 
 export function syncOperatorEquipmentFromTower(
   op: PersistentOperator,
-  tower: { weapon: string; attachments: readonly string[]; armor?: string | null },
+  tower: {
+    weapon: string;
+    attachments: readonly string[];
+    armor?: string | null;
+    scavMods?: import("../weaponVisuals").WeaponVisualState | null;
+  },
 ): PersistentOperator {
   return {
     ...op,
@@ -70,6 +75,9 @@ export function syncOperatorEquipmentFromTower(
       weapon: tower.weapon,
       attachments: [...tower.attachments],
       armor: tower.armor ?? null,
+      scavMods: tower.scavMods
+        ? { ...tower.scavMods, parts: { ...tower.scavMods.parts } }
+        : tower.scavMods ?? null,
     },
   };
 }

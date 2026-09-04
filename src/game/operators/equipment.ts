@@ -22,6 +22,7 @@ import type { OperatorEquipment, PersistentOperator } from "./types";
 export function itemToStashEntry(item: Item): StashEntry {
   const entry: StashEntry = { defId: item.id };
   if (item.kind === "weapon" && item.installed?.length) entry.installed = [...item.installed];
+  if (item.kind === "weapon" && item.scavMods) entry.scavMods = { ...item.scavMods, parts: { ...item.scavMods.parts } };
   return entry;
 }
 
@@ -53,13 +54,23 @@ export function equipWeaponOnOperator(
     const old = makeItem(oldWid, uid);
     if (old) {
       if (op.equipment.attachments.length) old.installed = [...op.equipment.attachments];
+      if (op.equipment.scavMods) {
+        old.scavMods = { ...op.equipment.scavMods, parts: { ...op.equipment.scavMods.parts } };
+      }
       back.push(old);
     }
   }
   const installed = normalizeInstalledAttachments(item.ref, [...(item.installed ?? [])]);
   const nextOp: PersistentOperator = {
     ...op,
-    equipment: { weapon: item.ref, attachments: installed, armor: op.equipment.armor },
+    equipment: {
+      weapon: item.ref,
+      attachments: installed,
+      armor: op.equipment.armor,
+      scavMods: item.scavMods
+        ? { ...item.scavMods, parts: { ...item.scavMods.parts } }
+        : null,
+    },
   };
   nextStash = [...nextStash, ...back];
   return {
@@ -135,10 +146,12 @@ export function unequipOperatorSlot(
     const gun = wid ? makeItem(wid, uid) : null;
     if (gun) {
       if (eq.attachments.length) gun.installed = [...eq.attachments];
+      if (eq.scavMods) gun.scavMods = { ...eq.scavMods, parts: { ...eq.scavMods.parts } };
       back.push(gun);
     }
     eq.weapon = "pm";
     eq.attachments = [];
+    eq.scavMods = null;
   } else if (slot === "armor") {
     if (!eq.armor) return { ok: false, reason: "No armor fitted." };
     const aid = armorItemId(eq.armor);

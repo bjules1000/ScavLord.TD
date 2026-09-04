@@ -542,7 +542,7 @@ describe("stacked Weapon Compare pipeline", () => {
     const view = composeStackedCompare(all, identity, "RIFLES", "range", "", "desc");
     expect(view.weapons.every((w) => w.cls === "rifle")).toBe(true);
     expect(view.metric).toBe("range");
-    expect(view.order[0]).toBe("adar");
+    expect(view.order[0]).toBe("sks");
   });
 
   it("search composes with category and stat", () => {

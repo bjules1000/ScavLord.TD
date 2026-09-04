@@ -165,6 +165,26 @@ export const WEAPONS: Record<string, WeaponDef> = {
     accent: "#f0b400",
     gunLen: 14,
   },
+  sks: {
+    id: "sks",
+    name: "SKS CARBINE",
+    cls: "rifle",
+    category: "ar",
+    attachmentSlots: ["optic", "muzzle"],
+    damage: 28,
+    range: 140,
+    cooldown: 520,
+    accuracy: 0.52,
+    splash: 0,
+    slots: 2,
+    magSize: 10,
+    reloadType: "MAGAZINE",
+    reloadMs: 2600,
+    weight: 3.4,
+    color: "#5a4f3a",
+    accent: "#d4c48a",
+    gunLen: 16,
+  },
   m4: {
     id: "m4",
     name: "SERVICE CARBINE",
@@ -563,6 +583,8 @@ export interface Item extends ItemDef {
   uid: number;
   /** Attachments kept on a packed raid weapon until the player detaches them. */
   installed?: string[];
+  /** Improvised Bench visual/build state for this packed gun. */
+  scavMods?: import("./weaponVisuals").WeaponVisualState | null;
 }
 
 export const ITEMS: ItemDef[] = [
@@ -572,6 +594,7 @@ export const ITEMS: ItemDef[] = [
   { id: "w_mp133", kind: "weapon", ref: "mp133", name: "PUMP 12", rarity: "rare", value: 480, desc: "7-pellet spread, brutal up close, no reach.", price: 1700 },
   { id: "w_adar", kind: "weapon", ref: "adar", name: "SPORT CARBINE", rarity: "common", value: 260, desc: "More range and punch, slower cycle.", price: 900 },
   { id: "w_ak74", kind: "weapon", ref: "ak74", name: "KALASH RIFLE", rarity: "rare", value: 420, desc: "Fast, loose, three mod slots.", price: 1500 },
+  { id: "w_sks", kind: "weapon", ref: "sks", name: "SKS CARBINE", rarity: "rare", value: 380, desc: "Hard-hitting carbine. Ready for Bench work.", price: 1400 },
   { id: "w_pkm", kind: "weapon", ref: "pkm", name: "SQUAD LMG", rarity: "rare", value: 520, desc: "Belt-fed spray. Terrible accuracy.", price: 2000 },
   { id: "w_m4", kind: "weapon", ref: "m4", name: "SERVICE CARBINE", rarity: "rare", value: 640, desc: "Accurate, four mod slots.", price: 2600 },
   { id: "w_sv98", kind: "weapon", ref: "sv98", name: "BOLT RIFLE", rarity: "epic", value: 900, desc: "Huge range and damage, very slow.", price: 4200 },

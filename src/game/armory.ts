@@ -1,5 +1,5 @@
 /**
- * Camp Armory / Gunsmith helpers — UI layer over canonical attachment + economy systems.
+ * Camp Gun Bench helpers — factory mounts + scav Bench preview/stat rows.
  */
 
 import { getEquippedWeight } from "./armor";
@@ -92,43 +92,43 @@ export function armoryStatRows(
   currentAttachments: readonly string[],
   previewAttachments: readonly string[],
   armorId: string | null = null,
+  currentScavMods?: import("./weaponVisuals").WeaponVisualState | null,
+  previewScavMods?: import("./weaponVisuals").WeaponVisualState | null,
 ): ArmoryStatRow[] {
   const weapon = weaponDef(weaponId);
   const base = fittedWeaponStats(weaponId, []);
-  const current = fittedWeaponStats(weaponId, currentAttachments);
-  const preview = fittedWeaponStats(weaponId, previewAttachments);
+  const current = fittedWeaponStats(weaponId, currentAttachments, currentScavMods);
+  const preview = fittedWeaponStats(
+    weaponId,
+    previewAttachments,
+    previewScavMods ?? currentScavMods,
+  );
 
+  const armorW = getEquippedWeight({
+    weapon: weaponId,
+    armor: armorId,
+    attachments: [],
+  }) - weapon.weight;
+  const baseWeight = base.weight + armorW;
+  const curWeight = current.weight + armorW;
+  const prevWeight = preview.weight + armorW;
   const baseMove = getOperatorMoveSpeed({
     weapon: weaponId,
     armor: armorId,
     attachments: [],
   });
-  const curMove = getOperatorMoveSpeed({
-    weapon: weaponId,
-    armor: armorId,
-    attachments: currentAttachments,
-  });
-  const prevMove = getOperatorMoveSpeed({
-    weapon: weaponId,
-    armor: armorId,
-    attachments: previewAttachments,
-  });
-
-  const baseWeight = getEquippedWeight({
-    weapon: weaponId,
-    armor: armorId,
-    attachments: [],
-  });
-  const curWeight = getEquippedWeight({
-    weapon: weaponId,
-    armor: armorId,
-    attachments: currentAttachments,
-  });
-  const prevWeight = getEquippedWeight({
-    weapon: weaponId,
-    armor: armorId,
-    attachments: previewAttachments,
-  });
+  const curMove =
+    getOperatorMoveSpeed({
+      weapon: weaponId,
+      armor: armorId,
+      attachments: currentAttachments,
+    }) * (current.moveMult ?? 1);
+  const prevMove =
+    getOperatorMoveSpeed({
+      weapon: weaponId,
+      armor: armorId,
+      attachments: previewAttachments,
+    }) * (preview.moveMult ?? 1);
 
   type Spec = {
     key: string;

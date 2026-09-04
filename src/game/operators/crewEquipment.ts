@@ -36,6 +36,7 @@ import {
 } from "./equipment";
 import { operatorEffectiveWeight, resolveCombatMods } from "./runtime";
 import type { OperatorEquipment, PersistentOperator } from "./types";
+import { scavVisualMods } from "../weaponVisuals";
 
 import { STARTING_OPERATOR, STARTING_OPERATOR_ID } from "./startingOperator";
 
@@ -77,11 +78,17 @@ export type CrewEquipResult =
   | { ok: false; reason: string };
 
 function pmcAsEquipment(pmc: PmcState): OperatorEquipment {
-  return {
+  const eq: OperatorEquipment = {
     weapon: pmc.weapon,
     attachments: [...pmc.attachments],
     armor: pmc.armor,
   };
+  if (pmc.scavMods !== undefined) {
+    eq.scavMods = pmc.scavMods
+      ? { platformId: pmc.scavMods.platformId, parts: { ...pmc.scavMods.parts } }
+      : null;
+  }
+  return eq;
 }
 
 function writePmcEquipment(pmc: PmcState, eq: OperatorEquipment): PmcState {
@@ -90,6 +97,7 @@ function writePmcEquipment(pmc: PmcState, eq: OperatorEquipment): PmcState {
     weapon: eq.weapon,
     attachments: [...eq.attachments],
     armor: eq.armor,
+    scavMods: eq.scavMods ? { ...eq.scavMods, parts: { ...eq.scavMods.parts } } : eq.scavMods ?? null,
   };
 }
 
@@ -145,11 +153,17 @@ export function getOwnerEquipment(meta: Meta, ownerId: EquipmentOwnerId): Operat
   if (ownerId === LEADER_EQUIPMENT_OWNER_ID) return pmcAsEquipment(meta.pmc);
   const op = findOperator(meta, ownerId);
   if (!op) return null;
-  return {
+  const eq: OperatorEquipment = {
     weapon: op.equipment.weapon,
     attachments: [...op.equipment.attachments],
     armor: op.equipment.armor,
   };
+  if (op.equipment.scavMods !== undefined) {
+    eq.scavMods = op.equipment.scavMods
+      ? { platformId: op.equipment.scavMods.platformId, parts: { ...op.equipment.scavMods.parts } }
+      : null;
+  }
+  return eq;
 }
 
 export function getOperatorEquippedWeapon(meta: Meta, ownerId: EquipmentOwnerId): string | null {
@@ -195,16 +209,26 @@ export function ownerLoadSummary(
   const eq = getOwnerEquipment(meta, ownerId);
   if (!eq) return { weight: 0, moveTilesPerSec: getOperatorMoveSpeed({}) };
   const kit = { weapon: eq.weapon, armor: eq.armor, attachments: eq.attachments };
+  const scav = scavVisualMods(eq.weapon, eq.scavMods);
   if (ownerId === LEADER_EQUIPMENT_OWNER_ID) {
-    const weight = getEquippedWeight(kit);
-    return { weight, moveTilesPerSec: getOperatorMoveSpeed(kit) };
+    const weight = getEquippedWeight(kit) + scav.weightAdd;
+    return {
+      weight,
+      moveTilesPerSec: getOperatorMoveSpeed(kit) * scav.moveMult,
+    };
   }
   const op = findOperator(meta, ownerId);
-  if (!op) return { weight: getEquippedWeight(kit), moveTilesPerSec: getOperatorMoveSpeed(kit) };
-  const weight = operatorEffectiveWeight(kit, resolveCombatMods(op));
+  if (!op) {
+    const weight = getEquippedWeight(kit) + scav.weightAdd;
+    return {
+      weight,
+      moveTilesPerSec: getOperatorMoveSpeed(kit) * scav.moveMult,
+    };
+  }
+  const weight = operatorEffectiveWeight(kit, resolveCombatMods(op)) + scav.weightAdd;
   return {
     weight,
-    moveTilesPerSec: OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight),
+    moveTilesPerSec: OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult,
   };
 }
 
@@ -238,6 +262,7 @@ function equipOnLeader(
       const old = makeItem(oldWid, uid);
       if (old) {
         if (eq.attachments.length) old.installed = [...eq.attachments];
+        if (eq.scavMods) old.scavMods = { ...eq.scavMods, parts: { ...eq.scavMods.parts } };
         back.push(old);
       }
     } else if (oldWid && eq.weapon === STARTER_WEAPON_ID && eq.attachments.length) {
@@ -250,7 +275,14 @@ function equipOnLeader(
       }
     }
     const installed = normalizeInstalledAttachments(item.ref, [...(item.installed ?? [])]);
-    const nextEq: OperatorEquipment = { weapon: item.ref, attachments: installed, armor: eq.armor };
+    const nextEq: OperatorEquipment = {
+      weapon: item.ref,
+      attachments: installed,
+      armor: eq.armor,
+      scavMods: item.scavMods
+        ? { ...item.scavMods, parts: { ...item.scavMods.parts } }
+        : null,
+    };
     nextStash = [...nextStash, ...back];
     return {
       ok: true,
@@ -317,12 +349,13 @@ function unequipLeaderSlot(
     const gun = wid ? makeItem(wid, uid) : null;
     if (gun) {
       if (eq.attachments.length) gun.installed = [...eq.attachments];
+      if (eq.scavMods) gun.scavMods = { ...eq.scavMods, parts: { ...eq.scavMods.parts } };
       back.push(gun);
     }
     return {
       ok: true,
       stash: [...stash, ...back],
-      pmc: writePmcEquipment(pmc, { weapon: STARTER_WEAPON_ID, attachments: [], armor: eq.armor }),
+      pmc: writePmcEquipment(pmc, { weapon: STARTER_WEAPON_ID, attachments: [], armor: eq.armor, scavMods: null }),
       message: "Gear returned to stash.",
       change: changeEvent(LEADER_EQUIPMENT_OWNER_ID, "weapon", prev, STARTER_WEAPON_ID),
     };
@@ -525,4 +558,31 @@ export function findOperatorByUniqueId(
   uniqueId: string,
 ): PersistentOperator | undefined {
   return meta.crew.operators.find((o) => o.uniqueId === uniqueId);
+}
+
+/** Apply a scav Bench visual state onto the owner's equipped weapon. */
+export function setOwnerScavMods(
+  meta: Meta,
+  ownerId: EquipmentOwnerId,
+  scavMods: import("../weaponVisuals").WeaponVisualState | null,
+): { ok: true; meta: Meta } | { ok: false; reason: string } {
+  if (!isEditableEquipmentOwner(meta, ownerId)) {
+    return { ok: false, reason: "That operator cannot be equipped." };
+  }
+  const next =
+    scavMods == null
+      ? null
+      : { platformId: scavMods.platformId, parts: { ...scavMods.parts } };
+  if (ownerId === LEADER_EQUIPMENT_OWNER_ID) {
+    meta.pmc = { ...meta.pmc, scavMods: next };
+    return { ok: true, meta };
+  }
+  const idx = meta.crew.operators.findIndex((o) => o.id === ownerId);
+  if (idx < 0) return { ok: false, reason: "Operator not found." };
+  const op = meta.crew.operators[idx]!;
+  meta.crew.operators[idx] = {
+    ...op,
+    equipment: { ...op.equipment, scavMods: next },
+  };
+  return { ok: true, meta };
 }
