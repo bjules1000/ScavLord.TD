@@ -64,13 +64,13 @@ export function builtinBehaviorForKind(kind: string): EnemyBehaviorConfig {
       return defaultBehaviorConfig({
         canShoot: false,
         fireWhileMoving: true,
-        sightRange: 0,
-        normalSpeedMult: 1.05,
-        engagedSpeedMult: 1.05,
-        lostTargetSpeedMult: 1.05,
+        sightRange: 45,
+        normalSpeedMult: 1,
+        engagedSpeedMult: 1.1,
+        lostTargetSpeedMult: 1,
         onDamage: "SPEED_UP",
-        onDamageSpeedMult: 1.5,
-        onDamageDurationMs: 1500,
+        onDamageSpeedMult: 1.3,
+        onDamageDurationMs: 1100,
       });
     case "sniperScav":
       return defaultBehaviorConfig({
@@ -78,7 +78,7 @@ export function builtinBehaviorForKind(kind: string): EnemyBehaviorConfig {
         fireWhileMoving: true,
         sightRange: 75,
         normalSpeedMult: 1,
-        engagedSpeedMult: 1,
+        engagedSpeedMult: 0.75,
         lostTargetSpeedMult: 1,
       });
     case "raider":
@@ -97,7 +97,7 @@ export function builtinBehaviorForKind(kind: string): EnemyBehaviorConfig {
         fireWhileMoving: true,
         sightRange: 100,
         normalSpeedMult: 1,
-        engagedSpeedMult: 0.85,
+        engagedSpeedMult: 0.75,
         lostTargetSpeedMult: 1,
       });
     case "boss":
@@ -106,7 +106,7 @@ export function builtinBehaviorForKind(kind: string): EnemyBehaviorConfig {
         fireWhileMoving: true,
         sightRange: 100,
         normalSpeedMult: 1,
-        engagedSpeedMult: 0.9,
+        engagedSpeedMult: 0.75,
         lostTargetSpeedMult: 1,
       });
     default:
