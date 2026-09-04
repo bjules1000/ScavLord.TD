@@ -613,7 +613,7 @@ function summarizeHitZones(zones: EnemyHitZone[] | undefined): string {
   if (!zones || zones.length === 0) return "(fallback body)";
   return zones
     .filter((z) => z.enabled)
-    .map((z) => `${z.displayName}×${z.damageMult}`)
+    .map((z) => `${z.displayName}:${z.shape}×${z.damageMult}@(${z.x.toFixed(2)},${z.y.toFixed(2)})`)
     .join(", ");
 }
 

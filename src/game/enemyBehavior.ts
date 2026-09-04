@@ -210,25 +210,21 @@ export function derivedBehaviorSummary(cfg: EnemyBehaviorConfig): string[] {
   if (!cfg.canShoot) {
     lines.push("Does not shoot.");
   } else {
-    lines.push(
-      cfg.requireLosToShoot
-        ? `Shoots operators in sight (range ${cfg.sightRange}) with LOS.`
-        : `Shoots operators in range ${cfg.sightRange} (LOS not required).`,
-    );
+    const losBit = cfg.requireLosToShoot ? " with clear LOS" : "";
+    lines.push(`Acquires operators within sight range ${cfg.sightRange}${losBit}.`);
+    const engPct = Math.round(cfg.engagedSpeedMult * 100);
+    const fireBit = cfg.fireWhileMoving ? " and fires while moving" : " and prefers stationary fire";
     if (cfg.engagedSpeedMult < 0.95) {
-      lines.push(`When engaged: slows to ${(cfg.engagedSpeedMult * 100).toFixed(0)}% speed.`);
+      lines.push(`While engaged: moves at ${engPct}% speed${fireBit}.`);
     } else if (cfg.engagedSpeedMult > 1.05) {
-      lines.push(`When engaged: rushes at ${(cfg.engagedSpeedMult * 100).toFixed(0)}% speed.`);
+      lines.push(`While engaged: rushes at ${engPct}% speed${fireBit}.`);
     } else {
-      lines.push("When engaged: keeps normal advance speed.");
+      lines.push(`While engaged: keeps ~${engPct}% advance speed${fireBit}.`);
     }
+    const memSec = (cfg.targetMemoryMs / 1000).toFixed(1);
+    lines.push(`Remembers a lost target for ${memSec}s.`);
     lines.push(
-      cfg.fireWhileMoving
-        ? "Fires while moving."
-        : "Prefers stationary fire (fire-while-moving off).",
-    );
-    lines.push(
-      `When target lost: resumes ${(cfg.lostTargetSpeedMult * 100).toFixed(0)}% after ${(cfg.targetMemoryMs / 1000).toFixed(1)}s memory.`,
+      `Then resumes ${(cfg.lostTargetSpeedMult * 100).toFixed(0)}% movement.`,
     );
   }
   if (cfg.onDamage === "SPEED_UP") {

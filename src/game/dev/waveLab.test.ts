@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { ENEMIES, waveScale } from "../data";
+import { defaultHitZones } from "../enemyHitZones";
 import { MAP_BY_ID, MAP_DEFS } from "../map";
 import { spawnedEnemyHp, spawnDurationMs, totalEnemyCount } from "../waves";
 import { BALANCE_STORAGE_KEY, applyBalanceOverrides, emptyBalanceOverrides } from "./balance";
@@ -31,7 +32,9 @@ import {
   requestTestWave,
   resetEnemyItem,
   resetWaveItem,
+  setEnemyBehavior,
   setEnemyField,
+  setEnemyHitZones,
   setWaveGroups,
   updateWaveGroup,
   waveLabPatchLines,
@@ -172,6 +175,41 @@ describe("Wave Lab enemies", () => {
     expect(effectiveEnemy(kind, renamed, true).name).toBe("Renamed Scav");
     expect(effectiveEnemy(kind, renamed, true).kind).toBe(kind);
     expect(Object.keys(renamed.customEnemies)).toEqual([kind]);
+  });
+
+  it("hit zone shape persists and reset restores base shape/geometry", () => {
+    const baseZones = defaultHitZones();
+    const headAsRect = baseZones.map((z) =>
+      z.id === "head" ? { ...z, shape: "rect" as const, x: 0.1, damageMult: 2 } : z,
+    );
+    let over = setEnemyHitZones(emptyWaveLabOverrides(), "raider", headAsRect);
+    const live = effectiveEnemy("raider", over, true);
+    expect(live.hitZones!.find((z) => z.id === "head")!.shape).toBe("rect");
+    expect(live.hitZones!.find((z) => z.id === "head")!.x).toBe(0.1);
+    const patch = formatWaveLabPatch(over);
+    expect(patch).toContain("ellipse");
+    expect(patch).toContain("rect");
+    expect(patch).toMatch(/HEAD:rect/);
+    over = resetEnemyItem(over, "raider");
+    const restored = effectiveEnemy("raider", over, true);
+    expect(restored.hitZones!.find((z) => z.id === "head")!.shape).toBe("ellipse");
+    expect(restored.hitZones!.find((z) => z.id === "head")!.damageMult).toBe(1.75);
+  });
+
+  it("canShoot false does not erase behavior LOS fields in overrides", () => {
+    const base = effectiveEnemy("raider", emptyWaveLabOverrides(), true).behavior!;
+    const over = setEnemyBehavior(emptyWaveLabOverrides(), "raider", {
+      ...base,
+      canShoot: false,
+      requireLosToShoot: true,
+      sightRange: 99,
+      targetMemoryMs: 2222,
+    });
+    const live = effectiveEnemy("raider", over, true).behavior!;
+    expect(live.canShoot).toBe(false);
+    expect(live.requireLosToShoot).toBe(true);
+    expect(live.sightRange).toBe(99);
+    expect(live.targetMemoryMs).toBe(2222);
   });
 });
 
