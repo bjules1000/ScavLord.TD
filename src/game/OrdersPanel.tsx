@@ -1,5 +1,6 @@
 /**
  * Compact contextual ORDERS editor for M9 bounded plans.
+ * Sidebar (default) or optional overlay chrome.
  */
 
 import type { OperatorOrder, OperatorPlan } from "./operatorPlans";
@@ -21,6 +22,8 @@ export type OrdersPanelProps = {
   operatorName: string;
   plan: OperatorPlan;
   editorMode: OrdersEditorMode;
+  /** sidebar = permanent raid chrome; overlay = legacy floating (unused). */
+  variant?: "sidebar" | "overlay";
   onAddPick: (type: "MOVE" | "RELOAD" | "HOLD_ANGLE") => void;
   onRequestAddMenu: () => void;
   onCancelAddMenu: () => void;
@@ -28,13 +31,14 @@ export type OrdersPanelProps = {
   onRemove: (index: number) => void;
   onClearAll: () => void;
   onDone: () => void;
-  onClose: () => void;
+  onClose?: () => void;
 };
 
 export function OrdersPanel({
   operatorName,
   plan,
   editorMode,
+  variant = "sidebar",
   onAddPick,
   onRequestAddMenu,
   onCancelAddMenu,
@@ -48,27 +52,38 @@ export function OrdersPanel({
   const holdLast = plan.orders[plan.orders.length - 1]?.type === "HOLD_ANGLE";
   const canAdd = !atCap && !holdLast && plan.state !== "EXECUTING";
   const showAddMenu = editorMode.kind === "pick_add";
+  const shell =
+    variant === "overlay"
+      ? "pointer-events-auto absolute z-30 min-w-[14rem] max-w-[18rem] border-2 border-border bg-background/95 p-2 shadow-lg backdrop-blur-[2px]"
+      : "w-full";
 
   return (
-    <div className="pointer-events-auto absolute z-30 min-w-[14rem] max-w-[18rem] border-2 border-border bg-background/95 p-2 shadow-lg backdrop-blur-[2px]">
+    <div className={shell}>
       <div className="flex items-start justify-between gap-2 border-b border-border pb-1">
         <div className="font-display text-[10px] text-primary">
-          {operatorName} — ORDERS
+          ORDERS
           {plan.state === "EXECUTING" ? (
-            <span className="ml-1 font-mono text-[9px] text-accent">EXEC</span>
+            <span className="ml-1 font-mono text-[9px] text-accent">EXECUTING</span>
           ) : plan.state === "PLANNED" && plan.orders.length > 0 ? (
             <span className="ml-1 font-mono text-[9px] text-muted-foreground">PLANNED</span>
+          ) : plan.state === "DONE" && plan.orders.length > 0 ? (
+            <span className="ml-1 font-mono text-[9px] text-muted-foreground">DONE</span>
           ) : null}
         </div>
-        <button type="button" className="pixel-btn px-1 py-0 text-[9px]" onClick={onClose}>
-          ×
-        </button>
+        <div className="flex items-center gap-1">
+          <span className="max-w-[6rem] truncate font-mono text-[8px] text-muted-foreground">
+            {operatorName}
+          </span>
+          {onClose && variant === "overlay" ? (
+            <button type="button" className="pixel-btn px-1 py-0 text-[9px]" onClick={onClose}>
+              ×
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <ol className="mt-2 space-y-1 font-mono text-[10px]">
-        {plan.orders.length === 0 && (
-          <li className="text-muted-foreground">NO COMMANDS — ADD OR RIGHT-CLICK TILE</li>
-        )}
+        {plan.orders.length === 0 && <li className="text-muted-foreground">NO PLAN</li>}
         {plan.orders.map((order, i) => {
           const status = orderRowStatus(plan, i);
           const mark =
@@ -77,11 +92,17 @@ export function OrdersPanel({
             <li
               key={`${i}-${order.type}`}
               className={`flex items-center gap-1 ${
-                status === "current" ? "text-primary" : status === "done" ? "text-muted-foreground" : "text-foreground"
+                status === "current"
+                  ? "text-primary"
+                  : status === "done"
+                    ? "text-muted-foreground"
+                    : "text-foreground"
               }`}
             >
               <span className="w-3 shrink-0 text-muted-foreground">{mark}</span>
-              <span className="w-5 shrink-0 text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
+              <span className="w-5 shrink-0 text-muted-foreground">
+                {String(i + 1).padStart(2, "0")}
+              </span>
               <span className="min-w-0 flex-1 truncate">{formatOrderRow(order)}</span>
               {plan.state !== "EXECUTING" && order.type !== "RELOAD" && (
                 <button
@@ -177,7 +198,9 @@ export function OrdersPanel({
       </div>
 
       {plan.orders.length > 0 && (
-        <p className="mt-1 font-mono text-[8px] text-muted-foreground">{plan.orders.map(orderShort).join(" > ")}</p>
+        <p className="mt-1 font-mono text-[8px] text-muted-foreground">
+          {plan.orders.map(orderShort).join(" > ")}
+        </p>
       )}
     </div>
   );
