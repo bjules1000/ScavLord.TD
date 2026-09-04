@@ -1,7 +1,14 @@
-import { useMemo, useState } from "react";
-import { ENEMIES } from "../data";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MAP_DEFS } from "../map";
-import type { EnemyKind } from "../types";
+import type { EnemyDef, EnemyKind } from "../types";
+import {
+  builtinBehaviorForKind,
+  derivedBehaviorSummary,
+  type EnemyBehaviorConfig,
+  type EnemyDamageReaction,
+  type EnemyObjective,
+} from "../enemyBehavior";
+import { cloneHitZones, defaultHitZones, resolveEnemyHitZones, type EnemyHitZone } from "../enemyHitZones";
 import { balanceToneBorderClass, balanceToneTextClass } from "./balance";
 import EnemyCompare from "./EnemyCompare";
 import MetricTrack from "./MetricTrack";
@@ -21,21 +28,28 @@ import {
   applyWaveLabOverrides,
   canonicalEnemy,
   canonicalWave,
+  createBlankEnemy,
+  deleteCustomEnemy,
+  duplicateEnemy,
   effectiveEnemy,
   effectiveWave,
   emptyWaveLabOverrides,
+  enemyBehaviorShortLabel,
   enemyCatalog,
   enemyEditorFields,
   enemyOverrideCount,
   formatWaveLabPatch,
   getWaveLabOverrides,
   isBossKind,
+  listAllEnemyKinds,
   mapLaneSummary,
   modifiedWaveLabCount,
   removeWaveGroup,
   resetEnemyItem,
   resetWaveItem,
+  setEnemyBehavior,
   setEnemyField,
+  setEnemyHitZones,
   setWaveName,
   updateWaveGroup,
   waveLabOverridesEqual,
@@ -49,6 +63,7 @@ const EDITOR_COLS =
   "grid-cols-[minmax(7rem,1fr)_minmax(3.5rem,0.5fr)_minmax(5rem,0.7fr)_minmax(6rem,0.8fr)_minmax(8rem,1.1fr)]";
 
 type EnemySubView = "editor" | "compare";
+type EnemyDetailTab = "stats" | "hitbox" | "behavior";
 
 function fieldNum(obj: object, key: string): number {
   const v = (obj as Record<string, unknown>)[key];
@@ -84,10 +99,18 @@ export default function WaveLab({
   const [compareMetric, setCompareMetric] = useState<EnemyMetricKey>("hp");
   const [compareSortDir, setCompareSortDir] = useState<"asc" | "desc">("desc");
   const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<EnemyDetailTab>("stats");
 
   const map = MAP_DEFS.find((m) => m.id === mapFilter) ?? MAP_DEFS[0]!;
-  const allEnemies = useMemo(() => allCanonicalEnemies(), []);
-  const list = view === "bosses" ? enemyCatalog(true) : enemyCatalog(false);
+  const allEnemies = useMemo(() => {
+    const byKind = new Map<string, EnemyDef>();
+    for (const e of allCanonicalEnemies()) byKind.set(e.kind, e);
+    for (const e of Object.values(draft.customEnemies ?? {})) byKind.set(e.kind, e);
+    return [...byKind.values()];
+  }, [draft.customEnemies]);
+  const list = view === "bosses" ? enemyCatalog(true, draft) : enemyCatalog(false, draft);
+  const kindOptions = listAllEnemyKinds(draft);
   const visibleEnemies = list.filter((e) => {
     const q = query.trim().toLowerCase();
     if (!q) return true;
@@ -110,7 +133,7 @@ export default function WaveLab({
   const draftDirty = !waveLabOverridesEqual(draft, applied);
 
   const liveKind = selectedKind;
-  const canonical = liveKind ? canonicalEnemy(liveKind) : undefined;
+  const canonical = liveKind ? canonicalEnemy(liveKind, draft) : undefined;
   const testEnemy = liveKind ? effectiveEnemy(liveKind, draft, true) : undefined;
   const derived = testEnemy && canonical ? { base: enemyDerived(canonical), test: enemyDerived(testEnemy) } : null;
 
@@ -299,9 +322,9 @@ export default function WaveLab({
                         setDraft((d) => updateWaveGroup(d, map, selectedWave, i, { kind: e.target.value as EnemyKind }))
                       }
                     >
-                      {Object.keys(ENEMIES).map((k) => (
+                      {kindOptions.map((k) => (
                         <option key={k} value={k}>
-                          {ENEMIES[k as EnemyKind]!.name}
+                          {effectiveEnemy(k, draft, true).name}
                         </option>
                       ))}
                     </select>
@@ -361,7 +384,7 @@ export default function WaveLab({
                 {totals.shares.map((s) => (
                   <div
                     key={s.kind}
-                    title={`${ENEMIES[s.kind]!.name} ${Math.round(s.share * 100)}%`}
+                    title={`${effectiveEnemy(s.kind, draft, true).name} ${Math.round(s.share * 100)}%`}
                     className="h-full bg-primary/70"
                     style={{ width: `${s.share * 100}%`, opacity: 0.4 + s.share }}
                   />
@@ -370,7 +393,7 @@ export default function WaveLab({
               <div className="mt-2 flex flex-wrap gap-2 font-mono text-[10px] text-muted-foreground">
                 {totals.shares.map((s) => (
                   <span key={s.kind}>
-                    {ENEMIES[s.kind]!.name.toUpperCase()} {Math.round(s.share * 100)}% ×{s.count}
+                    {effectiveEnemy(s.kind, draft, true).name.toUpperCase()} {Math.round(s.share * 100)}% ×{s.count}
                   </span>
                 ))}
               </div>
@@ -401,6 +424,51 @@ export default function WaveLab({
         ) : (
           <div className="mt-3 grid min-h-0 flex-1 gap-3 overflow-hidden md:grid-cols-[minmax(220px,0.26fr)_minmax(0,0.74fr)]">
             <div className="pixel-scrollbar min-h-0 overflow-auto border-2 border-border bg-background/50">
+              {view !== "bosses" && (
+                <div className="border-b border-border/70 p-2">
+                  <button
+                    type="button"
+                    className="pixel-btn pixel-btn-primary w-full px-3 py-2 text-[10px]"
+                    onClick={() => setAddMenuOpen((o) => !o)}
+                  >
+                    + ADD ENEMY
+                  </button>
+                  {addMenuOpen && (
+                    <div className="mt-2 space-y-1">
+                      <button
+                        type="button"
+                        className="pixel-btn w-full px-2 py-1.5 text-[9px]"
+                        disabled={!selectedKind}
+                        onClick={() => {
+                          if (!selectedKind) return;
+                          const r = duplicateEnemy(draft, selectedKind);
+                          setDraft(r.overrides);
+                          setSelectedKind(r.kind);
+                          setAddMenuOpen(false);
+                          setDetailTab("stats");
+                          setView(isBossKind(r.kind) ? "bosses" : "enemies");
+                        }}
+                      >
+                        DUPLICATE SELECTED
+                      </button>
+                      <button
+                        type="button"
+                        className="pixel-btn w-full px-2 py-1.5 text-[9px]"
+                        onClick={() => {
+                          const r = createBlankEnemy(draft);
+                          setDraft(r.overrides);
+                          setSelectedKind(r.kind);
+                          setAddMenuOpen(false);
+                          setDetailTab("stats");
+                          setView("enemies");
+                        }}
+                      >
+                        NEW BLANK
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               {visibleEnemies.length === 0 && view === "bosses" ? (
                 <div className="px-3 py-4 font-mono text-xs text-muted-foreground">NO BOSSES DEFINED</div>
               ) : (
@@ -408,6 +476,7 @@ export default function WaveLab({
                   const live = effectiveEnemy(e.kind, draft, true);
                   const active = selectedKind === e.kind;
                   const changed = enemyOverrideCount(draft, e.kind);
+                  const behaviorLine = enemyBehaviorShortLabel(live.behavior);
                   return (
                     <button
                       key={e.kind}
@@ -417,8 +486,11 @@ export default function WaveLab({
                       }`}
                       onClick={() => setSelectedKind(e.kind)}
                     >
-                      <span className="truncate">{live.name}</span>
-                      <span className="flex items-center gap-2 uppercase text-muted-foreground">
+                      <span className="min-w-0">
+                        <span className="block truncate">{live.name}</span>
+                        <span className="block truncate text-[10px] text-muted-foreground">{behaviorLine}</span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2 uppercase text-muted-foreground">
                         {changed > 0 && <span className="text-primary">● {changed}</span>}
                         <span>{e.kind}</span>
                       </span>
@@ -430,7 +502,7 @@ export default function WaveLab({
             <div className="pixel-scrollbar min-h-0 overflow-auto border-2 border-border bg-background/40 p-3 sm:p-4">
               {!canonical || !testEnemy ? (
                 <div className="font-mono text-sm text-muted-foreground">
-                  {view === "bosses" && enemyCatalog(true).length === 0
+                  {view === "bosses" && enemyCatalog(true, draft).length === 0
                     ? "NO BOSSES DEFINED"
                     : "Select an enemy to edit its draft stats."}
                 </div>
@@ -443,6 +515,13 @@ export default function WaveLab({
                   onDraft={setDraft}
                   benchOf={editorBench}
                   onOpenCompare={openCompareFromMetric}
+                  detailTab={detailTab}
+                  onDetailTab={setDetailTab}
+                  onDeleteCustom={() => {
+                    if (!selectedKind || !testEnemy.custom) return;
+                    setDraft(deleteCustomEnemy(draft, selectedKind));
+                    setSelectedKind(null);
+                  }}
                 />
               )}
             </div>
@@ -524,9 +603,12 @@ function EnemyEditor({
   onDraft,
   benchOf,
   onOpenCompare,
+  detailTab,
+  onDetailTab,
+  onDeleteCustom,
 }: {
-  canonical: ReturnType<typeof canonicalEnemy>;
-  test: ReturnType<typeof effectiveEnemy>;
+  canonical: EnemyDef;
+  test: EnemyDef;
   derived: { base: ReturnType<typeof enemyDerived>; test: ReturnType<typeof enemyDerived> } | null;
   draft: WaveLabOverrides;
   onDraft: (d: WaveLabOverrides) => void;
@@ -541,6 +623,9 @@ function EnemyEditor({
     domain: { min: number; max: number };
   } | null;
   onOpenCompare: (m: EnemyMetricKey) => void;
+  detailTab: EnemyDetailTab;
+  onDetailTab: (t: EnemyDetailTab) => void;
+  onDeleteCustom: () => void;
 }) {
   const nameChanged = test.name !== canonical.name;
   const metricForField: Record<string, EnemyMetricKey | null> = {
@@ -557,96 +642,408 @@ function EnemyEditor({
 
   return (
     <>
-      <div className="font-mono text-[11px] uppercase text-muted-foreground">Display name</div>
-      <input
-        value={test.name}
-        onChange={(e) => onDraft(setEnemyField(draft, canonical.kind, "name", e.target.value, canonical.name))}
-        className={`mt-1 w-full border-2 bg-background px-3 py-2 font-display text-sm text-primary ${
-          nameChanged ? "border-primary" : "border-border"
-        }`}
-      />
-      <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-        {canonical.kind}
-        {isBossKind(canonical.kind) ? " · boss" : ""} · all current enemies are ranged
+      <div className="flex flex-wrap items-center gap-2">
+        {(["stats", "hitbox", "behavior"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={`pixel-btn px-3 py-1.5 text-[10px] ${
+              detailTab === t ? "pixel-btn-primary" : "text-muted-foreground"
+            }`}
+            onClick={() => onDetailTab(t)}
+          >
+            {t === "hitbox" ? "HITBOX" : t.toUpperCase()}
+          </button>
+        ))}
+        {test.custom && (
+          <button type="button" className="pixel-btn ml-auto px-2 py-1.5 text-[9px]" onClick={onDeleteCustom}>
+            DELETE CUSTOM
+          </button>
+        )}
       </div>
 
-      <div className={`mt-5 grid items-center gap-x-3 font-mono text-[10px] uppercase tracking-wide text-muted-foreground ${EDITOR_COLS}`}>
-        <span>Stat</span>
-        <span>Base</span>
-        <span>Delta</span>
-        <span>Test value</span>
-        <span>Rank</span>
+      {detailTab === "stats" && (
+        <>
+          <div className="mt-4 font-mono text-[11px] uppercase text-muted-foreground">Display name</div>
+          <input
+            value={test.name}
+            onChange={(e) => onDraft(setEnemyField(draft, canonical.kind, "name", e.target.value, canonical.name))}
+            className={`mt-1 w-full border-2 bg-background px-3 py-2 font-display text-sm text-primary ${
+              nameChanged ? "border-primary" : "border-border"
+            }`}
+          />
+          <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+            {canonical.kind}
+            {isBossKind(canonical.kind) ? " · boss" : ""}
+            {test.custom ? " · custom" : ""}
+          </div>
+
+          <div
+            className={`mt-5 grid items-center gap-x-3 font-mono text-[10px] uppercase tracking-wide text-muted-foreground ${EDITOR_COLS}`}
+          >
+            <span>Stat</span>
+            <span>Base</span>
+            <span>Delta</span>
+            <span>Test value</span>
+            <span>Rank</span>
+          </div>
+          {enemyEditorFields().map((field) => {
+            const base = fieldNum(canonical, field.key);
+            const current = fieldNum(test, field.key);
+            const changed = current !== base;
+            const tone = enemyFieldTone(field.key, base, current);
+            const metric = metricForField[field.key];
+            const bench = metric ? benchOf(metric) : null;
+            return (
+              <div
+                key={field.key}
+                className={`mt-1 grid items-center gap-x-3 border-b border-border/60 py-2.5 font-mono text-sm ${EDITOR_COLS}`}
+              >
+                <span className={changed ? "text-foreground" : "text-muted-foreground"}>{field.label}</span>
+                <span className="text-muted-foreground">{base}</span>
+                <span
+                  className={
+                    changed ? (field.key === "bounty" ? "text-primary" : balanceToneTextClass(tone)) : "text-muted-foreground"
+                  }
+                >
+                  {changed ? `${current - base > 0 ? "+" : ""}${Math.round((current - base) * 1000) / 1000}` : "—"}
+                </span>
+                <input
+                  type="number"
+                  step={field.step}
+                  min={0}
+                  value={current}
+                  className={`border-2 bg-background px-2 py-1.5 ${
+                    field.key === "bounty"
+                      ? changed
+                        ? "border-primary"
+                        : "border-border"
+                      : balanceToneBorderClass(tone)
+                  }`}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (!Number.isFinite(n) || n < 0) return;
+                    onDraft(setEnemyField(draft, canonical.kind, field.key, n, base));
+                  }}
+                />
+                {bench ? (
+                  <button
+                    type="button"
+                    className="flex min-w-0 items-center gap-2 text-left"
+                    onClick={() => metric && onOpenCompare(metric)}
+                  >
+                    <div className="min-w-[4.25rem] flex-1">
+                      <MetricTrack
+                        compact
+                        min={bench.domain.min}
+                        max={bench.domain.max}
+                        markers={
+                          bench.changed
+                            ? [
+                                { kind: "base", value: bench.base, title: `BASE ${bench.base}` },
+                                { kind: "test", value: bench.test, title: `TEST ${bench.test}` },
+                              ]
+                            : [{ kind: "test", value: bench.test, title: String(bench.test) }]
+                        }
+                      />
+                    </div>
+                    <span className="shrink-0 whitespace-nowrap font-mono text-[10px] text-muted-foreground">
+                      {formatEnemyRank(bench.testRank, bench.total, bench.changed ? bench.baseRank : undefined)}
+                    </span>
+                  </button>
+                ) : (
+                  <span />
+                )}
+              </div>
+            );
+          })}
+
+          {derived && (
+            <div className="mt-6 border-t-2 border-border pt-4">
+              <div className="font-display text-[11px] text-primary">DERIVED</div>
+              <DerivedRow
+                label="Attacks / sec"
+                base={derived.base.attacksPerSec}
+                test={derived.test.attacksPerSec}
+                fmt={(n) => n.toFixed(2)}
+              />
+              <DerivedRow label="Operator DPS" base={derived.base.dps} test={derived.test.dps} fmt={(n) => n.toFixed(1)} />
+              <DerivedRow
+                label="EHP vs 10-dmg 0-pen"
+                base={derived.base.ehpVs10}
+                test={derived.test.ehpVs10}
+                fmt={(n) => n.toFixed(1)}
+              />
+              <DerivedRow
+                label="Bounty / HP"
+                base={derived.base.bountyPerHp}
+                test={derived.test.bountyPerHp}
+                fmt={(n) => n.toFixed(2)}
+                tone="neutral"
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      {detailTab === "hitbox" && (
+        <HitboxEditor
+          kind={canonical.kind}
+          test={test}
+          draft={draft}
+          onDraft={onDraft}
+        />
+      )}
+
+      {detailTab === "behavior" && (
+        <BehaviorEditor kind={canonical.kind} test={test} draft={draft} onDraft={onDraft} />
+      )}
+    </>
+  );
+}
+
+const ZONE_COLORS: Record<string, string> = {
+  head: "#e85d4c",
+  body: "#5a9fd4",
+  legs: "#7bc96f",
+};
+
+function HitboxEditor({
+  kind,
+  test,
+  draft,
+  onDraft,
+}: {
+  kind: EnemyKind;
+  test: EnemyDef;
+  draft: WaveLabOverrides;
+  onDraft: (d: WaveLabOverrides) => void;
+}) {
+  const zones = resolveEnemyHitZones(test.hitZones ?? defaultHitZones());
+  const [selectedZone, setSelectedZone] = useState(zones[0]?.id ?? "body");
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const zone = zones.find((z) => z.id === selectedZone) ?? zones[0];
+
+  useEffect(() => {
+    if (!zones.some((z) => z.id === selectedZone) && zones[0]) setSelectedZone(zones[0].id);
+  }, [zones, selectedZone]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#1a1814";
+    ctx.fillRect(0, 0, W, H);
+    const pad = 16;
+    const bw = W - pad * 2;
+    const bh = H - pad * 2;
+    // silhouette
+    ctx.fillStyle = test.body || "#8a7a5c";
+    ctx.fillRect(pad + bw * 0.28, pad + bh * 0.08, bw * 0.44, bh * 0.82);
+    ctx.fillStyle = test.gear || "#4b4030";
+    ctx.fillRect(pad + bw * 0.32, pad + bh * 0.0, bw * 0.36, bh * 0.22);
+    for (const z of zones) {
+      const x = pad + z.x * bw;
+      const y = pad + z.y * bh;
+      const w = z.width * bw;
+      const h = z.height * bh;
+      ctx.strokeStyle = ZONE_COLORS[z.id] ?? "#ffd166";
+      ctx.lineWidth = z.id === selectedZone ? 3 : 1.5;
+      ctx.globalAlpha = z.enabled ? 0.9 : 0.35;
+      if (z.shape === "ellipse") {
+        ctx.beginPath();
+        ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = ZONE_COLORS[z.id] ?? "#ffd166";
+        ctx.globalAlpha = z.enabled ? 0.18 : 0.06;
+        ctx.fill();
+      } else {
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = ZONE_COLORS[z.id] ?? "#ffd166";
+        ctx.globalAlpha = z.enabled ? 0.18 : 0.06;
+        ctx.fillRect(x, y, w, h);
+      }
+      ctx.globalAlpha = 1;
+    }
+  }, [zones, selectedZone, test.body, test.gear]);
+
+  const patchZone = (patch: Partial<EnemyHitZone>) => {
+    if (!zone) return;
+    const next = cloneHitZones(zones).map((z) => (z.id === zone.id ? { ...z, ...patch } : z));
+    onDraft(setEnemyHitZones(draft, kind, next));
+  };
+
+  return (
+    <div className="mt-4">
+      <div className="font-display text-[11px] text-primary">HIT ZONES</div>
+      <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+        Size {test.size} · normalized rects over silhouette
       </div>
-      {enemyEditorFields().map((field) => {
-        const base = fieldNum(canonical, field.key);
-        const current = fieldNum(test, field.key);
-        const changed = current !== base;
-        const tone = enemyFieldTone(field.key, base, current);
-        const metric = metricForField[field.key];
-        const bench = metric ? benchOf(metric) : null;
-        return (
-          <div key={field.key} className={`mt-1 grid items-center gap-x-3 border-b border-border/60 py-2.5 font-mono text-sm ${EDITOR_COLS}`}>
-            <span className={changed ? "text-foreground" : "text-muted-foreground"}>{field.label}</span>
-            <span className="text-muted-foreground">{base}</span>
-            <span className={changed ? (field.key === "bounty" ? "text-primary" : balanceToneTextClass(tone)) : "text-muted-foreground"}>
-              {changed ? `${current - base > 0 ? "+" : ""}${Math.round((current - base) * 1000) / 1000}` : "—"}
-            </span>
+      <canvas ref={canvasRef} width={180} height={240} className="mt-3 border-2 border-border bg-background" />
+      <div className="mt-3 flex flex-wrap gap-2">
+        {zones.map((z) => (
+          <button
+            key={z.id}
+            type="button"
+            className={`pixel-btn px-3 py-1.5 text-[10px] ${
+              selectedZone === z.id ? "pixel-btn-primary" : "text-muted-foreground"
+            }`}
+            onClick={() => setSelectedZone(z.id)}
+          >
+            {z.displayName}
+          </button>
+        ))}
+      </div>
+      {zone && (
+        <div className="mt-4 grid grid-cols-2 gap-2 font-mono text-sm sm:grid-cols-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase text-muted-foreground">Damage mult</span>
             <input
               type="number"
-              step={field.step}
+              step={0.05}
               min={0}
-              value={current}
-              className={`border-2 bg-background px-2 py-1.5 ${
-                field.key === "bounty" ? (changed ? "border-primary" : "border-border") : balanceToneBorderClass(tone)
-              }`}
+              value={zone.damageMult}
+              className="border-2 border-border bg-background px-2 py-1"
               onChange={(e) => {
                 const n = Number(e.target.value);
                 if (!Number.isFinite(n) || n < 0) return;
-                onDraft(setEnemyField(draft, canonical.kind, field.key, n, base));
+                patchZone({ damageMult: n });
               }}
             />
-            {bench ? (
-              <button
-                type="button"
-                className="flex min-w-0 items-center gap-2 text-left"
-                onClick={() => metric && onOpenCompare(metric)}
-              >
-                <div className="min-w-[4.25rem] flex-1">
-                  <MetricTrack
-                    compact
-                    min={bench.domain.min}
-                    max={bench.domain.max}
-                    markers={
-                      bench.changed
-                        ? [
-                            { kind: "base", value: bench.base, title: `BASE ${bench.base}` },
-                            { kind: "test", value: bench.test, title: `TEST ${bench.test}` },
-                          ]
-                        : [{ kind: "test", value: bench.test, title: String(bench.test) }]
-                    }
-                  />
-                </div>
-                <span className="shrink-0 whitespace-nowrap font-mono text-[10px] text-muted-foreground">
-                  {formatEnemyRank(bench.testRank, bench.total, bench.changed ? bench.baseRank : undefined)}
-                </span>
-              </button>
-            ) : (
-              <span />
-            )}
-          </div>
-        );
-      })}
-
-      {derived && (
-        <div className="mt-6 border-t-2 border-border pt-4">
-          <div className="font-display text-[11px] text-primary">DERIVED</div>
-          <DerivedRow label="Attacks / sec" base={derived.base.attacksPerSec} test={derived.test.attacksPerSec} fmt={(n) => n.toFixed(2)} />
-          <DerivedRow label="Operator DPS" base={derived.base.dps} test={derived.test.dps} fmt={(n) => n.toFixed(1)} />
-          <DerivedRow label="EHP vs 10-dmg 0-pen" base={derived.base.ehpVs10} test={derived.test.ehpVs10} fmt={(n) => n.toFixed(1)} />
-          <DerivedRow label="Bounty / HP" base={derived.base.bountyPerHp} test={derived.test.bountyPerHp} fmt={(n) => n.toFixed(2)} tone="neutral" />
+          </label>
+          <label className="flex items-end gap-2 pb-1">
+            <input
+              type="checkbox"
+              checked={zone.enabled}
+              onChange={(e) => patchZone({ enabled: e.target.checked })}
+            />
+            <span className="text-[10px] uppercase text-muted-foreground">Enabled</span>
+          </label>
+          {(["x", "y", "width", "height"] as const).map((key) => (
+            <label key={key} className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase text-muted-foreground">{key}</span>
+              <input
+                type="number"
+                step={0.01}
+                min={0}
+                max={1}
+                value={zone[key]}
+                className="border-2 border-border bg-background px-2 py-1"
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (!Number.isFinite(n)) return;
+                  patchZone({ [key]: Math.max(0, Math.min(1, n)) });
+                }}
+              />
+            </label>
+          ))}
         </div>
       )}
-    </>
+    </div>
+  );
+}
+
+function BehaviorEditor({
+  kind,
+  test,
+  draft,
+  onDraft,
+}: {
+  kind: EnemyKind;
+  test: EnemyDef;
+  draft: WaveLabOverrides;
+  onDraft: (d: WaveLabOverrides) => void;
+}) {
+  const behavior = test.behavior ?? builtinBehaviorForKind(kind);
+  const lines = derivedBehaviorSummary(behavior);
+
+  const set = (patch: Partial<EnemyBehaviorConfig>) => {
+    onDraft(setEnemyBehavior(draft, kind, { ...behavior, ...patch }));
+  };
+
+  return (
+    <div className="mt-4">
+      <div className="font-display text-[11px] text-primary">BEHAVIOR</div>
+      <div className="mt-3 grid grid-cols-1 gap-2 font-mono text-sm sm:grid-cols-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase text-muted-foreground">Objective</span>
+          <select
+            className="border-2 border-border bg-background px-2 py-1"
+            value={behavior.objective}
+            onChange={(e) => set({ objective: e.target.value as EnemyObjective })}
+          >
+            <option value="ADVANCE">ADVANCE</option>
+            <option value="LOOT_ESCAPE">LOOT_ESCAPE</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase text-muted-foreground">On damage</span>
+          <select
+            className="border-2 border-border bg-background px-2 py-1"
+            value={behavior.onDamage}
+            onChange={(e) => set({ onDamage: e.target.value as EnemyDamageReaction })}
+          >
+            {(["NONE", "SPEED_UP", "SLOW_DOWN", "REVERSE_BRIEFLY", "REROUTE"] as const).map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+        {(
+          [
+            ["canShoot", "Can shoot"],
+            ["requireLosToShoot", "Require LOS"],
+            ["fireWhileMoving", "Fire while moving"],
+          ] as const
+        ).map(([key, label]) => (
+          <label key={key} className="flex items-center gap-2">
+            <input type="checkbox" checked={behavior[key]} onChange={(e) => set({ [key]: e.target.checked })} />
+            <span className="text-[10px] uppercase text-muted-foreground">{label}</span>
+          </label>
+        ))}
+        {(
+          [
+            ["sightRange", "Sight range", 1],
+            ["normalSpeedMult", "Normal speed mult", 0.05],
+            ["engagedSpeedMult", "Engaged speed mult", 0.05],
+            ["lostTargetSpeedMult", "Lost target speed mult", 0.05],
+            ["targetMemoryMs", "Target memory ms", 50],
+            ["onDamageSpeedMult", "On-damage speed mult", 0.05],
+            ["onDamageDurationMs", "On-damage duration ms", 50],
+            ["rerouteChance", "Reroute chance", 0.05],
+          ] as const
+        ).map(([key, label, step]) => (
+          <label key={key} className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase text-muted-foreground">{label}</span>
+            <input
+              type="number"
+              step={step}
+              min={0}
+              value={behavior[key]}
+              className="border-2 border-border bg-background px-2 py-1"
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!Number.isFinite(n) || n < 0) return;
+                set({ [key]: n });
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="mt-5 border-t-2 border-border pt-4">
+        <div className="font-display text-[11px] text-primary">DERIVED BEHAVIOR</div>
+        <ul className="mt-2 space-y-1 font-mono text-[11px] text-muted-foreground">
+          {lines.map((line) => (
+            <li key={line}>· {line}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 

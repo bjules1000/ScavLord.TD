@@ -15,6 +15,7 @@ import {
   applyWaveLabOverrides,
   canonicalEnemy,
   canonicalWave,
+  duplicateEnemy,
   effectiveEnemy,
   effectiveWave,
   emptyWaveLabOverrides,
@@ -151,6 +152,27 @@ describe("Wave Lab enemies", () => {
     const store = memStore({ [WAVE_LAB_STORAGE_KEY]: JSON.stringify(over) });
     expect(loadWaveLabOverrides(false, store)).toEqual(emptyWaveLabOverrides());
   });
+
+  it("duplicate creates new id and copies hitZones/behavior", () => {
+    const src = emptyWaveLabOverrides();
+    const { overrides, kind } = duplicateEnemy(src, "raider");
+    expect(kind).toBe("raider_copy_1");
+    expect(kind).not.toBe("raider");
+    const live = effectiveEnemy(kind, overrides, true);
+    const base = effectiveEnemy("raider", src, true);
+    expect(live.custom).toBe(true);
+    expect(live.hitZones).toEqual(base.hitZones);
+    expect(live.behavior).toEqual(base.behavior);
+    expect(overrides.customEnemies[kind]?.kind).toBe(kind);
+  });
+
+  it("rename displayName keeps id", () => {
+    const { overrides, kind } = duplicateEnemy(emptyWaveLabOverrides(), "scav");
+    const renamed = setEnemyField(overrides, kind, "name", "Renamed Scav", overrides.customEnemies[kind]!.name);
+    expect(effectiveEnemy(kind, renamed, true).name).toBe("Renamed Scav");
+    expect(effectiveEnemy(kind, renamed, true).kind).toBe(kind);
+    expect(Object.keys(renamed.customEnemies)).toEqual([kind]);
+  });
 });
 
 describe("Wave Lab waves", () => {
@@ -177,14 +199,14 @@ describe("Wave Lab waves", () => {
     const scale = waveScale(3);
     let hp = 0;
     for (const g of w.groups) {
-      hp += Math.round(ENEMIES[g.kind].hp * scale.hp * woods.hpMult) * g.count;
+      hp += Math.round(ENEMIES[g.kind]!.hp * scale.hp * woods.hpMult) * g.count;
     }
     expect(waveTotals(woods, 3, emptyWaveLabOverrides(), true).hp).toBe(hp);
   });
 
   it("total bounty is correct", () => {
     const w = canonicalWave(woods, 3);
-    const bounty = w.groups.reduce((a, g) => a + ENEMIES[g.kind].bounty * g.count, 0);
+    const bounty = w.groups.reduce((a, g) => a + ENEMIES[g.kind]!.bounty * g.count, 0);
     expect(waveTotals(woods, 3, emptyWaveLabOverrides(), true).bounty).toBe(bounty);
   });
 
@@ -262,7 +284,7 @@ describe("TEST WAVE", () => {
     const r = requestTestWave(true, true, "woods", 3, draft);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.events.every((e) => e.kind === "scav" || effectiveEnemy(e.kind, draft, true).hp === ENEMIES[e.kind].hp)).toBe(
+    expect(r.events.every((e) => e.kind === "scav" || effectiveEnemy(e.kind, draft, true).hp === ENEMIES[e.kind]!.hp)).toBe(
       true,
     );
     expect(effectiveEnemy("scav", draft, true).hp).toBe(200);
