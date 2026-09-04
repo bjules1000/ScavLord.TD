@@ -54,20 +54,32 @@ import {
 } from "./battleTime";
 import { clearOperatorOrders, dispatchOperatorCommand } from "./operatorCommands";
 import {
-  authoringForOperator,
   beginPauseReloadSession,
   canCancelPausedReload,
   createPauseReloadSession,
-  hasMoveIntent,
-  holdPlanEmphasis,
-  isHoldingAngle,
-  movementPlanEmphasis,
   noteReloadAuthoredInPause,
-  operatorPlanBadge,
-  reloadPlanLabelVisible,
-  type CommandAuthoringState,
   type PauseReloadSession,
 } from "./tacticalCommandUi";
+import {
+  appendOrder,
+  beginPlanExecution,
+  clearAllPlans,
+  clearFutureOrders,
+  clearPlan,
+  createEmptyPlan,
+  onMoveStepComplete,
+  onReloadTickComplete,
+  planMoveWaypoints,
+  planSummary,
+  removeOrderAt,
+  replaceOrderAt,
+  resolveLeftClickMovePlan,
+  setPlan,
+  startAllPlanned,
+  type OperatorPlan,
+  type OperatorPlanBook,
+} from "./operatorPlans";
+import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -689,18 +701,25 @@ export default function TarkovTD() {
   const [choices, setChoices] = useState<Item[]>([]);
   const [pendingLoot, setPendingLoot] = useState<Item | null>(null);
   const [swapUid, setSwapUid] = useState<number | null>(null);
-  const [commandAuthoring, setCommandAuthoring] = useState<CommandAuthoringState>(null);
-  const commandAuthoringRef = useRef<CommandAuthoringState>(null);
-  const setAuthoring = useCallback((next: CommandAuthoringState) => {
-    commandAuthoringRef.current = next;
-    setCommandAuthoring(next);
-  }, []);
+  const [ordersOpenFor, setOrdersOpenFor] = useState<number | null>(null);
+  const [ordersDraft, setOrdersDraft] = useState<OperatorPlan>(() => createEmptyPlan());
+  const [ordersEditorMode, setOrdersEditorMode] = useState<OrdersEditorMode>({ kind: "idle" });
+  const ordersEditorModeRef = useRef<OrdersEditorMode>({ kind: "idle" });
+  const planBookRef = useRef<OperatorPlanBook>(new Map());
   const battleTimeRef = useRef<BattleTimeState>(createBattleTimeState());
   const pauseReloadSessionRef = useRef<PauseReloadSession>(createPauseReloadSession());
   const [battleTimeMode, setBattleTimeModeUi] = useState<BattleTimeMode>("NORMAL");
   const syncBattleTimeUi = useCallback(() => {
     setBattleTimeModeUi(battleTimeRef.current.mode);
   }, []);
+  const setOrdersMode = useCallback((mode: OrdersEditorMode) => {
+    ordersEditorModeRef.current = mode;
+    setOrdersEditorMode(mode);
+  }, []);
+  const closeOrdersUi = useCallback(() => {
+    setOrdersOpenFor(null);
+    setOrdersMode({ kind: "idle" });
+  }, [setOrdersMode]);
   const applyBattleTimeMode = useCallback(
     (mode: BattleTimeMode) => {
       const prev = battleTimeRef.current.mode;
@@ -708,11 +727,15 @@ export default function TarkovTD() {
       if (mode === "PAUSED" && prev !== "PAUSED") {
         pauseReloadSessionRef.current = beginPauseReloadSession(pauseReloadSessionRef.current);
       }
-      if (mode !== "PAUSED") setAuthoring(null);
+      if (prev === "PAUSED" && mode !== "PAUSED") {
+        startAllPlanned(planBookRef.current, gs.current.towers, mapRef.current);
+        closeOrdersUi();
+      }
+      if (mode !== "PAUSED") setOrdersMode({ kind: "idle" });
       syncBattleTimeUi();
       rerender();
     },
-    [rerender, setAuthoring, syncBattleTimeUi],
+    [closeOrdersUi, rerender, setOrdersMode, syncBattleTimeUi],
   );
   const [sellValuableUids, setSellValuableUids] = useState<Set<number>>(() => new Set());
   const [leaveUids, setLeaveUids] = useState<Set<number>>(() => new Set());
@@ -842,9 +865,11 @@ export default function TarkovTD() {
       `${m.pmc.name} inserted at ${mapRef.current.def.name}${crewNote}. Keep them alive — if they die, the run is over for good.`,
     ]);
     battleTimeRef.current = resetBattleTimeState(true);
+    clearAllPlans(planBookRef.current);
+    closeOrdersUi();
     syncBattleTimeUi();
     rerender();
-  }, [deployOperatorIds, loadout, persist, rerender, stash, syncBattleTimeUi]);
+  }, [closeOrdersUi, deployOperatorIds, loadout, persist, rerender, stash, syncBattleTimeUi]);
 
   const toHideout = useCallback(
     (keepBackpack: boolean) => {
@@ -920,10 +945,12 @@ export default function TarkovTD() {
       setLeaveUids(new Set());
       setScreen("hideout");
       battleTimeRef.current = resetBattleTimeState(true);
+      clearAllPlans(planBookRef.current);
+      closeOrdersUi();
       syncBattleTimeUi();
       rerender();
     },
-    [leaveUids, pushLog, rerender, sellValuableUids, stash, stashSlots, syncBattleTimeUi],
+    [closeOrdersUi, leaveUids, pushLog, rerender, sellValuableUids, stash, stashSlots, syncBattleTimeUi],
   );
 
 
@@ -1708,7 +1735,15 @@ export default function TarkovTD() {
 
       // towers move, then fire (moving operators cannot shoot)
       for (const t of s.towers) {
-        if (isOperatorMoving(t)) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
+        const wasMoving = isOperatorMoving(t);
+        if (wasMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
+        {
+          const plan = planBookRef.current.get(t.id);
+          if (plan) {
+            const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers }, wasMoving);
+            if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
+          }
+        }
         const st = towerStats(t, mods, mapRef.current, metaRef.current);
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
@@ -1753,6 +1788,7 @@ export default function TarkovTD() {
         if (!moving && t.targetMode === "MANUAL" && t.manualTargetId != null && !locked) {
           t.manualTargetId = null;
         }
+        const prevReloadLeft = t.reloadLeft;
         const reloaded = tickReload(
           t.ammo,
           t.reloadLeft,
@@ -1764,6 +1800,18 @@ export default function TarkovTD() {
         );
         t.ammo = reloaded.ammo;
         t.reloadLeft = reloaded.reloadLeft;
+        {
+          const plan = planBookRef.current.get(t.id);
+          if (plan) {
+            const step = onReloadTickComplete(
+              t,
+              plan,
+              { map: mapRef.current, towers: s.towers },
+              prevReloadLeft,
+            );
+            if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
+          }
+        }
         t.engageTargetId = t.targetMode === "MANUAL" ? (locked?.id ?? null) : (best?.id ?? null);
 
         // Update aim direction
@@ -2209,14 +2257,7 @@ export default function TarkovTD() {
         const coneHalf = getShotDispersion(st.accuracy);
         const aimAngle = sel.angle;
         const coneLen = st.range;
-        const pausedNow = battleTimeRef.current.mode === "PAUSED";
-        const holdEmph = holdPlanEmphasis({
-          paused: pausedNow,
-          selected: true,
-          holding: isHoldingAngle(sel),
-        });
-        const showSelectedCone = !pausedNow || holdEmph === "selected" || sel.targetMode !== "HOLD_ANGLE";
-        if (showSelectedCone) {
+        {
           ctx.beginPath();
           ctx.moveTo(pos.x, pos.y);
           ctx.arc(pos.x, pos.y, coneLen, aimAngle - coneHalf, aimAngle + coneHalf);
@@ -2239,31 +2280,8 @@ export default function TarkovTD() {
           ctx.stroke();
           ctx.lineWidth = 1;
         }
-        // Selected move path crumbs only while paused (strong plan) or subtle while executing
-        const selMoveEmph = movementPlanEmphasis({
-          paused: pausedNow,
-          selected: true,
-          hasMoveIntent: hasMoveIntent(sel),
-        });
-        if (selMoveEmph !== "hidden" && sel.move?.path.length) {
-          ctx.fillStyle =
-            selMoveEmph === "selected"
-              ? "rgba(125,220,90,0.55)"
-              : "rgba(110,220,255,0.22)";
-          for (const step of sel.move.path) {
-            const c = { x: step.tx * TILE + TILE / 2, y: step.ty * TILE + TILE / 2 };
-            const sz = selMoveEmph === "selected" ? 4 : 2;
-            ctx.fillRect(c.x - sz / 2, c.y - sz / 2, sz, sz);
-          }
-        }
-        const authoring = commandAuthoringRef.current;
-        if (
-          authoring &&
-          authoring.operatorId === sel.id &&
-          authoring.mode === "MOVE" &&
-          !s.place &&
-          s.hoverTx >= 0
-        ) {
+        const oMode = ordersEditorModeRef.current;
+        if (oMode.kind === "author_move" && !s.place && s.hoverTx >= 0) {
           const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), s.hoverTx, s.hoverTy);
           const path = dest ? findOperatorPath(mapRef.current, logicalNode(sel), dest) : null;
           const ok = !!dest && !!path;
@@ -2271,23 +2289,8 @@ export default function TarkovTD() {
           ctx.setLineDash([4, 4]);
           ctx.strokeRect(s.hoverTx * TILE + 2, s.hoverTy * TILE + 2, TILE - 4, TILE - 4);
           ctx.setLineDash([]);
-          if (ok && path && path.length > 1) {
-            ctx.beginPath();
-            ctx.moveTo(pos.x, pos.y);
-            for (const step of path) {
-              ctx.lineTo(step.tx * TILE + TILE / 2, step.ty * TILE + TILE / 2);
-            }
-            ctx.strokeStyle = "rgba(125,220,90,0.55)";
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-          }
         }
-        if (
-          authoring &&
-          authoring.operatorId === sel.id &&
-          authoring.mode === "HOLD_ANGLE" &&
-          s.hoverTx >= 0
-        ) {
+        if (oMode.kind === "author_hold" && s.hoverTx >= 0) {
           const worldX = s.hoverTx * TILE + TILE / 2;
           const worldY = s.hoverTy * TILE + TILE / 2;
           const ang = Math.atan2(worldY - pos.y + 4, worldX - pos.x);
@@ -2300,68 +2303,91 @@ export default function TarkovTD() {
         }
       }
 
-      // Squad planning overlays — full plan while PAUSED; selected-only subtle while live
+      // Squad order-plan overlays — detailed while PAUSED; selected subtle while live
       {
         const pausedNow = battleTimeRef.current.mode === "PAUSED";
         for (const t of s.towers) {
+          const plan = planBookRef.current.get(t.id);
+          if (!plan || plan.orders.length === 0) continue;
+          if (!pausedNow && t.id !== s.selectedId) continue;
+          if (!pausedNow && plan.state === "DONE") continue;
           const pos = towerPos(t);
-          const selected = t.id === s.selectedId;
-          const moveEmph = movementPlanEmphasis({
-            paused: pausedNow,
-            selected,
-            hasMoveIntent: hasMoveIntent(t),
-          });
-          if (moveEmph !== "hidden" && t.move?.dest) {
-            const dest = t.move.dest;
-            const dx = dest.tx * TILE + TILE / 2;
-            const dy = dest.ty * TILE + TILE / 2;
-            const strong = moveEmph === "selected";
-            const subtle = moveEmph === "subtle";
-            ctx.beginPath();
-            ctx.moveTo(pos.x, pos.y);
-            if (t.move.path.length) {
-              for (const step of t.move.path) {
-                ctx.lineTo(step.tx * TILE + TILE / 2, step.ty * TILE + TILE / 2);
-              }
+          const strong = pausedNow && t.id === s.selectedId;
+          const subdued = pausedNow && t.id !== s.selectedId;
+          const subtle = !pausedNow && t.id === s.selectedId;
+          const moves = planMoveWaypoints(plan);
+          let prevX = pos.x;
+          let prevY = pos.y;
+          let moveNum = 0;
+          for (const order of plan.orders) {
+            if (order.type === "MOVE") {
+              moveNum += 1;
+              const dx = order.tx * TILE + TILE / 2;
+              const dy = order.ty * TILE + TILE / 2;
+              ctx.beginPath();
+              ctx.moveTo(prevX, prevY);
+              ctx.lineTo(dx, dy);
+              ctx.strokeStyle = strong
+                ? "rgba(125,220,90,0.9)"
+                : subtle
+                  ? "rgba(110,220,255,0.35)"
+                  : "rgba(125,220,90,0.35)";
+              ctx.setLineDash(subtle || subdued ? [4, 4] : []);
+              ctx.lineWidth = strong ? 2 : 1.25;
+              ctx.stroke();
+              ctx.setLineDash([]);
+              const mark = strong ? 5 : 3;
+              ctx.fillStyle = strong ? "rgba(125,220,90,0.95)" : "rgba(125,220,90,0.45)";
+              ctx.fillRect(dx - mark, dy - mark, mark * 2, mark * 2);
+              ctx.fillStyle = strong ? "#0a0c08" : "rgba(10,12,8,0.7)";
+              ctx.font = "bold 8px monospace";
+              ctx.textAlign = "center";
+              ctx.fillText(String(moveNum), dx, dy + 3);
+              prevX = dx;
+              prevY = dy;
+            } else if (order.type === "RELOAD" && pausedNow) {
+              ctx.fillStyle = strong ? "rgba(240,180,0,0.95)" : "rgba(240,180,0,0.5)";
+              ctx.font = "bold 8px monospace";
+              ctx.textAlign = "left";
+              ctx.fillText("RLD", prevX + 6, prevY - 8);
+            } else if (order.type === "HOLD_ANGLE") {
+              const len = TILE * (strong ? 2.6 : 2);
+              ctx.beginPath();
+              ctx.moveTo(prevX, prevY);
+              ctx.lineTo(prevX + Math.cos(order.angle) * len, prevY + Math.sin(order.angle) * len);
+              ctx.strokeStyle = strong ? "rgba(232,140,48,0.85)" : "rgba(232,140,48,0.4)";
+              ctx.lineWidth = strong ? 2 : 1.25;
+              ctx.stroke();
             }
-            ctx.lineTo(dx, dy);
-            ctx.strokeStyle = strong
-              ? "rgba(125,220,90,0.9)"
-              : subtle
-                ? "rgba(110,220,255,0.35)"
-                : "rgba(125,220,90,0.35)";
-            ctx.setLineDash(subtle ? [3, 5] : strong ? [] : [5, 4]);
-            ctx.lineWidth = strong ? 2.25 : subtle ? 1 : 1.25;
-            ctx.stroke();
-            ctx.setLineDash([]);
-            const mark = strong ? 5 : subtle ? 3 : 3.5;
-            ctx.fillStyle = strong
-              ? "rgba(125,220,90,0.95)"
-              : subtle
-                ? "rgba(110,220,255,0.45)"
-                : "rgba(125,220,90,0.45)";
-            ctx.fillRect(dx - mark, dy - mark, mark * 2, mark * 2);
           }
-
-          const hEmph = holdPlanEmphasis({
-            paused: pausedNow,
-            selected,
-            holding: isHoldingAngle(t),
-          });
-          if (hEmph === "squad" && t.holdAngle != null) {
-            const len = TILE * 2.2;
-            ctx.beginPath();
-            ctx.moveTo(pos.x, pos.y);
-            ctx.lineTo(pos.x + Math.cos(t.holdAngle) * len, pos.y + Math.sin(t.holdAngle) * len);
-            ctx.strokeStyle = "rgba(232,140,48,0.4)";
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-          }
-
-          if (reloadPlanLabelVisible(pausedNow, t.reloadLeft)) {
-            ctx.fillStyle = "rgba(240,180,0,0.9)";
+          if (pausedNow && moves.length === 0 && plan.orders.some((o) => o.type === "RELOAD")) {
+            ctx.fillStyle = strong ? "rgba(240,180,0,0.95)" : "rgba(240,180,0,0.5)";
             ctx.font = "bold 8px monospace";
             ctx.fillText("RLD", pos.x - 8, pos.y - TILE / 2 - 6);
+          }
+          const sum = planSummary(plan);
+          if (sum && pausedNow) {
+            ctx.fillStyle = strong ? "rgba(200,220,180,0.95)" : "rgba(160,180,140,0.55)";
+            ctx.font = "7px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(sum, pos.x, pos.y - TILE / 2 - 14);
+          }
+        }
+        if (!pausedNow) {
+          const selLive = s.towers.find((t) => t.id === s.selectedId);
+          if (selLive?.move?.dest) {
+            const pos = towerPos(selLive);
+            const dest = selLive.move.dest;
+            const dx = dest.tx * TILE + TILE / 2;
+            const dy = dest.ty * TILE + TILE / 2;
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            ctx.lineTo(dx, dy);
+            ctx.strokeStyle = "rgba(110,220,255,0.35)";
+            ctx.setLineDash([3, 5]);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
           }
         }
       }
@@ -2493,30 +2519,61 @@ export default function TarkovTD() {
       s.selectedId = existing.id === s.selectedId ? null : existing.id;
       s.selectedObstacle = null;
       s.place = null;
-      setAuthoring(null);
+      setOrdersMode({ kind: "idle" });
       rerender();
       return;
     }
 
-    // HOLD_ANGLE authoring: click on battlefield to set fixed aim direction
-    const holdAuth =
-      commandAuthoringRef.current?.mode === "HOLD_ANGLE" ? commandAuthoringRef.current : null;
-    if (holdAuth) {
-      const sel = s.towers.find((t) => t.id === holdAuth.operatorId);
+    // Orders editor authoring: MOVE destination / HOLD direction
+    const oMode = ordersEditorModeRef.current;
+    if (oMode.kind === "author_hold" && ordersOpenFor != null) {
+      const sel = s.towers.find((t) => t.id === ordersOpenFor);
       if (sel) {
         const world = toWorld(ev);
         const pos = towerPos(sel);
-        dispatchOperatorCommand(
-          sel,
-          {
-            type: "HOLD_ANGLE",
-            angle: Math.atan2(world.y - pos.y + 4, world.x - pos.x),
-            point: { x: world.x, y: world.y },
-          },
-          { map: mapRef.current, towers: s.towers },
-        );
+        const angle = Math.atan2(world.y - pos.y + 4, world.x - pos.x);
+        const order = { type: "HOLD_ANGLE" as const, angle, point: { x: world.x, y: world.y } };
+        let draft = ordersDraft;
+        if (oMode.editIndex != null) {
+          const r = replaceOrderAt(draft, oMode.editIndex, order);
+          if (!r.ok) pushLog(r.reason);
+          else draft = r.plan!;
+        } else {
+          const r = appendOrder(draft, order);
+          if (!r.ok) pushLog(r.reason);
+          else draft = r.plan!;
+        }
+        setOrdersDraft(draft);
+        setPlan(planBookRef.current, ordersOpenFor, draft);
+        setOrdersMode({ kind: "idle" });
       }
-      setAuthoring(null);
+      rerender();
+      return;
+    }
+    if (oMode.kind === "author_move" && ordersOpenFor != null) {
+      const sel = s.towers.find((t) => t.id === ordersOpenFor);
+      if (sel) {
+        const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), tx, ty);
+        if (!dest) {
+          pushLog("NO ROUTE");
+          rerender();
+          return;
+        }
+        const order = { type: "MOVE" as const, tx: dest.tx, ty: dest.ty };
+        let draft = ordersDraft;
+        if (oMode.editIndex != null) {
+          const r = replaceOrderAt(draft, oMode.editIndex, order);
+          if (!r.ok) pushLog(r.reason);
+          else draft = r.plan!;
+        } else {
+          const r = appendOrder(draft, order);
+          if (!r.ok) pushLog(r.reason);
+          else draft = r.plan!;
+        }
+        setOrdersDraft(draft);
+        setPlan(planBookRef.current, ordersOpenFor, draft);
+        setOrdersMode({ kind: "idle" });
+      }
       rerender();
       return;
     }
@@ -2539,7 +2596,7 @@ export default function TarkovTD() {
     if (edgeBag && !s.place) {
       s.selectedObstacle = edgeBag.id === s.selectedObstacle ? null : edgeBag.id;
       s.selectedId = null;
-      setAuthoring(null);
+      closeOrdersUi();
       rerender();
       return;
     }
@@ -2547,7 +2604,7 @@ export default function TarkovTD() {
     if (wirePick && !s.place) {
       s.selectedObstacle = wirePick.id === s.selectedObstacle ? null : wirePick.id;
       s.selectedId = null;
-      setAuthoring(null);
+      closeOrdersUi();
       rerender();
       return;
     }
@@ -2581,37 +2638,40 @@ export default function TarkovTD() {
     }
 
     const sel = s.towers.find((t) => t.id === s.selectedId);
-    const moveAuth =
-      commandAuthoringRef.current?.mode === "MOVE" &&
-      commandAuthoringRef.current.operatorId === s.selectedId
-        ? commandAuthoringRef.current
-        : null;
     const paused = battleTimeRef.current.mode === "PAUSED";
-    // While PAUSED: require MOVE authoring. While live: click-to-move still works without palette.
-    if (sel && !s.place && (moveAuth || !paused)) {
-      if (paused && !moveAuth) {
-        // paused without authoring — ignore empty-tile click (keep selection)
-        return;
-      }
-      const result = dispatchOperatorCommand(
-        sel,
-        { type: "MOVE", tx, ty },
-        { map: mapRef.current, towers: s.towers },
-      );
-      if (!result.ok) {
-        pushLog(result.reason);
+    // LEFT-CLICK always means MOVE when an operator is selected (no MOVE mode required).
+    if (sel && !s.place) {
+      const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), tx, ty);
+      if (!dest) {
+        pushLog("NO ROUTE");
         rerender();
         return;
       }
-      if (moveAuth) setAuthoring(null);
-      if (!result.alreadyThere) rerender();
+      const decision = resolveLeftClickMovePlan(planBookRef.current.get(sel.id), dest.tx, dest.ty, paused);
+      if (decision.kind === "refuse") {
+        pushLog(decision.reason);
+        const existingPlan = planBookRef.current.get(sel.id) ?? createEmptyPlan();
+        setOrdersDraft(existingPlan);
+        setOrdersOpenFor(sel.id);
+        setOrdersMode({ kind: "idle" });
+        rerender();
+        return;
+      }
+      setPlan(planBookRef.current, sel.id, decision.plan);
+      if (decision.executeNow) {
+        const r = beginPlanExecution(sel, decision.plan, { map: mapRef.current, towers: s.towers });
+        setPlan(planBookRef.current, sel.id, r.plan);
+        if (!r.ok && r.reason) pushLog(r.reason);
+      }
+      closeOrdersUi();
+      rerender();
       return;
     }
 
     s.selectedObstacle = null;
 
     s.selectedId = null;
-    setAuthoring(null);
+    closeOrdersUi();
     rerender();
   };
 
@@ -2664,8 +2724,12 @@ export default function TarkovTD() {
     const onKey = (e: KeyboardEvent) => {
       const s = gs.current;
       if (e.key === "Escape") {
-        if (commandAuthoringRef.current) {
-          setAuthoring(null);
+        if (ordersEditorModeRef.current.kind !== "idle" || ordersOpenFor != null) {
+          if (ordersEditorModeRef.current.kind !== "idle") {
+            setOrdersMode({ kind: "idle" });
+          } else {
+            closeOrdersUi();
+          }
           rerender();
           return;
         }
@@ -2686,7 +2750,10 @@ export default function TarkovTD() {
           if (battleTimeRef.current.mode === "PAUSED" && prev !== "PAUSED") {
             pauseReloadSessionRef.current = beginPauseReloadSession(pauseReloadSessionRef.current);
           }
-          if (battleTimeRef.current.mode !== "PAUSED") setAuthoring(null);
+          if (prev === "PAUSED" && battleTimeRef.current.mode !== "PAUSED") {
+            startAllPlanned(planBookRef.current, s.towers, mapRef.current);
+            closeOrdersUi();
+          }
           syncBattleTimeUi();
           rerender();
         }
@@ -2694,7 +2761,7 @@ export default function TarkovTD() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rerender, setAuthoring, startWave, syncBattleTimeUi]);
+  }, [closeOrdersUi, ordersOpenFor, rerender, setOrdersMode, startWave, syncBattleTimeUi]);
 
   const s = gs.current;
   const selected = s.towers.find((t) => t.id === s.selectedId) ?? null;
@@ -2987,10 +3054,40 @@ export default function TarkovTD() {
                   onClick={onClick}
                   onContextMenu={(ev) => {
                     ev.preventDefault();
-                    if (commandAuthoringRef.current) {
-                      setAuthoring(null);
+                    const s = gs.current;
+                    const [tx, ty] = toTile(ev);
+                    if (ordersEditorModeRef.current.kind !== "idle") {
+                      setOrdersMode({ kind: "idle" });
                       rerender();
+                      return;
                     }
+                    const sel = s.towers.find((t) => t.id === s.selectedId);
+                    if (!sel || s.place) return;
+                    const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), tx, ty);
+                    if (!dest) {
+                      pushLog("NO ROUTE");
+                      rerender();
+                      return;
+                    }
+                    const existing = planBookRef.current.get(sel.id);
+                    if (existing?.state === "EXECUTING") {
+                      setOrdersDraft(existing);
+                      setOrdersOpenFor(sel.id);
+                      setOrdersMode({ kind: "idle" });
+                      rerender();
+                      return;
+                    }
+                    const seeded: OperatorPlan = {
+                      orders: [{ type: "MOVE", tx: dest.tx, ty: dest.ty }],
+                      currentIndex: 0,
+                      state: "PLANNED",
+                      awaiting: null,
+                    };
+                    setPlan(planBookRef.current, sel.id, seeded);
+                    setOrdersDraft(seeded);
+                    setOrdersOpenFor(sel.id);
+                    setOrdersMode({ kind: "idle" });
+                    rerender();
                   }}
                   onDragOver={(ev) => ev.preventDefault()}
                   onDrop={canvasDrop}
@@ -2998,6 +3095,85 @@ export default function TarkovTD() {
                   style={{ imageRendering: "pixelated", aspectRatio: `${W} / ${H}` }}
                 />
               )}
+              {inRaid && ordersOpenFor != null && (() => {
+                const op = s.towers.find((t) => t.id === ordersOpenFor);
+                if (!op) return null;
+                return (
+                  <div className="pointer-events-none absolute left-2 top-2 z-30 sm:left-4 sm:top-4">
+                    <OrdersPanel
+                      operatorName={getRaidOperatorDisplayName(op, meta)}
+                      plan={ordersDraft}
+                      editorMode={ordersEditorMode}
+                      onRequestAddMenu={() => setOrdersMode({ kind: "pick_add" })}
+                      onCancelAddMenu={() => setOrdersMode({ kind: "idle" })}
+                      onAddPick={(type) => {
+                        if (type === "RELOAD") {
+                          const r = appendOrder(ordersDraft, { type: "RELOAD" });
+                          if (!r.ok) pushLog(r.reason);
+                          else {
+                            setOrdersDraft(r.plan!);
+                            setPlan(planBookRef.current, ordersOpenFor, r.plan!);
+                          }
+                          setOrdersMode({ kind: "idle" });
+                          rerender();
+                          return;
+                        }
+                        if (type === "MOVE") {
+                          setOrdersMode({ kind: "author_move", editIndex: null });
+                          rerender();
+                          return;
+                        }
+                        setOrdersMode({ kind: "author_hold", editIndex: null });
+                        rerender();
+                      }}
+                      onEdit={(index) => {
+                        const order = ordersDraft.orders[index];
+                        if (!order || order.type === "RELOAD") return;
+                        if (order.type === "MOVE") setOrdersMode({ kind: "author_move", editIndex: index });
+                        else setOrdersMode({ kind: "author_hold", editIndex: index });
+                        rerender();
+                      }}
+                      onRemove={(index) => {
+                        const next = removeOrderAt(ordersDraft, index);
+                        setOrdersDraft(next);
+                        setPlan(planBookRef.current, ordersOpenFor, next);
+                        rerender();
+                      }}
+                      onClearAll={() => {
+                        const plan = planBookRef.current.get(ordersOpenFor);
+                        if (plan?.state === "EXECUTING") {
+                          const next = clearFutureOrders(plan);
+                          setOrdersDraft(next);
+                          setPlan(planBookRef.current, ordersOpenFor, next);
+                        } else {
+                          clearPlan(planBookRef.current, ordersOpenFor);
+                          setOrdersDraft(createEmptyPlan());
+                        }
+                        setOrdersMode({ kind: "idle" });
+                        rerender();
+                      }}
+                      onDone={() => {
+                        const paused = battleTimeRef.current.mode === "PAUSED";
+                        setPlan(planBookRef.current, ordersOpenFor, ordersDraft);
+                        if (!paused && ordersDraft.orders.length > 0 && ordersDraft.state !== "EXECUTING") {
+                          const r = beginPlanExecution(op, ordersDraft, {
+                            map: mapRef.current,
+                            towers: gs.current.towers,
+                          });
+                          setPlan(planBookRef.current, ordersOpenFor, r.plan);
+                          if (!r.ok && r.reason) pushLog(r.reason);
+                        }
+                        closeOrdersUi();
+                        rerender();
+                      }}
+                      onClose={() => {
+                        closeOrdersUi();
+                        rerender();
+                      }}
+                    />
+                  </div>
+                );
+              })()}
 
               {s.phase === "hideout" && screen === "skills" && (
                 <Overlay
@@ -3794,12 +3970,14 @@ export default function TarkovTD() {
                 </button>
                 <span className="font-mono text-[10px] text-muted-foreground">
                   {battleTimeMode === "PAUSED"
-                    ? "TACTICAL PAUSE — select operator · COMMANDS → MOVE / HOLD / RELOAD · ESC cancels authoring"
-                    : commandAuthoring
-                      ? commandAuthoring.mode === "MOVE"
-                        ? "MOVE — click destination · ESC / right-click cancel"
-                        : "HOLD ANGLE — click direction · ESC / right-click cancel"
-                      : "Select operator · COMMANDS for orders · click tile to move when live"}
+                    ? "TACTICAL PAUSE — L-CLICK move · R-CLICK ORDERS · ESC cancel"
+                    : ordersEditorMode.kind !== "idle"
+                      ? ordersEditorMode.kind === "author_move"
+                        ? "ORDERS — click destination · ESC cancel"
+                        : ordersEditorMode.kind === "author_hold"
+                          ? "ORDERS — click hold direction · ESC cancel"
+                          : "ORDERS open"
+                      : "L-CLICK tile = MOVE · R-CLICK = ORDERS · ORDERS for sequences"}
                 </span>
               </div>
             )}
@@ -3946,51 +4124,25 @@ export default function TarkovTD() {
                     <div className="mb-1 flex items-center justify-between gap-2 text-[9px] tracking-wide text-muted-foreground">
                       <span>COMMANDS</span>
                       {(() => {
-                        const badge = operatorPlanBadge(selected, battleTimeMode === "PAUSED");
-                        return badge ? (
-                          <span className="text-primary">
-                            {badge}
-                            {battleTimeMode === "PAUSED" ? " · PLANNED" : badge === "MOVING" ? "" : ""}
-                          </span>
-                        ) : null;
+                        const sum = planSummary(planBookRef.current.get(selected.id));
+                        return sum ? <span className="text-primary">{sum}</span> : null;
                       })()}
                     </div>
                     <div className="flex flex-wrap gap-1">
                       <button
                         type="button"
                         className={`pixel-btn px-1 py-0 text-[9px] ${
-                          authoringForOperator(commandAuthoring, selected.id) === "MOVE"
-                            ? "pixel-btn-primary"
-                            : "text-muted-foreground"
+                          ordersOpenFor === selected.id ? "pixel-btn-primary" : "text-muted-foreground"
                         }`}
                         onClick={() => {
-                          setAuthoring(
-                            authoringForOperator(commandAuthoring, selected.id) === "MOVE"
-                              ? null
-                              : { mode: "MOVE", operatorId: selected.id },
-                          );
+                          const existing = planBookRef.current.get(selected.id) ?? createEmptyPlan();
+                          setOrdersDraft(existing);
+                          setOrdersOpenFor(selected.id);
+                          setOrdersMode({ kind: "idle" });
                           rerender();
                         }}
                       >
-                        MOVE
-                      </button>
-                      <button
-                        type="button"
-                        className={`pixel-btn px-1 py-0 text-[9px] ${
-                          authoringForOperator(commandAuthoring, selected.id) === "HOLD_ANGLE"
-                            ? "pixel-btn-primary"
-                            : "text-muted-foreground"
-                        }`}
-                        onClick={() => {
-                          setAuthoring(
-                            authoringForOperator(commandAuthoring, selected.id) === "HOLD_ANGLE"
-                              ? null
-                              : { mode: "HOLD_ANGLE", operatorId: selected.id },
-                          );
-                          rerender();
-                        }}
-                      >
-                        HOLD ANGLE
+                        ORDERS
                       </button>
                       <button
                         type="button"
@@ -4021,9 +4173,15 @@ export default function TarkovTD() {
                       <button
                         type="button"
                         className="pixel-btn px-1 py-0 text-[9px] text-muted-foreground"
-                        title="Clear move / hold; cancel reload only if authored this pause"
+                        title="Clear plan + move/hold; cancel pause-authored reload only"
                         onClick={() => {
                           const ctx = { map: mapRef.current, towers: gs.current.towers };
+                          const plan = planBookRef.current.get(selected.id);
+                          if (plan?.state === "EXECUTING") {
+                            setPlan(planBookRef.current, selected.id, clearFutureOrders(plan));
+                          } else {
+                            clearPlan(planBookRef.current, selected.id);
+                          }
                           const cancelReload = canCancelPausedReload(
                             pauseReloadSessionRef.current,
                             selected.id,
@@ -4034,20 +4192,15 @@ export default function TarkovTD() {
                           if (cancelReload) {
                             pauseReloadSessionRef.current.authoredReloadIds.delete(selected.id);
                           }
-                          setAuthoring(null);
-                          pushLog(
-                            cancelReload
-                              ? "ORDERS CLEARED"
-                              : selected.reloadLeft > 0
-                                ? "ORDERS CLEARED (RELOAD CONTINUES)"
-                                : "ORDERS CLEARED",
-                          );
+                          closeOrdersUi();
+                          pushLog("ORDERS CLEARED");
                           rerender();
                         }}
                       >
                         CLEAR
                       </button>
                     </div>
+                    <p className="mt-1 text-[8px] text-muted-foreground">L-CLICK map = MOVE</p>
                   </div>
                   <div className="pt-1">
                     <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">TARGETING</div>
@@ -4065,7 +4218,7 @@ export default function TarkovTD() {
                               { type: "SET_TARGETING", mode },
                               { map: mapRef.current, towers: gs.current.towers },
                             );
-                            setAuthoring(null);
+                            closeOrdersUi();
                             rerender();
                           }}
                         >
