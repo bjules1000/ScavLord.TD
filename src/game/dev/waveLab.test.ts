@@ -15,6 +15,7 @@ import {
   applyWaveLabOverrides,
   canonicalEnemy,
   canonicalWave,
+  duplicateEnemy,
   effectiveEnemy,
   effectiveWave,
   emptyWaveLabOverrides,
@@ -30,7 +31,9 @@ import {
   requestTestWave,
   resetEnemyItem,
   resetWaveItem,
+  setEnemyBehavior,
   setEnemyField,
+  setEnemyHitZones,
   setWaveGroups,
   updateWaveGroup,
   waveLabPatchLines,
@@ -151,6 +154,74 @@ describe("Wave Lab enemies", () => {
     const store = memStore({ [WAVE_LAB_STORAGE_KEY]: JSON.stringify(over) });
     expect(loadWaveLabOverrides(false, store)).toEqual(emptyWaveLabOverrides());
   });
+
+  it("duplicate creates new id and copies hitZones/behavior", () => {
+    const src = emptyWaveLabOverrides();
+    const { overrides, kind } = duplicateEnemy(src, "raider");
+    expect(kind).toBe("raider_copy_1");
+    expect(kind).not.toBe("raider");
+    const live = effectiveEnemy(kind, overrides, true);
+    const base = effectiveEnemy("raider", src, true);
+    expect(live.custom).toBe(true);
+    expect(live.hitZones).toEqual(base.hitZones);
+    expect(live.behavior).toEqual(base.behavior);
+    expect(overrides.customEnemies[kind]?.kind).toBe(kind);
+  });
+
+  it("rename displayName keeps id", () => {
+    const { overrides, kind } = duplicateEnemy(emptyWaveLabOverrides(), "scav");
+    const renamed = setEnemyField(overrides, kind, "name", "Renamed Scav", overrides.customEnemies[kind]!.name);
+    expect(effectiveEnemy(kind, renamed, true).name).toBe("Renamed Scav");
+    expect(effectiveEnemy(kind, renamed, true).kind).toBe(kind);
+    expect(Object.keys(renamed.customEnemies)).toEqual([kind]);
+  });
+
+  it("hit zone shape persists and reset restores base shape/geometry", () => {
+    const baseZones = effectiveEnemy("raider", emptyWaveLabOverrides(), true).hitZones!;
+    const headFlipped = baseZones.map((z) =>
+      z.id === "head" ? { ...z, shape: "ellipse" as const, x: 0.1, damageMult: 2 } : z,
+    );
+    let over = setEnemyHitZones(emptyWaveLabOverrides(), "raider", headFlipped);
+    const live = effectiveEnemy("raider", over, true);
+    expect(live.hitZones!.find((z) => z.id === "head")!.shape).toBe("ellipse");
+    expect(live.hitZones!.find((z) => z.id === "head")!.x).toBe(0.1);
+    const patch = formatWaveLabPatch(over);
+    expect(patch).toContain("ellipse");
+    expect(patch).toMatch(/HEAD:ellipse/);
+    expect(patch).toContain("ENEMY_JSON raider");
+    expect(patch).toContain('"hitZones"');
+    expect(patch).toContain('"behavior"');
+    expect(patch).toContain('"stats"');
+    expect(patch).toContain('"width"');
+    expect(patch).toContain('"height"');
+    expect(patch).toContain('"engagedSpeedMult"');
+    over = resetEnemyItem(over, "raider");
+    const restored = effectiveEnemy("raider", over, true);
+    expect(restored.hitZones!.find((z) => z.id === "head")!.shape).toBe(baseZones.find((z) => z.id === "head")!.shape);
+    expect(restored.hitZones!.find((z) => z.id === "head")!.damageMult).toBe(1.75);
+  });
+
+  it("canShoot false does not erase behavior LOS fields in overrides", () => {
+    const base = effectiveEnemy("raider", emptyWaveLabOverrides(), true).behavior!;
+    const over = setEnemyBehavior(emptyWaveLabOverrides(), "raider", {
+      ...base,
+      canShoot: false,
+      requireLosToShoot: true,
+      sightRange: 99,
+      targetMemoryMs: 2222,
+    });
+    const live = effectiveEnemy("raider", over, true).behavior!;
+    expect(live.canShoot).toBe(false);
+    expect(live.requireLosToShoot).toBe(true);
+    expect(live.sightRange).toBe(99);
+    expect(live.targetMemoryMs).toBe(2222);
+    const patch = formatWaveLabPatch(over);
+    expect(patch).toContain("behavior.canShoot: true -> false");
+    expect(patch).toContain("behavior.sightRange:");
+    expect(patch).toContain("ENEMY_JSON raider");
+    expect(patch).toContain('"canShoot":false');
+    expect(patch).toContain('"sightRange":99');
+  });
 });
 
 describe("Wave Lab waves", () => {
@@ -163,8 +234,9 @@ describe("Wave Lab waves", () => {
 
   it("selected wave exposes actual composition", () => {
     const w = canonicalWave(woods, 3);
-    expect(w.groups.map((g) => g.kind)).toEqual(["scav"]);
-    expect(w.groups[0]!.count).toBeGreaterThan(0);
+    expect(w.groups.map((g) => g.kind)).toEqual(["scav", "sniperScav"]);
+    expect(w.groups[0]!.count).toBe(5);
+    expect(w.groups[1]!.count).toBe(2);
   });
 
   it("total enemy count is correct", () => {
@@ -177,14 +249,14 @@ describe("Wave Lab waves", () => {
     const scale = waveScale(3);
     let hp = 0;
     for (const g of w.groups) {
-      hp += Math.round(ENEMIES[g.kind].hp * scale.hp * woods.hpMult) * g.count;
+      hp += Math.round(ENEMIES[g.kind]!.hp * scale.hp * woods.hpMult) * g.count;
     }
     expect(waveTotals(woods, 3, emptyWaveLabOverrides(), true).hp).toBe(hp);
   });
 
   it("total bounty is correct", () => {
     const w = canonicalWave(woods, 3);
-    const bounty = w.groups.reduce((a, g) => a + ENEMIES[g.kind].bounty * g.count, 0);
+    const bounty = w.groups.reduce((a, g) => a + ENEMIES[g.kind]!.bounty * g.count, 0);
     expect(waveTotals(woods, 3, emptyWaveLabOverrides(), true).bounty).toBe(bounty);
   });
 
@@ -195,7 +267,8 @@ describe("Wave Lab waves", () => {
 
   it("changing enemy count updates totals", () => {
     const base = waveTotals(woods, 3, emptyWaveLabOverrides(), true);
-    const draft = updateWaveGroup(emptyWaveLabOverrides(), woods, 3, 0, { count: base.count + 5 });
+    const scavCount = canonicalWave(woods, 3).groups[0]!.count;
+    const draft = updateWaveGroup(emptyWaveLabOverrides(), woods, 3, 0, { count: scavCount + 5 });
     const next = waveTotals(woods, 3, draft, true);
     expect(next.count).toBe(base.count + 5);
     expect(next.hp).toBeGreaterThan(base.hp);
@@ -218,7 +291,8 @@ describe("Wave Lab waves", () => {
 
   it("REMOVE works if implemented", () => {
     let draft = addWaveGroup(emptyWaveLabOverrides(), woods, 3, "raider");
-    draft = removeWaveGroup(draft, woods, 3, 1);
+    const before = effectiveWave(woods, 3, draft, true).groups;
+    draft = removeWaveGroup(draft, woods, 3, before.length - 1);
     expect(effectiveWave(woods, 3, draft, true).groups.map((g) => g.kind)).toEqual(
       canonicalWave(woods, 3).groups.map((g) => g.kind),
     );
@@ -262,7 +336,7 @@ describe("TEST WAVE", () => {
     const r = requestTestWave(true, true, "woods", 3, draft);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.events.every((e) => e.kind === "scav" || effectiveEnemy(e.kind, draft, true).hp === ENEMIES[e.kind].hp)).toBe(
+    expect(r.events.every((e) => e.kind === "scav" || effectiveEnemy(e.kind, draft, true).hp === ENEMIES[e.kind]!.hp)).toBe(
       true,
     );
     expect(effectiveEnemy("scav", draft, true).hp).toBe(200);
@@ -318,7 +392,7 @@ describe("Wave Lab patch and persistence", () => {
     const text = formatWaveLabPatch(over);
     expect(text).toContain("WAVE LAB PATCH");
     expect(text).toContain("SCAV");
-    expect(text).toContain("hp: 34 -> 85");
+    expect(text).toContain("hp: 35 -> 85");
     expect(text).not.toContain("speed:");
     expect(text).not.toContain("GRAPHICS CARD");
   });

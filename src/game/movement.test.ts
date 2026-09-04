@@ -654,7 +654,7 @@ describe("combat integration", () => {
 
   it("armor behavior remains unchanged", () => {
     const hit = absorbWithArmor(20, "paca", ARMORS["paca"]!.durability);
-    expect(hit.damage).toBeCloseTo(20 * 0.82);
+    expect(hit.damage).toBeCloseTo(20 * (1 - ARMORS["paca"]!.reduction));
   });
 
   it("barricades remain edge cover and do not block operator movement", () => {

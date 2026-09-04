@@ -28,9 +28,9 @@ describe("canonical wearable armor", () => {
   it("applies the same reduction + durability soak with or without a named wearer", () => {
     const incoming = 20;
     const paca = absorbWithArmor(incoming, "paca", ARMORS["paca"]!.durability);
-    expect(paca.damage).toBeCloseTo(incoming * (1 - 0.18));
-    expect(paca.absorbed).toBeCloseTo(incoming * 0.18);
-    expect(paca.armorHp).toBeCloseTo(ARMORS["paca"]!.durability - incoming * 0.18);
+    expect(paca.damage).toBeCloseTo(incoming * (1 - 0.25));
+    expect(paca.absorbed).toBeCloseTo(incoming * 0.25);
+    expect(paca.armorHp).toBeCloseTo(ARMORS["paca"]!.durability - incoming * 0.25);
   });
 
   it("deals full damage when no armor is worn", () => {

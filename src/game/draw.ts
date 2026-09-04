@@ -16,15 +16,35 @@ function gunFrame(cls: WeaponClass, firing: boolean): GearFrameName {
   return (base + (firing ? "_fire" : "_idle")) as GearFrameName;
 }
 
-function enemyBodyFrame(kind: Enemy["kind"], walk: boolean): GearFrameName {
-  const heavy = kind === "raider" || kind === "pmc" || kind === "boss";
+/** Same art resolution used by drawEnemy — Wave Lab HITBOX must reuse this. */
+export function resolveEnemyBodyFrame(kind: Enemy["kind"], walk = false): GearFrameName {
+  const def = effectiveEnemy(kind);
+  const heavy =
+    def.artProfile === "heavy" ||
+    (def.artProfile == null &&
+      (kind === "raider" || kind === "pmc" || kind === "boss" || String(kind).startsWith("boss_")));
   return `${heavy ? "unk" : "joe"}_${walk ? "2" : "1"}` as GearFrameName;
 }
 
+export function resolveEnemyGunFrame(kind: Enemy["kind"], firing = false): GearFrameName {
+  const def = effectiveEnemy(kind);
+  const profile =
+    def.attackProfile ??
+    (kind === "sniperScav" ? "sg" : kind === "scav" ? "uzi" : "ak");
+  return `${profile}_${firing ? "fire" : "idle"}` as GearFrameName;
+}
+
+/** Draw width matching drawEnemy bodyW for collision-art alignment. */
+export function enemyBodyDrawWidth(kind: Enemy["kind"], size: number): number {
+  return kind === "boss" || String(kind).startsWith("boss_") ? size + 12 : size + 6;
+}
+
+function enemyBodyFrame(kind: Enemy["kind"], walk: boolean): GearFrameName {
+  return resolveEnemyBodyFrame(kind, walk);
+}
+
 function enemyGunFrame(kind: Enemy["kind"], firing: boolean): GearFrameName {
-  if (kind === "sniperScav") return firing ? "sg_fire" : "sg_idle";
-  if (kind === "scav") return firing ? "uzi_fire" : "uzi_idle";
-  return firing ? "ak_fire" : "ak_idle";
+  return resolveEnemyGunFrame(kind, firing);
 }
 
 

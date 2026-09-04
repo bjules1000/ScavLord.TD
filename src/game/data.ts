@@ -1,6 +1,31 @@
-import type { EnemyDef, EnemyKind, Perk, TowerDef, TowerKind } from "./types";
+import type { BuiltinEnemyKind, EnemyDef, EnemyKind, Perk, TowerDef, TowerKind } from "./types";
+import type { EnemyHitZone } from "./enemyHitZones";
+import { builtinBehaviorForKind } from "./enemyBehavior";
+
+/** Round Wave Lab drag noise to stable authored precision. */
+function r3(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
+function authoredZones(
+  zones: Array<Pick<EnemyHitZone, "id" | "displayName" | "shape" | "x" | "y" | "width" | "height" | "damageMult" | "enabled" | "priority">>,
+): EnemyHitZone[] {
+  return zones.map((z) => ({
+    id: z.id,
+    displayName: z.displayName,
+    shape: z.shape,
+    x: r3(z.x),
+    y: r3(z.y),
+    width: r3(z.width),
+    height: r3(z.height),
+    damageMult: z.damageMult,
+    enabled: z.enabled,
+    priority: z.priority,
+  }));
+}
 
 export const TILE = 44;
+
 export const SCALE = TILE / 32;
 export const COLS = 20;
 export const ROWS = 13;
@@ -78,25 +103,33 @@ export const TOWERS: Record<TowerKind, TowerDef> = {
 
 export const TOWER_ORDER: TowerKind[] = ["scout", "sniper", "gunner", "grenadier"];
 
-export const ENEMIES: Record<EnemyKind, EnemyDef> = {
+export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyDef> = {
   scav: {
     kind: "scav",
-    fireRange: 58, fireCooldown: 2100, towerDamage: 4,
+    fireRange: 60, fireCooldown: 2100, towerDamage: 5,
     name: "Scav",
-    hp: 34,
-    speed: 34,
+    hp: 35,
+    speed: 35,
     bounty: 22,
     armor: 0,
     damage: 1,
     body: "#8a7a5c",
     gear: "#4b4030",
     size: 13,
-    },
+    attackProfile: "uzi",
+    artProfile: "light",
+    hitZones: authoredZones([
+      { id: "head", displayName: "HEAD", shape: "rect", x: 0.398, y: 0.252, width: 0.182, height: 0.13, damageMult: 1.75, enabled: true, priority: 30 },
+      { id: "body", displayName: "BODY", shape: "rect", x: 0.36, y: 0.38, width: 0.247, height: 0.195, damageMult: 1, enabled: true, priority: 20 },
+      { id: "legs", displayName: "LEGS", shape: "rect", x: 0.379, y: 0.574, width: 0.216, height: 0.126, damageMult: 0.7, enabled: true, priority: 10 },
+    ]),
+    behavior: builtinBehaviorForKind("scav"),
+  },
   sniperScav: {
     kind: "sniperScav",
-    fireRange: 46, fireCooldown: 1700, towerDamage: 16,
+    fireRange: 65, fireCooldown: 1700, towerDamage: 15,
     name: "Shotgun Scav",
-    hp: 48,
+    hp: 55,
     speed: 32,
     bounty: 36,
     armor: 0,
@@ -104,45 +137,77 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
     body: "#6b5340",
     gear: "#3a2a1c",
     size: 14,
+    attackProfile: "sg",
+    artProfile: "light",
+    hitZones: authoredZones([
+      { id: "head", displayName: "HEAD", shape: "rect", x: 0.381, y: 0.247, width: 0.21, height: 0.122, damageMult: 1.75, enabled: true, priority: 30 },
+      { id: "body", displayName: "BODY", shape: "rect", x: 0.35, y: 0.38, width: 0.272, height: 0.194, damageMult: 1, enabled: true, priority: 20 },
+      { id: "legs", displayName: "LEGS", shape: "rect", x: 0.366, y: 0.573, width: 0.233, height: 0.14, damageMult: 0.7, enabled: true, priority: 10 },
+    ]),
+    behavior: builtinBehaviorForKind("sniperScav"),
   },
   raider: {
     kind: "raider",
-    fireRange: 108, fireCooldown: 1550, towerDamage: 9,
+    fireRange: 110, fireCooldown: 1550, towerDamage: 10,
     name: "Rifle Scav",
-    hp: 72,
-    speed: 32,
-    bounty: 44,
+    hp: 75,
+    speed: 30,
+    bounty: 40,
     armor: 2,
     damage: 2,
     body: "#5e6b4d",
     gear: "#2f3626",
     size: 15,
+    attackProfile: "ak",
+    artProfile: "heavy",
+    hitZones: authoredZones([
+      { id: "head", displayName: "HEAD", shape: "rect", x: 0.381, y: 0.22, width: 0.241, height: 0.132, damageMult: 1.75, enabled: true, priority: 30 },
+      { id: "body", displayName: "BODY", shape: "rect", x: 0.33, y: 0.357, width: 0.333, height: 0.233, damageMult: 1, enabled: true, priority: 20 },
+      { id: "legs", displayName: "LEGS", shape: "rect", x: 0.369, y: 0.588, width: 0.264, height: 0.143, damageMult: 0.7, enabled: true, priority: 10 },
+    ]),
+    behavior: builtinBehaviorForKind("raider"),
   },
   pmc: {
     kind: "pmc",
     fireRange: 90, fireCooldown: 1450, towerDamage: 14,
     name: "Armored Raider",
     hp: 195,
-    speed: 26,
+    speed: 25,
     bounty: 80,
-    armor: 8,
+    armor: 5,
     damage: 2,
     body: "#3f4a55",
     gear: "#20272e",
     size: 16,
+    attackProfile: "ak",
+    artProfile: "heavy",
+    hitZones: authoredZones([
+      { id: "head", displayName: "HEAD", shape: "rect", x: 0.369, y: 0.215, width: 0.26, height: 0.16, damageMult: 1.75, enabled: true, priority: 30 },
+      { id: "body", displayName: "BODY", shape: "rect", x: 0.324, y: 0.368, width: 0.351, height: 0.219, damageMult: 1, enabled: true, priority: 20 },
+      { id: "legs", displayName: "LEGS", shape: "rect", x: 0.36, y: 0.59, width: 0.288, height: 0.14, damageMult: 0.7, enabled: true, priority: 10 },
+    ]),
+    behavior: builtinBehaviorForKind("pmc"),
   },
   boss: {
     kind: "boss",
-    fireRange: 100, fireCooldown: 1100, towerDamage: 20,
+    fireRange: 90, fireCooldown: 1100, towerDamage: 15,
     name: "Enforcer",
     hp: 1150,
-    speed: 24,
+    speed: 22,
     bounty: 600,
-    armor: 14,
-    damage: 7,
+    armor: 5,
+    damage: 5,
     body: "#5a3a28",
     gear: "#241810",
     size: 22,
+    attackProfile: "ak",
+    artProfile: "heavy",
+    hitZones: authoredZones([
+      { id: "head", displayName: "HEAD", shape: "rect", x: 0.35, y: 0.193, width: 0.294, height: 0.16, damageMult: 1.75, enabled: true, priority: 30 },
+      { id: "body", displayName: "BODY", shape: "rect", x: 0.296, y: 0.358, width: 0.397, height: 0.253, damageMult: 1, enabled: true, priority: 20 },
+      { id: "legs", displayName: "LEGS", shape: "rect", x: 0.332, y: 0.606, width: 0.331, height: 0.166, damageMult: 0.7, enabled: true, priority: 10 },
+    ]),
+    behavior: builtinBehaviorForKind("boss"),
   },
 };
 

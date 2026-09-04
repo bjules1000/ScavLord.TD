@@ -6,6 +6,13 @@
  */
 
 import { ENEMIES, buildWave, waveScale, type Wave, type WaveGroup, type WaveTuning } from "../data";
+import {
+  builtinBehaviorForKind,
+  cloneBehavior,
+  derivedBehaviorSummary,
+  type EnemyBehaviorConfig,
+} from "../enemyBehavior";
+import { cloneHitZones, type EnemyHitZone } from "../enemyHitZones";
 import { MAP_DEFS, type MapDef } from "../map";
 import { mapLaneDefs } from "../lanes";
 import type { EnemyDef, EnemyKind } from "../types";
@@ -25,11 +32,28 @@ export const WAVE_CATALOG_MAX = 20;
 
 /** Future Economy Lab drop-source ids. No drop tables are defined. */
 export function enemyDropSourceId(kind: EnemyKind): string {
-  return kind === "boss" ? `boss:${kind}` : `enemy:${kind}`;
+  return kind === "boss" || String(kind).startsWith("boss_") ? `boss:${kind}` : `enemy:${kind}`;
 }
 
 export type EnemyOverride = Partial<
-  Pick<EnemyDef, "name" | "hp" | "speed" | "bounty" | "armor" | "damage" | "fireRange" | "fireCooldown" | "towerDamage" | "size">
+  Pick<
+    EnemyDef,
+    | "name"
+    | "hp"
+    | "speed"
+    | "bounty"
+    | "armor"
+    | "damage"
+    | "fireRange"
+    | "fireCooldown"
+    | "towerDamage"
+    | "size"
+    | "hitZones"
+    | "behavior"
+    | "attackProfile"
+    | "artProfile"
+    | "disabled"
+  >
 >;
 
 export type WaveOverride = {
@@ -39,6 +63,7 @@ export type WaveOverride = {
 
 export type WaveLabOverrides = {
   enemies: Record<string, EnemyOverride>;
+  customEnemies: Record<string, EnemyDef>;
   waves: Record<string, WaveOverride>;
 };
 
@@ -57,7 +82,7 @@ export type EnemyEditorField = {
 };
 
 export function emptyWaveLabOverrides(): WaveLabOverrides {
-  return { enemies: {}, waves: {} };
+  return { enemies: {}, customEnemies: {}, waves: {} };
 }
 
 function cloneWaveOverride(v: WaveOverride): WaveOverride {
@@ -67,11 +92,52 @@ function cloneWaveOverride(v: WaveOverride): WaveOverride {
   return next;
 }
 
+export function cloneEnemyDef(def: EnemyDef): EnemyDef {
+  const next: EnemyDef = {
+    kind: def.kind,
+    name: def.name,
+    hp: def.hp,
+    speed: def.speed,
+    bounty: def.bounty,
+    armor: def.armor,
+    damage: def.damage,
+    fireRange: def.fireRange,
+    fireCooldown: def.fireCooldown,
+    towerDamage: def.towerDamage,
+    body: def.body,
+    gear: def.gear,
+    size: def.size,
+  };
+  if (def.attackProfile !== undefined) next.attackProfile = def.attackProfile;
+  if (def.artProfile !== undefined) next.artProfile = def.artProfile;
+  if (def.hitZones) next.hitZones = cloneHitZones(def.hitZones);
+  if (def.behavior) next.behavior = cloneBehavior(def.behavior);
+  if (def.custom !== undefined) next.custom = def.custom;
+  if (def.disabled !== undefined) next.disabled = def.disabled;
+  return next;
+}
+
+function cloneEnemyOverride(v: EnemyOverride): EnemyOverride {
+  const next: EnemyOverride = { ...v };
+  delete next.hitZones;
+  delete next.behavior;
+  if (v.hitZones) next.hitZones = cloneHitZones(v.hitZones);
+  if (v.behavior) next.behavior = cloneBehavior(v.behavior);
+  return next;
+}
+
 function cloneOverrides(src: WaveLabOverrides): WaveLabOverrides {
   return {
-    enemies: { ...Object.fromEntries(Object.entries(src.enemies).map(([k, v]) => [k, { ...v }])) },
+    enemies: {
+      ...Object.fromEntries(Object.entries(src.enemies ?? {}).map(([k, v]) => [k, cloneEnemyOverride(v)])),
+    },
+    customEnemies: {
+      ...Object.fromEntries(
+        Object.entries(src.customEnemies ?? {}).map(([k, v]) => [k, cloneEnemyDef(v)]),
+      ),
+    },
     waves: {
-      ...Object.fromEntries(Object.entries(src.waves).map(([k, v]) => [k, cloneWaveOverride(v)])),
+      ...Object.fromEntries(Object.entries(src.waves ?? {}).map(([k, v]) => [k, cloneWaveOverride(v)])),
     },
   };
 }
@@ -89,15 +155,34 @@ function pruneEmpty<T extends Record<string, unknown>>(rec: Record<string, T>): 
   return out;
 }
 
+function safeScavClone(kind: EnemyKind): EnemyDef {
+  const scav = ENEMIES.scav;
+  const next = cloneEnemyDef(scav);
+  next.kind = kind;
+  next.name = String(kind);
+  next.custom = true;
+  next.behavior = builtinBehaviorForKind(kind);
+  if (scav.hitZones) next.hitZones = cloneHitZones(scav.hitZones);
+  return next;
+}
+
 export function pruneWaveLabOverrides(src: WaveLabOverrides): WaveLabOverrides {
   const waves: Record<string, WaveOverride> = {};
-  for (const [id, w] of Object.entries(src.waves)) {
+  for (const [id, w] of Object.entries(src.waves ?? {})) {
     const next: WaveOverride = {};
     if (typeof w.name === "string" && w.name.trim()) next.name = w.name;
     if (w.groups && w.groups.length >= 0) next.groups = cloneWaveGroups(w.groups);
     if (next.name || next.groups) waves[id] = next;
   }
-  return { enemies: pruneEmpty(src.enemies), waves };
+  const customEnemies: Record<string, EnemyDef> = {};
+  for (const [id, def] of Object.entries(src.customEnemies ?? {})) {
+    if (def && typeof def === "object") customEnemies[id] = cloneEnemyDef({ ...def, kind: id, custom: true });
+  }
+  return {
+    enemies: pruneEmpty(src.enemies ?? {}),
+    customEnemies,
+    waves,
+  };
 }
 
 export function waveKey(mapId: string, wave: number): string {
@@ -113,16 +198,34 @@ export function parseWaveKey(key: string): { mapId: string; wave: number } | nul
   return { mapId, wave };
 }
 
-export function canonicalEnemy(kind: EnemyKind): EnemyDef {
-  return ENEMIES[kind];
-}
-
 export function isBossKind(kind: EnemyKind): boolean {
-  return kind === "boss";
+  return kind === "boss" || String(kind).startsWith("boss_");
 }
 
-export function enemyCatalog(bosses: boolean): EnemyDef[] {
-  return Object.values(ENEMIES).filter((e) => (bosses ? isBossKind(e.kind) : !isBossKind(e.kind)));
+export function canonicalEnemy(
+  kind: EnemyKind,
+  overrides: WaveLabOverrides = getWaveLabOverrides(),
+): EnemyDef {
+  const custom = overrides.customEnemies?.[kind];
+  if (custom) return cloneEnemyDef(custom);
+  const base = ENEMIES[kind];
+  if (base) return base;
+  return safeScavClone(kind);
+}
+
+export function listAllEnemyKinds(overrides: WaveLabOverrides = getWaveLabOverrides()): EnemyKind[] {
+  const kinds = new Set<string>([...Object.keys(ENEMIES), ...Object.keys(overrides.customEnemies ?? {})]);
+  return [...kinds];
+}
+
+export function enemyCatalog(
+  bosses: boolean,
+  overrides: WaveLabOverrides = getWaveLabOverrides(),
+): EnemyDef[] {
+  const byKind = new Map<string, EnemyDef>();
+  for (const e of Object.values(ENEMIES)) byKind.set(e.kind, e);
+  for (const e of Object.values(overrides.customEnemies ?? {})) byKind.set(e.kind, e);
+  return [...byKind.values()].filter((e) => (bosses ? isBossKind(e.kind) : !isBossKind(e.kind)));
 }
 
 export function enemyEditorFields(): EnemyEditorField[] {
@@ -139,16 +242,49 @@ export function enemyEditorFields(): EnemyEditorField[] {
   ];
 }
 
+function resolveBaseEnemy(
+  kind: EnemyKind,
+  overrides: WaveLabOverrides,
+  enabled: boolean,
+): EnemyDef {
+  if (enabled) {
+    const custom = overrides.customEnemies?.[kind];
+    if (custom) return cloneEnemyDef(custom);
+  }
+  const base = ENEMIES[kind];
+  if (base) return base;
+  return safeScavClone(kind);
+}
+
 export function effectiveEnemy(
   kind: EnemyKind,
   overrides: WaveLabOverrides = getWaveLabOverrides(),
   enabled = DEV_TOOLS_ENABLED,
 ): EnemyDef {
-  const base = ENEMIES[kind];
-  if (!enabled) return base;
-  const over = overrides.enemies[kind];
-  if (!over || Object.keys(over).length === 0) return base;
-  return { ...base, ...over };
+  const base = resolveBaseEnemy(kind, overrides, enabled);
+  if (!enabled) {
+    const out = cloneEnemyDef(base);
+    out.behavior = base.behavior ?? builtinBehaviorForKind(kind);
+    return out;
+  }
+  const over = overrides.enemies?.[kind];
+  const merged = cloneEnemyDef(over && Object.keys(over).length > 0 ? { ...base, ...over } : base);
+  merged.behavior = over?.behavior ?? base.behavior ?? builtinBehaviorForKind(kind);
+  if (over?.hitZones) merged.hitZones = cloneHitZones(over.hitZones);
+  else if (base.hitZones) merged.hitZones = cloneHitZones(base.hitZones);
+  else delete merged.hitZones;
+  if (over?.attackProfile !== undefined) merged.attackProfile = over.attackProfile;
+  if (over?.artProfile !== undefined) merged.artProfile = over.artProfile;
+  if (over?.disabled !== undefined) merged.disabled = over.disabled;
+  return merged;
+}
+
+export function enemyBehaviorShortLabel(cfg: EnemyBehaviorConfig | undefined): string {
+  const b = cfg ?? builtinBehaviorForKind("scav");
+  if (!b.canShoot) return "Unarmed";
+  if (b.engagedSpeedMult < 0.5) return "Engage/Slow";
+  if (b.fireWhileMoving) return "Moving fire";
+  return "Engage";
 }
 
 export function mapWaveTuning(map: MapDef): WaveTuning {
@@ -156,6 +292,13 @@ export function mapWaveTuning(map: MapDef): WaveTuning {
 }
 
 export function canonicalWave(map: MapDef, n: number): Wave {
+  const authored = map.authoredWaves?.[n];
+  if (authored) {
+    return {
+      name: authored.name,
+      groups: authored.groups.map((g) => ({ kind: g.kind, count: g.count, gap: g.gap })),
+    };
+  }
   return buildWave(n, map.waveMods);
 }
 
@@ -179,12 +322,15 @@ export function setEnemyField(
   src: WaveLabOverrides,
   kind: EnemyKind,
   key: keyof EnemyOverride,
-  value: number | string | undefined,
-  canonical: number | string,
+  value: number | string | boolean | undefined,
+  canonical: number | string | boolean,
 ): WaveLabOverrides {
   const next = cloneOverrides(src);
-  const cur = { ...(next.enemies[kind] ?? {}) } as Record<string, number | string>;
-  if (typeof value === "string") {
+  const cur = { ...(next.enemies[kind] ?? {}) } as Record<string, unknown>;
+  if (typeof value === "boolean") {
+    if (value === canonical) delete cur[key];
+    else cur[key] = value;
+  } else if (typeof value === "string") {
     const trimmed = value.trim();
     if (!trimmed || trimmed === canonical) delete cur[key];
     else cur[key] = trimmed;
@@ -197,6 +343,109 @@ export function setEnemyField(
   }
   if (Object.keys(cur).length === 0) delete next.enemies[kind];
   else next.enemies[kind] = cur as EnemyOverride;
+  return pruneWaveLabOverrides(next);
+}
+
+export function setEnemyHitZones(
+  src: WaveLabOverrides,
+  kind: EnemyKind,
+  zones: EnemyHitZone[],
+): WaveLabOverrides {
+  const next = cloneOverrides(src);
+  const cur = { ...(next.enemies[kind] ?? {}) };
+  cur.hitZones = cloneHitZones(zones);
+  next.enemies[kind] = cur;
+  return pruneWaveLabOverrides(next);
+}
+
+export function setEnemyBehavior(
+  src: WaveLabOverrides,
+  kind: EnemyKind,
+  behavior: EnemyBehaviorConfig,
+): WaveLabOverrides {
+  const next = cloneOverrides(src);
+  const cur = { ...(next.enemies[kind] ?? {}) };
+  cur.behavior = cloneBehavior(behavior);
+  next.enemies[kind] = cur;
+  return pruneWaveLabOverrides(next);
+}
+
+export function setEnemyAttackProfile(
+  src: WaveLabOverrides,
+  kind: EnemyKind,
+  profile: EnemyDef["attackProfile"],
+): WaveLabOverrides {
+  const next = cloneOverrides(src);
+  const base = resolveBaseEnemy(kind, src, true);
+  const cur = { ...(next.enemies[kind] ?? {}) };
+  if (profile === undefined || profile === base.attackProfile) delete cur.attackProfile;
+  else cur.attackProfile = profile;
+  if (Object.keys(cur).length === 0) delete next.enemies[kind];
+  else next.enemies[kind] = cur;
+  return pruneWaveLabOverrides(next);
+}
+
+export function setEnemyArtProfile(
+  src: WaveLabOverrides,
+  kind: EnemyKind,
+  profile: EnemyDef["artProfile"],
+): WaveLabOverrides {
+  const next = cloneOverrides(src);
+  const base = resolveBaseEnemy(kind, src, true);
+  const cur = { ...(next.enemies[kind] ?? {}) };
+  if (profile === undefined || profile === base.artProfile) delete cur.artProfile;
+  else cur.artProfile = profile;
+  if (Object.keys(cur).length === 0) delete next.enemies[kind];
+  else next.enemies[kind] = cur;
+  return pruneWaveLabOverrides(next);
+}
+
+function nextCustomEnemyId(sourceKind: string, taken: Set<string>): string {
+  let n = 1;
+  let id = `${sourceKind}_copy_${n}`;
+  while (taken.has(id)) {
+    n += 1;
+    id = `${sourceKind}_copy_${n}`;
+  }
+  return id;
+}
+
+export function duplicateEnemy(
+  src: WaveLabOverrides,
+  sourceKind: EnemyKind,
+): { overrides: WaveLabOverrides; kind: string } {
+  const live = effectiveEnemy(sourceKind, src, true);
+  const taken = new Set(listAllEnemyKinds(src).map(String));
+  const kind = nextCustomEnemyId(String(sourceKind), taken);
+  const next = cloneOverrides(src);
+  const def = cloneEnemyDef(live);
+  def.kind = kind;
+  def.name = `${live.name} Copy`;
+  def.custom = true;
+  if (!def.behavior) def.behavior = cloneBehavior(builtinBehaviorForKind(sourceKind));
+  next.customEnemies[kind] = def;
+  return { overrides: pruneWaveLabOverrides(next), kind };
+}
+
+export function createBlankEnemy(src: WaveLabOverrides): { overrides: WaveLabOverrides; kind: string } {
+  const taken = new Set(listAllEnemyKinds(src).map(String));
+  const kind = nextCustomEnemyId("custom", taken);
+  const scav = ENEMIES.scav;
+  const next = cloneOverrides(src);
+  const def = cloneEnemyDef(scav);
+  def.kind = kind;
+  def.name = "New Enemy";
+  def.custom = true;
+  def.behavior = builtinBehaviorForKind("scav");
+  next.customEnemies[kind] = def;
+  return { overrides: pruneWaveLabOverrides(next), kind };
+}
+
+export function deleteCustomEnemy(src: WaveLabOverrides, kind: EnemyKind): WaveLabOverrides {
+  const next = cloneOverrides(src);
+  if (!next.customEnemies[kind]) return src;
+  delete next.customEnemies[kind];
+  delete next.enemies[kind];
   return pruneWaveLabOverrides(next);
 }
 
@@ -266,12 +515,17 @@ export function resetWaveItem(src: WaveLabOverrides, mapId: string, wave: number
 
 export function modifiedWaveLabCount(overrides: WaveLabOverrides): number {
   const clean = pruneWaveLabOverrides(overrides);
-  return Object.keys(clean.enemies).length + Object.keys(clean.waves).length;
+  return (
+    Object.keys(clean.enemies).length +
+    Object.keys(clean.customEnemies).length +
+    Object.keys(clean.waves).length
+  );
 }
 
 export function enemyOverrideCount(overrides: WaveLabOverrides, kind: EnemyKind): number {
   const bag = overrides.enemies[kind];
-  return bag ? Object.keys(bag).length : 0;
+  const custom = overrides.customEnemies?.[kind] ? 1 : 0;
+  return (bag ? Object.keys(bag).length : 0) + custom;
 }
 
 export function waveOverrideCount(overrides: WaveLabOverrides, mapId: string, wave: number): number {
@@ -362,19 +616,199 @@ export function requestTestWave(
 
 export type WavePatchLine = { scope: string; field: string; from: string | number; to: string | number };
 
+const BEHAVIOR_EXPORT_KEYS: (keyof EnemyBehaviorConfig)[] = [
+  "objective",
+  "canShoot",
+  "requireLosToShoot",
+  "fireWhileMoving",
+  "sightRange",
+  "normalSpeedMult",
+  "engagedSpeedMult",
+  "lostTargetSpeedMult",
+  "targetMemoryMs",
+  "onDamage",
+  "onDamageSpeedMult",
+  "onDamageDurationMs",
+  "rerouteChance",
+];
+
+const STAT_EXPORT_KEYS = [
+  "hp",
+  "speed",
+  "armor",
+  "towerDamage",
+  "fireRange",
+  "fireCooldown",
+  "damage",
+  "bounty",
+  "size",
+] as const;
+
+/** Compact one-line zone summary — always includes w×h so patches are bakeable. */
+export function summarizeHitZones(zones: EnemyHitZone[] | undefined): string {
+  if (!zones || zones.length === 0) return "(fallback body)";
+  return zones
+    .map((z) => {
+      const off = z.enabled ? "" : "!";
+      return `${off}${z.displayName}:${z.shape}×${z.damageMult}@(${z.x.toFixed(3)},${z.y.toFixed(3)}) ${z.width.toFixed(3)}×${z.height.toFixed(3)} p${z.priority}`;
+    })
+    .join(" | ");
+}
+
+/** Machine-readable hit-zone dump for re-bake without screenshots. */
+export function formatHitZonesJson(zones: readonly EnemyHitZone[]): string {
+  return JSON.stringify(
+    zones.map((z) => ({
+      id: z.id,
+      displayName: z.displayName,
+      shape: z.shape,
+      x: z.x,
+      y: z.y,
+      width: z.width,
+      height: z.height,
+      damageMult: z.damageMult,
+      enabled: z.enabled,
+      priority: z.priority,
+    })),
+  );
+}
+
+export function formatBehaviorJson(cfg: EnemyBehaviorConfig): string {
+  const out: Record<string, string | number | boolean> = {};
+  for (const key of BEHAVIOR_EXPORT_KEYS) out[key] = cfg[key] as string | number | boolean;
+  return JSON.stringify(out);
+}
+
+/** Full bake payload: stats + hitZones + behavior (+ profiles) for one enemy/boss. */
+export function formatEnemyBakePayload(def: EnemyDef): Record<string, unknown> {
+  const behavior = def.behavior ?? builtinBehaviorForKind(def.kind);
+  const stats: Record<string, number> = {};
+  for (const key of STAT_EXPORT_KEYS) stats[key] = def[key];
+  return {
+    kind: def.kind,
+    name: def.name,
+    role: isBossKind(def.kind) ? "boss" : "enemy",
+    custom: !!def.custom,
+    disabled: !!def.disabled,
+    attackProfile: def.attackProfile ?? null,
+    artProfile: def.artProfile ?? null,
+    stats,
+    hitZones: def.hitZones ? cloneHitZones(def.hitZones) : null,
+    behavior: cloneBehavior(behavior),
+  };
+}
+
+export function formatEnemyBakeJson(def: EnemyDef): string {
+  return JSON.stringify(formatEnemyBakePayload(def));
+}
+
+function summarizeBehavior(cfg: EnemyBehaviorConfig | undefined, kind: string): string {
+  const b = cfg ?? builtinBehaviorForKind(kind);
+  return derivedBehaviorSummary(b).join(" · ");
+}
+
+function pushBehaviorFieldDiffs(
+  lines: WavePatchLine[],
+  scope: string,
+  from: EnemyBehaviorConfig,
+  to: EnemyBehaviorConfig,
+): void {
+  for (const key of BEHAVIOR_EXPORT_KEYS) {
+    const a = from[key];
+    const b = to[key];
+    if (a === b) continue;
+    if (typeof a === "number" && typeof b === "number" && nearlyEqual(a, b)) continue;
+    lines.push({
+      scope,
+      field: `behavior.${key}`,
+      from: typeof a === "boolean" ? String(a) : (a as string | number),
+      to: typeof b === "boolean" ? String(b) : (b as string | number),
+    });
+  }
+}
+
 export function waveLabPatchLines(overrides: WaveLabOverrides): WavePatchLine[] {
   const clean = pruneWaveLabOverrides(overrides);
   const lines: WavePatchLine[] = [];
+
+  for (const [kind, def] of Object.entries(clean.customEnemies)) {
+    const scope = def.name.toUpperCase();
+    lines.push({
+      scope,
+      field: "customEnemy",
+      from: "(none)",
+      to: kind,
+    });
+    for (const key of STAT_EXPORT_KEYS) {
+      lines.push({ scope, field: key, from: "(new)", to: def[key] });
+    }
+    if (def.attackProfile) {
+      lines.push({ scope, field: "attackProfile", from: "(new)", to: def.attackProfile });
+    }
+    if (def.artProfile) {
+      lines.push({ scope, field: "artProfile", from: "(new)", to: def.artProfile });
+    }
+    if (def.hitZones) {
+      lines.push({
+        scope,
+        field: "hitZones",
+        from: "(new)",
+        to: summarizeHitZones(def.hitZones),
+      });
+    }
+    if (def.behavior) {
+      lines.push({
+        scope,
+        field: "behavior",
+        from: "(new)",
+        to: summarizeBehavior(def.behavior, kind),
+      });
+      for (const key of BEHAVIOR_EXPORT_KEYS) {
+        const v = def.behavior[key];
+        lines.push({
+          scope,
+          field: `behavior.${key}`,
+          from: "(new)",
+          to: typeof v === "boolean" ? String(v) : (v as string | number),
+        });
+      }
+    }
+  }
+
   for (const [kind, fields] of Object.entries(clean.enemies)) {
-    const base = ENEMIES[kind as EnemyKind];
-    if (!base) continue;
+    const base = resolveBaseEnemy(kind, clean, true);
     const scope = overrideName(fields, base);
     for (const [field, to] of Object.entries(fields)) {
+      if (field === "hitZones") {
+        lines.push({
+          scope,
+          field: "hitZones",
+          from: summarizeHitZones(base.hitZones),
+          to: summarizeHitZones(to as EnemyHitZone[]),
+        });
+        continue;
+      }
+      if (field === "behavior") {
+        const fromB = base.behavior ?? builtinBehaviorForKind(kind);
+        const toB = to as EnemyBehaviorConfig;
+        lines.push({
+          scope,
+          field: "behavior",
+          from: summarizeBehavior(fromB, kind),
+          to: summarizeBehavior(toB, kind),
+        });
+        pushBehaviorFieldDiffs(lines, scope, fromB, toB);
+        continue;
+      }
       const from = base[field as keyof EnemyDef];
       if (typeof to === "string" && typeof from === "string" && to !== from) {
         lines.push({ scope, field, from, to });
       } else if (typeof to === "number" && typeof from === "number" && !nearlyEqual(from, to)) {
         lines.push({ scope, field, from, to });
+      } else if (typeof to === "boolean" && typeof from === "boolean" && to !== from) {
+        lines.push({ scope, field, from: String(from), to: String(to) });
+      } else if (typeof to === "string" && (field === "attackProfile" || field === "artProfile")) {
+        lines.push({ scope, field, from: String(from ?? "(default)"), to });
       }
     }
   }
@@ -420,7 +854,17 @@ function overrideName(fields: EnemyOverride, base: EnemyDef): string {
   return (typeof fields.name === "string" ? fields.name : base.name).toUpperCase();
 }
 
+/** Kinds that appear in enemy/boss override bags or as custom defs. */
+function modifiedEnemyKinds(clean: WaveLabOverrides): string[] {
+  const kinds = new Set<string>([
+    ...Object.keys(clean.enemies),
+    ...Object.keys(clean.customEnemies),
+  ]);
+  return [...kinds].sort();
+}
+
 export function formatWaveLabPatch(overrides: WaveLabOverrides): string {
+  const clean = pruneWaveLabOverrides(overrides);
   const lines = waveLabPatchLines(overrides);
   if (lines.length === 0) return "WAVE LAB PATCH\n\n(no changes)\n";
   const groups = new Map<string, WavePatchLine[]>();
@@ -435,6 +879,21 @@ export function formatWaveLabPatch(overrides: WaveLabOverrides): string {
     for (const line of group) parts.push(`${line.field}: ${line.from} -> ${line.to}`);
     parts.push("");
   }
+
+  // Full bake blocks: stats + hitZones + behavior for every touched enemy/boss.
+  const bakeKinds = modifiedEnemyKinds(clean);
+  if (bakeKinds.length) {
+    parts.push("---");
+    parts.push("ENEMY BAKE JSON (stats + hitZones + behavior — paste-ready)");
+    parts.push("");
+    for (const kind of bakeKinds) {
+      const live = effectiveEnemy(kind, clean, true);
+      parts.push(`ENEMY_JSON ${kind}`);
+      parts.push(formatEnemyBakeJson(live));
+      parts.push("");
+    }
+  }
+
   return parts.join("\n").trim() + "\n";
 }
 
@@ -444,6 +903,8 @@ export function parseStoredWaveLab(raw: string | null): WaveLabOverrides {
     const parsed = JSON.parse(raw) as Partial<WaveLabOverrides>;
     return pruneWaveLabOverrides({
       enemies: parsed.enemies && typeof parsed.enemies === "object" ? parsed.enemies : {},
+      customEnemies:
+        parsed.customEnemies && typeof parsed.customEnemies === "object" ? parsed.customEnemies : {},
       waves: parsed.waves && typeof parsed.waves === "object" ? parsed.waves : {},
     });
   } catch {

@@ -48,6 +48,12 @@ export interface MapDef {
   lootMult: number;
   /** wave composition tuning: fewer / later heavy enemies on easy maps */
   waveMods?: WaveMods;
+  /**
+   * Optional hand-authored wave catalog (1-based wave index).
+   * When present for a wave number, replaces buildWave() for that map.
+   * Waves without an entry still use buildWave + waveMods.
+   */
+  authoredWaves?: Partial<Record<number, import("./data").Wave>>;
   /** position on the region map, 0..100 percent */
   geo: { x: number; y: number };
   /** short callsign shown on the region map */

@@ -85,9 +85,9 @@ describe("Balance Lab runtime overrides", () => {
   });
 
   it("armor override changes effective armor value", () => {
-    const over = setOverrideField(emptyBalanceOverrides(), "armor", "slick", "reduction", 0.5, 0.45);
+    const over = setOverrideField(emptyBalanceOverrides(), "armor", "slick", "reduction", 0.5, 0.55);
     expect(effectiveArmor("slick", over, true)?.reduction).toBe(0.5);
-    expect(ARMORS["slick"]!.reduction).toBe(0.45);
+    expect(ARMORS["slick"]!.reduction).toBe(0.55);
   });
 
   it("attachment override changes effective modifier", () => {
@@ -247,7 +247,7 @@ describe("Balance Lab buff/nerf tone", () => {
     expect(balanceFieldTone("range", 5, 6)).toBe("buff");
     expect(balanceFieldTone("accuracy", 0.7, 0.6)).toBe("nerf");
     expect(balanceFieldTone("magSize", 7, 9)).toBe("buff");
-    expect(balanceFieldTone("reduction", 0.18, 0.25)).toBe("buff");
+    expect(balanceFieldTone("reduction", 0.25, 0.35)).toBe("buff");
     expect(balanceFieldTone("durability", 110, 90)).toBe("nerf");
     expect(balanceToneTextClass("buff")).toBe("text-accent");
     expect(balanceToneTextClass("nerf")).toBe("text-destructive");

@@ -87,13 +87,13 @@ describe("enemy compare", () => {
     const speed = composeEnemyCompare(all, identity, "ALL", "speed", "", "desc", (d) => d.name);
     expect(hp.order[0]).not.toBe(speed.order[0]);
     const top = hp.rows.find((r) => r.id === hp.order[0])!;
-    expect(top.test).toBe(enemyMetricValue(ENEMIES[hp.order[0]!], "hp"));
+    expect(top.test).toBe(enemyMetricValue(ENEMIES[hp.order[0]!]!, "hp"));
   });
 
   it("category + stat compose", () => {
     const view = composeEnemyCompare(all, identity, "ARMORED", "speed", "", "desc", (d) => d.name);
     expect(view.defs.every((d) => d.armor > 0)).toBe(true);
-    expect(view.rows.every((r) => r.test === enemyMetricValue(ENEMIES[r.id], "speed"))).toBe(true);
+    expect(view.rows.every((r) => r.test === enemyMetricValue(ENEMIES[r.id]!, "speed"))).toBe(true);
   });
 
   it("higher-is-better ranking where appropriate", () => {

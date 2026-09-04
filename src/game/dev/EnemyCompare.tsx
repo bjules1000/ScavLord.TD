@@ -104,7 +104,8 @@ export default function EnemyCompare({
         <div className="pixel-scrollbar min-h-0 flex-1 overflow-auto">
           {view.order.map((id) => {
             const row = byId.get(id)!;
-            const def = ENEMIES[id];
+            const def = all.find((d) => d.kind === id) ?? ENEMIES[id];
+            if (!def) return null;
             const test = testOf(def);
             const tone = enemyFieldTone(metric === "leak" ? "damage" : metric, row.base, row.test);
             const active = selectedId === id;

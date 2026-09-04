@@ -84,7 +84,18 @@ export interface Tower {
   scavMods?: import("./weaponVisuals").WeaponVisualState | null;
 }
 
-export type EnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";
+export type BuiltinEnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";
+
+/** Stable enemy identity. Built-ins plus Wave Lab authored variants. */
+export type EnemyKind = BuiltinEnemyKind | (string & {});
+
+export const BUILTIN_ENEMY_KINDS: readonly BuiltinEnemyKind[] = [
+  "scav",
+  "raider",
+  "sniperScav",
+  "pmc",
+  "boss",
+] as const;
 
 export interface EnemyDef {
   kind: EnemyKind;
@@ -100,6 +111,18 @@ export interface EnemyDef {
   body: string;
   gear: string;
   size: number;
+  /** Visual gun profile for draw (not player WEAPONS). */
+  attackProfile?: "uzi" | "sg" | "ak";
+  /** Body art profile for draw. */
+  artProfile?: "light" | "heavy";
+  /** Authored physical hit zones. Missing → legacy BODY fallback. */
+  hitZones?: import("./enemyHitZones").EnemyHitZone[];
+  /** Authored behavior. Missing → builtinBehaviorForKind(kind). */
+  behavior?: import("./enemyBehavior").EnemyBehaviorConfig;
+  /** User-created Wave Lab variant (not built-in). */
+  custom?: boolean;
+  /** Soft-disable without deleting wave references. */
+  disabled?: boolean;
 }
 
 export interface Enemy {
@@ -127,6 +150,10 @@ export interface Enemy {
   leaked?: boolean;
   /** Bounty / XP / quest kill already paid. */
   counted?: boolean;
+  /** Last hit zone id for DEV/FX (raid runtime only). */
+  lastHitZoneId?: string | null;
+  /** Data-driven behavior runtime (raid only). */
+  behaviorRuntime?: import("./enemyBehavior").EnemyBehaviorRuntime;
 }
 
 export interface Bullet {
