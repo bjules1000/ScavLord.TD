@@ -2,13 +2,52 @@ import type { BuiltinEnemyKind, EnemyDef, EnemyKind, Perk, TowerDef, TowerKind }
 import { cloneHitZones, defaultHitZones, type EnemyHitZone } from "./enemyHitZones";
 import { builtinBehaviorForKind } from "./enemyBehavior";
 
-/** Apply QA-tuned positions/shapes onto default zone sizes (export summary omitted w×h). */
-function tunedZones(
-  patches: Partial<Record<"head" | "body" | "legs", Partial<EnemyHitZone>>>,
-): EnemyHitZone[] {
+/**
+ * QA-tuned hit zones from Wave Lab LIVE authoring.
+ * HEAD width/height taken from HITBOX screenshots; BODY/LEGS sizes scaled from
+ * each enemy's HEAD vs default HEAD so silhouette fit is preserved until a
+ * full JSON export with all three zones is available.
+ */
+function tunedZones(opts: {
+  head: { x: number; y: number; width: number; height: number };
+  body: { x: number; y: number };
+  legs: { x: number; y: number };
+}): EnemyHitZone[] {
+  const defHead = defaultHitZones().find((z) => z.id === "head")!;
+  const scaleW = opts.head.width / defHead.width;
+  const scaleH = opts.head.height / defHead.height;
   return cloneHitZones(defaultHitZones()).map((z) => {
-    const p = patches[z.id as "head" | "body" | "legs"];
-    return p ? { ...z, ...p } : z;
+    if (z.id === "head") {
+      return {
+        ...z,
+        shape: "rect" as const,
+        x: opts.head.x,
+        y: opts.head.y,
+        width: opts.head.width,
+        height: opts.head.height,
+      };
+    }
+    if (z.id === "body") {
+      return {
+        ...z,
+        shape: "rect" as const,
+        x: opts.body.x,
+        y: opts.body.y,
+        width: Number((z.width * scaleW).toFixed(3)),
+        height: Number((z.height * scaleH).toFixed(3)),
+      };
+    }
+    if (z.id === "legs") {
+      return {
+        ...z,
+        shape: "rect" as const,
+        x: opts.legs.x,
+        y: opts.legs.y,
+        width: Number((z.width * scaleW).toFixed(3)),
+        height: Number((z.height * scaleH).toFixed(3)),
+      };
+    }
+    return z;
   });
 }
 
@@ -107,9 +146,9 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     attackProfile: "uzi",
     artProfile: "light",
     hitZones: tunedZones({
-      head: { shape: "rect", x: 0.41, y: 0.27 },
-      body: { shape: "rect", x: 0.36, y: 0.38 },
-      legs: { shape: "rect", x: 0.38, y: 0.56 },
+      head: { x: 0.41, y: 0.268, width: 0.159, height: 0.114 },
+      body: { x: 0.36, y: 0.38 },
+      legs: { x: 0.38, y: 0.56 },
     }),
     behavior: builtinBehaviorForKind("scav"),
   },
@@ -128,9 +167,9 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     attackProfile: "sg",
     artProfile: "light",
     hitZones: tunedZones({
-      head: { shape: "rect", x: 0.4, y: 0.27 },
-      body: { shape: "rect", x: 0.35, y: 0.38 },
-      legs: { shape: "rect", x: 0.37, y: 0.57 },
+      head: { x: 0.4, y: 0.266, width: 0.162, height: 0.109 },
+      body: { x: 0.35, y: 0.38 },
+      legs: { x: 0.37, y: 0.57 },
     }),
     behavior: builtinBehaviorForKind("sniperScav"),
   },
@@ -149,9 +188,9 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     attackProfile: "ak",
     artProfile: "heavy",
     hitZones: tunedZones({
-      head: { shape: "rect", x: 0.4, y: 0.25 },
-      body: { shape: "rect", x: 0.33, y: 0.36 },
-      legs: { shape: "rect", x: 0.38, y: 0.6 },
+      head: { x: 0.396, y: 0.252, width: 0.196, height: 0.108 },
+      body: { x: 0.33, y: 0.36 },
+      legs: { x: 0.38, y: 0.6 },
     }),
     behavior: builtinBehaviorForKind("raider"),
   },
@@ -170,9 +209,9 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     attackProfile: "ak",
     artProfile: "heavy",
     hitZones: tunedZones({
-      head: { shape: "rect", x: 0.4, y: 0.25 },
-      body: { shape: "rect", x: 0.32, y: 0.36 },
-      legs: { shape: "rect", x: 0.36, y: 0.59 },
+      head: { x: 0.396, y: 0.251, width: 0.207, height: 0.109 },
+      body: { x: 0.32, y: 0.36 },
+      legs: { x: 0.36, y: 0.59 },
     }),
     behavior: builtinBehaviorForKind("pmc"),
   },
@@ -191,9 +230,9 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     attackProfile: "ak",
     artProfile: "heavy",
     hitZones: tunedZones({
-      head: { shape: "rect", x: 0.39, y: 0.23 },
-      body: { shape: "rect", x: 0.3, y: 0.35 },
-      legs: { shape: "rect", x: 0.34, y: 0.6 },
+      head: { x: 0.388, y: 0.229, width: 0.226, height: 0.134 },
+      body: { x: 0.3, y: 0.35 },
+      legs: { x: 0.34, y: 0.6 },
     }),
     behavior: builtinBehaviorForKind("boss"),
   },

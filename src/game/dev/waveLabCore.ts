@@ -616,15 +616,33 @@ export function requestTestWave(
 
 export type WavePatchLine = { scope: string; field: string; from: string | number; to: string | number };
 
-function summarizeHitZones(zones: EnemyHitZone[] | undefined): string {
+/** Compact one-line zone summary — always includes w×h so patches are bakeable. */
+export function summarizeHitZones(zones: EnemyHitZone[] | undefined): string {
   if (!zones || zones.length === 0) return "(fallback body)";
   return zones
-    .filter((z) => z.enabled)
-    .map(
-      (z) =>
-        `${z.displayName}:${z.shape}×${z.damageMult}@(${z.x.toFixed(2)},${z.y.toFixed(2)}) ${z.width.toFixed(2)}×${z.height.toFixed(2)}`,
-    )
-    .join(", ");
+    .map((z) => {
+      const off = z.enabled ? "" : "!";
+      return `${off}${z.displayName}:${z.shape}×${z.damageMult}@(${z.x.toFixed(3)},${z.y.toFixed(3)}) ${z.width.toFixed(3)}×${z.height.toFixed(3)} p${z.priority}`;
+    })
+    .join(" | ");
+}
+
+/** Machine-readable hit-zone dump for re-bake without screenshots. */
+export function formatHitZonesJson(zones: readonly EnemyHitZone[]): string {
+  return JSON.stringify(
+    zones.map((z) => ({
+      id: z.id,
+      displayName: z.displayName,
+      shape: z.shape,
+      x: z.x,
+      y: z.y,
+      width: z.width,
+      height: z.height,
+      damageMult: z.damageMult,
+      enabled: z.enabled,
+      priority: z.priority,
+    })),
+  );
 }
 
 function summarizeBehavior(cfg: EnemyBehaviorConfig | undefined, kind: string): string {
@@ -738,6 +756,7 @@ function overrideName(fields: EnemyOverride, base: EnemyDef): string {
 }
 
 export function formatWaveLabPatch(overrides: WaveLabOverrides): string {
+  const clean = pruneWaveLabOverrides(overrides);
   const lines = waveLabPatchLines(overrides);
   if (lines.length === 0) return "WAVE LAB PATCH\n\n(no changes)\n";
   const groups = new Map<string, WavePatchLine[]>();
@@ -752,6 +771,30 @@ export function formatWaveLabPatch(overrides: WaveLabOverrides): string {
     for (const line of group) parts.push(`${line.field}: ${line.from} -> ${line.to}`);
     parts.push("");
   }
+
+  // Full hit-zone JSON blocks so future bakes never lose width/height.
+  const jsonBlocks: string[] = [];
+  for (const [kind, fields] of Object.entries(clean.enemies)) {
+    if (!fields.hitZones) continue;
+    const base = resolveBaseEnemy(kind, clean, true);
+    jsonBlocks.push(`HITZONES_JSON ${kind}`);
+    jsonBlocks.push(formatHitZonesJson(fields.hitZones as EnemyHitZone[]));
+    jsonBlocks.push(`# base was: ${summarizeHitZones(base.hitZones)}`);
+    jsonBlocks.push("");
+  }
+  for (const [kind, def] of Object.entries(clean.customEnemies)) {
+    if (!def.hitZones) continue;
+    jsonBlocks.push(`HITZONES_JSON ${kind}`);
+    jsonBlocks.push(formatHitZonesJson(def.hitZones));
+    jsonBlocks.push("");
+  }
+  if (jsonBlocks.length) {
+    parts.push("---");
+    parts.push("HIT ZONE JSON (paste-ready for bake)");
+    parts.push("");
+    parts.push(...jsonBlocks);
+  }
+
   return parts.join("\n").trim() + "\n";
 }
 

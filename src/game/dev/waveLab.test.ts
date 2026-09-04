@@ -188,6 +188,9 @@ describe("Wave Lab enemies", () => {
     const patch = formatWaveLabPatch(over);
     expect(patch).toContain("ellipse");
     expect(patch).toMatch(/HEAD:ellipse/);
+    expect(patch).toContain("HITZONES_JSON raider");
+    expect(patch).toContain('"width"');
+    expect(patch).toContain('"height"');
     over = resetEnemyItem(over, "raider");
     const restored = effectiveEnemy("raider", over, true);
     expect(restored.hitZones!.find((z) => z.id === "head")!.shape).toBe(baseZones.find((z) => z.id === "head")!.shape);
