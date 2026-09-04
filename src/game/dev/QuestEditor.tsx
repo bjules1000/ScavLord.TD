@@ -8,6 +8,7 @@ import {
   defaultReward,
   describeQuestUnlock,
   evaluateQuest,
+  getQuestLifecycle,
   mapSpecialZones,
   validateQuest,
   type QuestObjective,
@@ -24,6 +25,7 @@ import {
   duplicateDevQuest,
   effectiveQuestCatalog,
   emptyQuestLabOverrides,
+  forceCompleteQuestWithPrerequisites,
   formatQuestPatch,
   getQuestLabOverrides,
   getQuestTestState,
@@ -32,6 +34,7 @@ import {
   questSummary,
   resetQuestItem,
   setQuestField,
+  setQuestForcedCompleted,
   setQuestMinLevel,
   setQuestMinRadioState,
   setQuestObjectives,
@@ -43,6 +46,10 @@ import {
   type QuestLabOverrides,
   type QuestLabView,
 } from "./questLab";
+import {
+  effectiveQuestLifecycle,
+  isQuestForceCompleted,
+} from "./questForceComplete";
 import { RADIO_STATES, UNIQUE_CONTACT_LIFECYCLES } from "../operators/radioProgression";
 import { CANONICAL_UNIQUE_OPERATORS } from "../operators/uniqueOperators";
 
@@ -58,6 +65,7 @@ export default function QuestEditor({
   onTestQuest,
   onResetTestProgress,
   unlockContext,
+  canonicalClaimedIds,
 }: {
   enabled: boolean;
   inRaid: boolean;
@@ -65,8 +73,10 @@ export default function QuestEditor({
   onApplied: (overrides: QuestLabOverrides) => void;
   onTestQuest: (questId: string) => { ok: true } | { ok: false; reason: string };
   onResetTestProgress: (questId: string) => void;
-  /** Live meta unlock snapshot for AVAILABILITY preview (DEV). */
+  /** Live meta unlock snapshot for AVAILABILITY preview (DEV) — may include force-complete. */
   unlockContext?: QuestUnlockContext;
+  /** Meta.claimed only — for CANONICAL vs EFFECTIVE display. */
+  canonicalClaimedIds?: readonly string[];
 }) {
   const [view, setView] = useState<QuestLabView>("quests");
   const [query, setQuery] = useState("");
@@ -267,12 +277,14 @@ export default function QuestEditor({
                   catalog={catalog}
                   draft={draft}
                   onDraft={setDraft}
+                  onApplyDraft={applyDraft}
                   summary={summary}
                   validation={validation}
                   progress={progress}
                   testActive={testSnap.activeId === selected.id}
                   testMsg={testMsg}
                   {...(unlockContext ? { unlockContext } : {})}
+                  canonicalClaimedIds={canonicalClaimedIds ?? []}
                 />
               )}
             </div>
@@ -343,32 +355,85 @@ function QuestDetails({
   catalog,
   draft,
   onDraft,
+  onApplyDraft,
   summary,
   validation,
   progress,
   testActive,
   testMsg,
   unlockContext,
+  canonicalClaimedIds,
 }: {
   spec: QuestSpec;
   catalog: QuestSpec[];
   draft: QuestLabOverrides;
   onDraft: (d: QuestLabOverrides) => void;
+  onApplyDraft: (d: QuestLabOverrides) => void;
   summary: ReturnType<typeof questSummary> | null;
   validation: ReturnType<typeof validateQuest> | null;
   progress: ReturnType<typeof evaluateQuest> | null;
   testActive: boolean;
   testMsg: string | null;
   unlockContext?: QuestUnlockContext;
+  canonicalClaimedIds: readonly string[];
 }) {
   const canonical = isCanonicalQuestId(spec.id);
   const zones = spec.mapId ? mapSpecialZones(spec.mapId) : [];
   const unlockPreview = unlockContext
     ? describeQuestUnlock(spec, unlockContext, catalog, undefined)
     : null;
+  const canonClaimed = canonicalClaimedIds.includes(spec.id);
+  const forced = isQuestForceCompleted(spec.id, draft.forcedCompleted);
+  const canonLife = unlockContext
+    ? getQuestLifecycle(spec, { ...unlockContext, claimedQuestIds: canonicalClaimedIds }, undefined)
+    : null;
+  const effectiveLife = unlockContext
+    ? effectiveQuestLifecycle(spec, { ...unlockContext, claimedQuestIds: canonicalClaimedIds }, draft.forcedCompleted)
+    : null;
 
   return (
     <>
+      <div className="mb-4 border-2 border-border bg-secondary/30 p-3 font-mono text-[11px]">
+        <div className="font-display text-[11px] text-primary">DEV PROGRESSION</div>
+        <div className="mt-2 grid gap-1 sm:grid-cols-2">
+          <div>
+            CANONICAL STATE{" "}
+            <span className="text-foreground">{canonLife ?? (canonClaimed ? "COMPLETED" : "—")}</span>
+          </div>
+          <div>
+            DEV EFFECTIVE{" "}
+            <span className="text-accent">{effectiveLife ?? "—"}</span>
+          </div>
+        </div>
+        {canonClaimed ? (
+          <div className="mt-2 text-accent">CANONICALLY COMPLETED — override locked</div>
+        ) : (
+          <label className="mt-2 flex items-center gap-2 text-foreground">
+            <input
+              type="checkbox"
+              checked={forced}
+              onChange={(e) => {
+                const next = setQuestForcedCompleted(draft, spec.id, e.target.checked);
+                onApplyDraft(next);
+              }}
+            />
+            FORCE COMPLETED
+          </label>
+        )}
+        <p className="mt-2 text-[10px] text-muted-foreground">
+          Progression gates only — no Scrap / items. Toggle does not mutate Meta.claimed.
+        </p>
+        {!canonClaimed && (
+          <button
+            type="button"
+            className="pixel-btn mt-2 px-2 py-1 text-[9px]"
+            onClick={() => onApplyDraft(forceCompleteQuestWithPrerequisites(draft, spec.id, catalog))}
+          >
+            FORCE COMPLETE PREREQUISITES + THIS
+          </button>
+        )}
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block font-mono text-[11px] uppercase text-muted-foreground">
           ID
