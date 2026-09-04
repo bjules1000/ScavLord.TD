@@ -132,7 +132,7 @@ export default function WeaponSprite({
 
   return (
     <div
-      className={`relative bg-[#141210] ${className}`}
+      className={`relative bg-transparent ${className}`}
       style={{
         width: platform.width * intScale,
         height: platform.height * intScale,
@@ -170,18 +170,22 @@ export default function WeaponSprite({
               type="button"
               aria-label={area.label}
               data-hotspot={area.slot}
-              className={`absolute border transition-colors ${
-                selected
-                  ? "border-primary/90 bg-primary/20"
-                  : hovered
-                    ? "border-accent/70 bg-accent/10"
-                    : "border-transparent bg-transparent hover:border-accent/50 hover:bg-white/5"
-              }`}
+              className="absolute bg-transparent"
               style={{
                 left: area.hitbox.x,
                 top: area.hitbox.y,
                 width: area.hitbox.w,
                 height: area.hitbox.h,
+                boxShadow: selected
+                  ? "inset 0 0 0 1px rgba(240,180,0,0.95), 0 0 0 1px rgba(240,180,0,0.45)"
+                  : hovered
+                    ? "inset 0 0 0 1px rgba(212,196,138,0.75)"
+                    : "inset 0 0 0 1px transparent",
+                background: selected
+                  ? "rgba(240,180,0,0.08)"
+                  : hovered
+                    ? "rgba(212,196,138,0.06)"
+                    : "transparent",
               }}
               onMouseEnter={() => onHoverSlot?.(area.slot)}
               onMouseLeave={() => onHoverSlot?.(null)}
@@ -191,8 +195,25 @@ export default function WeaponSprite({
         })}
       </div>
       {active && (
-        <div className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 border border-border/60 bg-black/70 px-1.5 py-0.5 font-mono text-[8px] tracking-wide text-accent">
-          {hitAreas?.find((h) => h.slot === active)?.label ?? active.toUpperCase()}
+        <div
+          className="pointer-events-none absolute font-mono text-[8px] tracking-wide text-accent"
+          style={{
+            left: Math.max(
+              4,
+              ((hitAreas?.find((h) => h.slot === active)?.hitbox.x ?? 0) +
+                (hitAreas?.find((h) => h.slot === active)?.hitbox.w ?? 0) / 2) *
+                intScale -
+                18,
+            ),
+            top: Math.max(
+              2,
+              ((hitAreas?.find((h) => h.slot === active)?.hitbox.y ?? 0) - 2) * intScale - 10,
+            ),
+          }}
+        >
+          <span className="border border-border/50 bg-black/75 px-1 py-0.5">
+            {hitAreas?.find((h) => h.slot === active)?.label ?? active.toUpperCase()}
+          </span>
         </div>
       )}
     </div>

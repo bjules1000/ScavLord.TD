@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
+  actionRequirementRows,
   actionShowsDestructiveWarning,
   clickableSlotsForWeapon,
   factoryMountForVisualSlot,
   GUN_BENCH_TITLE,
   gunBenchWorkspaceTitle,
+  listBenchWeaponSwapCandidates,
   preferredWeaponScale,
   scavActionsForSelectedSlot,
   selectedPartHeading,
@@ -152,6 +154,50 @@ describe("workspace framing", () => {
     const h = selectedPartHeading("ak74", defaultVisualState("ak74"), "stock");
     expect(h.slotLabel).toBe("STOCK");
     expect(h.partLabel).toBe("WOOD STOCK");
+    expect(h.flavor.length).toBeGreaterThan(0);
+  });
+});
+
+describe("weapon swap candidates", () => {
+  it("weapon swap lists equipped and stash weapons", () => {
+    const cut = applyScavAction("ak74", defaultVisualState("ak74"), "cut_stock");
+    expect(cut.ok).toBe(true);
+    if (!cut.ok) return;
+    const sks = makeItem("w_sks", 2)!;
+    sks.scavMods = defaultVisualState("sks");
+    const list = listBenchWeaponSwapCandidates("ak74", ["red_dot"], cut.state, [sks]);
+    expect(list[0]?.kind).toBe("equipped");
+    expect(list[0]?.attachmentCount).toBe(1);
+    expect(list[0]?.scavSummary).toContain("CUT");
+    expect(list.some((c) => c.kind === "stash" && c.weaponId === "sks")).toBe(true);
+  });
+
+  it("outgoing and incoming scav summaries stay independent", () => {
+    const taped = applyScavAction("ak74", defaultVisualState("ak74"), "tape_mags");
+    expect(taped.ok).toBe(true);
+    if (!taped.ok) return;
+    const ak = makeItem("w_ak74", 1)!;
+    ak.scavMods = taped.state;
+    const sks = makeItem("w_sks", 2)!;
+    const list = listBenchWeaponSwapCandidates("pm", [], null, [ak, sks]);
+    const akRow = list.find((c) => c.weaponId === "ak74");
+    const sksRow = list.find((c) => c.weaponId === "sks");
+    expect(akRow?.scavSummary).toContain("TAPED");
+    expect(sksRow?.scavSummary).toBe("STOCK");
+  });
+});
+
+describe("action requirement placeholder", () => {
+  it("renders tool metadata without inventing costs", () => {
+    const afterCut = applyScavAction("ak74", defaultVisualState("ak74"), "cut_stock");
+    expect(afterCut.ok).toBe(true);
+    if (!afterCut.ok) return;
+    const wrapAction = scavActionsForSelectedSlot("ak74", afterCut.state, "stock").find(
+      (a) => a.id === "wrap_stock",
+    );
+    expect(wrapAction).toBeTruthy();
+    const rows = actionRequirementRows(wrapAction!);
+    expect(rows.some((r) => r.label.includes("CLOTH"))).toBe(true);
   });
 });
 

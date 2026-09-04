@@ -101,19 +101,71 @@ describe("scav mods persistence", () => {
     expect(synced.equipment.scavMods?.parts.muzzle).toBe("ak_muzzle_sawed");
   });
 
-  it("two stash AKs keep independent builds", () => {
-    const a = makeItem("w_ak74", 1)!;
-    const b = makeItem("w_ak74", 2)!;
+  it("weapon swap via canonical equip preserves scavMods both ways", () => {
+    const meta = freshMeta();
+    const ak = makeItem("w_ak74", 10)!;
     const cut = applyScavAction("ak74", defaultVisualState("ak74"), "cut_stock");
-    const tape = applyScavAction("ak74", defaultVisualState("ak74"), "tape_mags");
-    expect(cut.ok && tape.ok).toBe(true);
-    if (!cut.ok || !tape.ok) return;
-    a.scavMods = cut.state;
-    b.scavMods = tape.state;
-    const entries = stashEntriesFromItems([a, b]);
-    expect(entries[0]?.scavMods?.parts.stock).toBe("ak_stock_cut");
-    expect(entries[1]?.scavMods?.parts.magazine).toBe("ak_mag_taped");
-    expect(entries[0]?.scavMods?.parts.magazine).not.toBe("ak_mag_taped");
+    expect(cut.ok).toBe(true);
+    if (!cut.ok) return;
+    ak.scavMods = cut.state;
+    const sks = makeItem("w_sks", 11)!;
+    const beer = applyScavAction("sks", defaultVisualState("sks"), "add_beer_sight");
+    expect(beer.ok).toBe(true);
+    if (!beer.ok) return;
+    sks.scavMods = beer.state;
+
+    let stash = [ak, sks];
+    const equipAk = equipOnEquipmentOwner(meta, LEADER_EQUIPMENT_OWNER_ID, stash, 100, 10, 40);
+    expect(equipAk.ok).toBe(true);
+    if (!equipAk.ok) return;
+    stash = equipAk.stash;
+    expect(getOwnerEquipment(meta, LEADER_EQUIPMENT_OWNER_ID)?.scavMods?.parts.stock).toBe(
+      "ak_stock_cut",
+    );
+
+    const equipSks = equipOnEquipmentOwner(meta, LEADER_EQUIPMENT_OWNER_ID, stash, 200, 11, 40);
+    expect(equipSks.ok).toBe(true);
+    if (!equipSks.ok) return;
+    stash = equipSks.stash;
+    expect(getOwnerEquipment(meta, LEADER_EQUIPMENT_OWNER_ID)?.weapon).toBe("sks");
+    expect(getOwnerEquipment(meta, LEADER_EQUIPMENT_OWNER_ID)?.scavMods?.parts.optic).toBe(
+      "sks_optic_beer_bottle",
+    );
+
+    const returnedAk = stash.find((i) => i.ref === "ak74");
+    expect(returnedAk?.scavMods?.parts.stock).toBe("ak_stock_cut");
+
+    const back = equipOnEquipmentOwner(
+      meta,
+      LEADER_EQUIPMENT_OWNER_ID,
+      stash,
+      300,
+      returnedAk!.uid,
+      40,
+    );
+    expect(back.ok).toBe(true);
+    if (!back.ok) return;
+    expect(getOwnerEquipment(meta, LEADER_EQUIPMENT_OWNER_ID)?.scavMods?.parts.stock).toBe(
+      "ak_stock_cut",
+    );
+    expect(back.stash.find((i) => i.ref === "sks")?.scavMods?.parts.optic).toBe(
+      "sks_optic_beer_bottle",
+    );
+  });
+
+  it("failed swap is atomic when stash would overflow", () => {
+    const meta = freshMeta();
+    const ak = makeItem("w_ak74", 20)!;
+    const first = equipOnEquipmentOwner(meta, LEADER_EQUIPMENT_OWNER_ID, [ak], 50, 20, 40);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const before = structuredClone(getOwnerEquipment(meta, LEADER_EQUIPMENT_OWNER_ID));
+    const sks = makeItem("w_sks", 21)!;
+    // Cap 1: equipping SKS would need to return AK → overflow
+    const stash = [sks, ...Array.from({ length: 1 }, (_, i) => makeItem("m_ifak", 100 + i)!)];
+    const result = equipOnEquipmentOwner(meta, LEADER_EQUIPMENT_OWNER_ID, stash, 60, 21, 1);
+    expect(result.ok).toBe(false);
+    expect(getOwnerEquipment(meta, LEADER_EQUIPMENT_OWNER_ID)).toEqual(before);
   });
 });
 

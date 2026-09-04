@@ -3108,6 +3108,8 @@ export default function TarkovTD() {
                     onInstallFromStash={equipOnSelectedOwner}
                     onBuyAndInstall={armoryBuyAndInstall}
                     onDetachMount={(idx) => unequipSelectedOwner(idx)}
+                    onEquipWeapon={equipOnSelectedOwner}
+                    onUnequipWeapon={() => unequipSelectedOwner("weapon")}
                     onApplyScavMods={(next) => {
                       const m = metaRef.current;
                       const ownerId = coerceEquipmentOwnerId(m, selectedEquipOwnerId);
