@@ -292,6 +292,13 @@ export function mapWaveTuning(map: MapDef): WaveTuning {
 }
 
 export function canonicalWave(map: MapDef, n: number): Wave {
+  const authored = map.authoredWaves?.[n];
+  if (authored) {
+    return {
+      name: authored.name,
+      groups: authored.groups.map((g) => ({ kind: g.kind, count: g.count, gap: g.gap })),
+    };
+  }
   return buildWave(n, map.waveMods);
 }
 
@@ -613,7 +620,10 @@ function summarizeHitZones(zones: EnemyHitZone[] | undefined): string {
   if (!zones || zones.length === 0) return "(fallback body)";
   return zones
     .filter((z) => z.enabled)
-    .map((z) => `${z.displayName}:${z.shape}×${z.damageMult}@(${z.x.toFixed(2)},${z.y.toFixed(2)})`)
+    .map(
+      (z) =>
+        `${z.displayName}:${z.shape}×${z.damageMult}@(${z.x.toFixed(2)},${z.y.toFixed(2)}) ${z.width.toFixed(2)}×${z.height.toFixed(2)}`,
+    )
     .join(", ");
 }
 

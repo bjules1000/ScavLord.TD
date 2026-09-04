@@ -10,6 +10,79 @@ export const WOODS_MAP: MapDef = {
   hpMult: 0.85,
   lootMult: 0.85,
   waveMods: { countMult: 0.6, heavyDelay: 3 },
+  /** QA-baked Pine Cut compositions (Wave Lab patch). */
+  authoredWaves: {
+    1: {
+      name: "SCAV ROAMERS",
+      groups: [
+        { kind: "scav", count: 4, gap: 600 },
+        { kind: "sniperScav", count: 1, gap: 500 },
+      ],
+    },
+    2: {
+      name: "SCAV ROAMERS",
+      groups: [{ kind: "scav", count: 6, gap: 600 }],
+    },
+    3: {
+      name: "CHECKPOINT PROBE",
+      groups: [
+        { kind: "scav", count: 5, gap: 475 },
+        { kind: "sniperScav", count: 2, gap: 500 },
+      ],
+    },
+    4: {
+      name: "CHECKPOINT PROBE",
+      groups: [
+        { kind: "scav", count: 5, gap: 535 },
+        { kind: "sniperScav", count: 3, gap: 500 },
+      ],
+    },
+    5: {
+      name: "SHOTGUN SWEEP",
+      groups: [
+        { kind: "scav", count: 2, gap: 510 },
+        { kind: "sniperScav", count: 5, gap: 520 },
+      ],
+    },
+    6: {
+      name: "SHOTGUN SWEEP",
+      groups: [
+        { kind: "scav", count: 5, gap: 488 },
+        { kind: "sniperScav", count: 6, gap: 520 },
+      ],
+    },
+    7: {
+      name: "RIFLE LINE",
+      groups: [
+        { kind: "scav", count: 5, gap: 466 },
+        { kind: "sniperScav", count: 2, gap: 520 },
+        { kind: "raider", count: 2, gap: 640 },
+      ],
+    },
+    8: {
+      name: "RIFLE LINE",
+      groups: [
+        { kind: "scav", count: 7, gap: 444 },
+        { kind: "sniperScav", count: 3, gap: 520 },
+        { kind: "raider", count: 3, gap: 640 },
+      ],
+    },
+    9: {
+      name: "ARMORED PUSH",
+      groups: [
+        { kind: "scav", count: 4, gap: 422 },
+        { kind: "sniperScav", count: 4, gap: 520 },
+        { kind: "raider", count: 4, gap: 640 },
+      ],
+    },
+    10: {
+      name: "RAID BOSS — ENFORCER",
+      groups: [
+        { kind: "boss", count: 1, gap: 1600 },
+        { kind: "raider", count: 4, gap: 500 },
+      ],
+    },
+  },
   geo: { x: 22, y: 30 },
   sector: "SECTOR N-2",
   palette: {

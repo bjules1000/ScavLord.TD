@@ -1,6 +1,16 @@
 import type { BuiltinEnemyKind, EnemyDef, EnemyKind, Perk, TowerDef, TowerKind } from "./types";
-import { defaultHitZones } from "./enemyHitZones";
+import { cloneHitZones, defaultHitZones, type EnemyHitZone } from "./enemyHitZones";
 import { builtinBehaviorForKind } from "./enemyBehavior";
+
+/** Apply QA-tuned positions/shapes onto default zone sizes (export summary omitted w×h). */
+function tunedZones(
+  patches: Partial<Record<"head" | "body" | "legs", Partial<EnemyHitZone>>>,
+): EnemyHitZone[] {
+  return cloneHitZones(defaultHitZones()).map((z) => {
+    const p = patches[z.id as "head" | "body" | "legs"];
+    return p ? { ...z, ...p } : z;
+  });
+}
 
 export const TILE = 44;
 
@@ -84,10 +94,10 @@ export const TOWER_ORDER: TowerKind[] = ["scout", "sniper", "gunner", "grenadier
 export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyDef> = {
   scav: {
     kind: "scav",
-    fireRange: 58, fireCooldown: 2100, towerDamage: 4,
+    fireRange: 60, fireCooldown: 2100, towerDamage: 5,
     name: "Scav",
-    hp: 34,
-    speed: 34,
+    hp: 35,
+    speed: 35,
     bounty: 22,
     armor: 0,
     damage: 1,
@@ -96,14 +106,18 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     size: 13,
     attackProfile: "uzi",
     artProfile: "light",
-    hitZones: defaultHitZones(),
+    hitZones: tunedZones({
+      head: { shape: "rect", x: 0.41, y: 0.27 },
+      body: { shape: "rect", x: 0.36, y: 0.38 },
+      legs: { shape: "rect", x: 0.38, y: 0.56 },
+    }),
     behavior: builtinBehaviorForKind("scav"),
   },
   sniperScav: {
     kind: "sniperScav",
-    fireRange: 46, fireCooldown: 1700, towerDamage: 16,
+    fireRange: 65, fireCooldown: 1700, towerDamage: 15,
     name: "Shotgun Scav",
-    hp: 48,
+    hp: 55,
     speed: 32,
     bounty: 36,
     armor: 0,
@@ -113,16 +127,20 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     size: 14,
     attackProfile: "sg",
     artProfile: "light",
-    hitZones: defaultHitZones(),
+    hitZones: tunedZones({
+      head: { shape: "rect", x: 0.4, y: 0.27 },
+      body: { shape: "rect", x: 0.35, y: 0.38 },
+      legs: { shape: "rect", x: 0.37, y: 0.57 },
+    }),
     behavior: builtinBehaviorForKind("sniperScav"),
   },
   raider: {
     kind: "raider",
-    fireRange: 108, fireCooldown: 1550, towerDamage: 9,
+    fireRange: 110, fireCooldown: 1550, towerDamage: 10,
     name: "Rifle Scav",
-    hp: 72,
-    speed: 32,
-    bounty: 44,
+    hp: 75,
+    speed: 30,
+    bounty: 40,
     armor: 2,
     damage: 2,
     body: "#5e6b4d",
@@ -130,7 +148,11 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     size: 15,
     attackProfile: "ak",
     artProfile: "heavy",
-    hitZones: defaultHitZones(),
+    hitZones: tunedZones({
+      head: { shape: "rect", x: 0.4, y: 0.25 },
+      body: { shape: "rect", x: 0.33, y: 0.36 },
+      legs: { shape: "rect", x: 0.38, y: 0.6 },
+    }),
     behavior: builtinBehaviorForKind("raider"),
   },
   pmc: {
@@ -138,33 +160,41 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     fireRange: 90, fireCooldown: 1450, towerDamage: 14,
     name: "Armored Raider",
     hp: 195,
-    speed: 26,
+    speed: 25,
     bounty: 80,
-    armor: 8,
+    armor: 5,
     damage: 2,
     body: "#3f4a55",
     gear: "#20272e",
     size: 16,
     attackProfile: "ak",
     artProfile: "heavy",
-    hitZones: defaultHitZones(),
+    hitZones: tunedZones({
+      head: { shape: "rect", x: 0.4, y: 0.25 },
+      body: { shape: "rect", x: 0.32, y: 0.36 },
+      legs: { shape: "rect", x: 0.36, y: 0.59 },
+    }),
     behavior: builtinBehaviorForKind("pmc"),
   },
   boss: {
     kind: "boss",
-    fireRange: 100, fireCooldown: 1100, towerDamage: 20,
+    fireRange: 90, fireCooldown: 1100, towerDamage: 15,
     name: "Enforcer",
     hp: 1150,
-    speed: 24,
+    speed: 22,
     bounty: 600,
-    armor: 14,
-    damage: 7,
+    armor: 5,
+    damage: 5,
     body: "#5a3a28",
     gear: "#241810",
     size: 22,
     attackProfile: "ak",
     artProfile: "heavy",
-    hitZones: defaultHitZones(),
+    hitZones: tunedZones({
+      head: { shape: "rect", x: 0.39, y: 0.23 },
+      body: { shape: "rect", x: 0.3, y: 0.35 },
+      legs: { shape: "rect", x: 0.34, y: 0.6 },
+    }),
     behavior: builtinBehaviorForKind("boss"),
   },
 };

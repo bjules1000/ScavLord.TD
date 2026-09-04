@@ -76,7 +76,7 @@ export function builtinBehaviorForKind(kind: string): EnemyBehaviorConfig {
       return defaultBehaviorConfig({
         canShoot: true,
         fireWhileMoving: true,
-        sightRange: 70,
+        sightRange: 75,
         normalSpeedMult: 1,
         engagedSpeedMult: 1,
         lostTargetSpeedMult: 1,
@@ -85,7 +85,7 @@ export function builtinBehaviorForKind(kind: string): EnemyBehaviorConfig {
       return defaultBehaviorConfig({
         canShoot: true,
         fireWhileMoving: true,
-        sightRange: 120,
+        sightRange: 110,
         normalSpeedMult: 1,
         engagedSpeedMult: 0.3,
         lostTargetSpeedMult: 1,
@@ -104,7 +104,7 @@ export function builtinBehaviorForKind(kind: string): EnemyBehaviorConfig {
       return defaultBehaviorConfig({
         canShoot: true,
         fireWhileMoving: true,
-        sightRange: 110,
+        sightRange: 100,
         normalSpeedMult: 1,
         engagedSpeedMult: 0.9,
         lostTargetSpeedMult: 1,
