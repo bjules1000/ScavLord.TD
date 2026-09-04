@@ -31,7 +31,6 @@ import {
   clearOperatorMove,
   findOperatorPath,
   isOperatorMoving,
-  issueOperatorMove,
   logicalNode,
   operatorCanFire,
   operatorMoveSpeedPx,
@@ -40,6 +39,20 @@ import {
   resolveMoveDestination,
   stepOperatorMove,
 } from "./movement";
+import {
+  BATTLE_TIME_MODE_ORDER,
+  battleTimeModeLabel,
+  battleTimeModeTitle,
+  createBattleTimeState,
+  resetBattleTimeState,
+  resolveEffectiveBattleTimeScale,
+  setBattleTimeMode,
+  simulationStepsFromWallDt,
+  toggleBattleTimePause,
+  type BattleTimeMode,
+  type BattleTimeState,
+} from "./battleTime";
+import { dispatchOperatorCommand } from "./operatorCommands";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -659,6 +672,19 @@ export default function TarkovTD() {
   const [pendingLoot, setPendingLoot] = useState<Item | null>(null);
   const [swapUid, setSwapUid] = useState<number | null>(null);
   const [holdAnglePending, setHoldAnglePending] = useState<number | null>(null);
+  const battleTimeRef = useRef<BattleTimeState>(createBattleTimeState());
+  const [battleTimeMode, setBattleTimeModeUi] = useState<BattleTimeMode>("NORMAL");
+  const syncBattleTimeUi = useCallback(() => {
+    setBattleTimeModeUi(battleTimeRef.current.mode);
+  }, []);
+  const applyBattleTimeMode = useCallback(
+    (mode: BattleTimeMode) => {
+      battleTimeRef.current = setBattleTimeMode(battleTimeRef.current, mode);
+      syncBattleTimeUi();
+      rerender();
+    },
+    [rerender, syncBattleTimeUi],
+  );
   const [sellValuableUids, setSellValuableUids] = useState<Set<number>>(() => new Set());
   const [leaveUids, setLeaveUids] = useState<Set<number>>(() => new Set());
   const [loadout, setLoadout] = useState<Item[]>([]);
@@ -782,8 +808,10 @@ export default function TarkovTD() {
     setLog([
       `${m.pmc.name} inserted at ${mapRef.current.def.name}${crewNote}. Keep them alive — if they die, the run is over for good.`,
     ]);
+    battleTimeRef.current = resetBattleTimeState(true);
+    syncBattleTimeUi();
     rerender();
-  }, [deployOperatorIds, loadout, persist, rerender, stash]);
+  }, [deployOperatorIds, loadout, persist, rerender, stash, syncBattleTimeUi]);
 
   const toHideout = useCallback(
     (keepBackpack: boolean) => {
@@ -858,9 +886,11 @@ export default function TarkovTD() {
       setSellValuableUids(new Set());
       setLeaveUids(new Set());
       setScreen("hideout");
+      battleTimeRef.current = resetBattleTimeState(true);
+      syncBattleTimeUi();
       rerender();
     },
-    [leaveUids, pushLog, rerender, sellValuableUids, stash, stashSlots],
+    [leaveUids, pushLog, rerender, sellValuableUids, stash, stashSlots, syncBattleTimeUi],
   );
 
 
@@ -2186,6 +2216,40 @@ export default function TarkovTD() {
         }
       }
 
+      // Multi-operator planning overlays (readable while PAUSED / anytime intents exist)
+      for (const t of s.towers) {
+        const pos = towerPos(t);
+        const dest = t.move?.dest;
+        if (dest) {
+          const dx = dest.tx * TILE + TILE / 2;
+          const dy = dest.ty * TILE + TILE / 2;
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y);
+          ctx.lineTo(dx, dy);
+          ctx.strokeStyle = t.id === s.selectedId ? "rgba(125,220,90,0.85)" : "rgba(125,220,90,0.45)";
+          ctx.setLineDash([5, 4]);
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = t.id === s.selectedId ? "rgba(125,220,90,0.9)" : "rgba(125,220,90,0.55)";
+          ctx.fillRect(dx - 4, dy - 4, 8, 8);
+        }
+        if (t.targetMode === "HOLD_ANGLE" && t.holdAngle != null && t.id !== s.selectedId) {
+          const len = TILE * 2.2;
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y);
+          ctx.lineTo(pos.x + Math.cos(t.holdAngle) * len, pos.y + Math.sin(t.holdAngle) * len);
+          ctx.strokeStyle = "rgba(232,140,48,0.55)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        if (t.reloadLeft > 0) {
+          ctx.fillStyle = "rgba(240,180,0,0.9)";
+          ctx.font = "bold 8px monospace";
+          ctx.fillText("RLD", pos.x - 8, pos.y - TILE / 2 - 6);
+        }
+      }
+
       if (sel) {
         const mark = s.enemies.find((e) => e.id === sel.engageTargetId && !isSettledOut(e));
         if (mark) {
@@ -2231,9 +2295,12 @@ export default function TarkovTD() {
     };
 
     const frame = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
+      const wallDt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      tick(dt);
+      const scale = resolveEffectiveBattleTimeScale(battleTimeRef.current);
+      const steps = simulationStepsFromWallDt(wallDt, scale);
+      // PAUSED (scale 0): skip tick entirely so fire/spawn cannot advance on a zero-dt frame.
+      for (const step of steps) tick(step);
       render();
       raf = requestAnimationFrame(frame);
     };
@@ -2320,9 +2387,15 @@ export default function TarkovTD() {
       if (sel) {
         const world = toWorld(ev);
         const pos = towerPos(sel);
-        sel.holdAngle = Math.atan2(world.y - pos.y + 4, world.x - pos.x);
-        sel.holdAnglePoint = { x: world.x, y: world.y };
-        sel.targetMode = "HOLD_ANGLE";
+        dispatchOperatorCommand(
+          sel,
+          {
+            type: "HOLD_ANGLE",
+            angle: Math.atan2(world.y - pos.y + 4, world.x - pos.x),
+            point: { x: world.x, y: world.y },
+          },
+          { map: mapRef.current, towers: s.towers },
+        );
       }
       setHoldAnglePending(null);
       rerender();
@@ -2388,7 +2461,11 @@ export default function TarkovTD() {
 
     const sel = s.towers.find((t) => t.id === s.selectedId);
     if (sel && !s.place) {
-      const result = issueOperatorMove(mapRef.current, s.towers, sel, tx, ty);
+      const result = dispatchOperatorCommand(
+        sel,
+        { type: "MOVE", tx, ty },
+        { map: mapRef.current, towers: s.towers },
+      );
       if (!result.ok) {
         pushLog(result.reason);
         rerender();
@@ -2460,12 +2537,21 @@ export default function TarkovTD() {
       }
       if (e.code === "Space") {
         e.preventDefault();
-        startWave();
+        const s = gs.current;
+        if (s.phase === "prep") {
+          startWave();
+          return;
+        }
+        if (s.phase === "combat" && battleTimeRef.current.controlsEnabled) {
+          battleTimeRef.current = toggleBattleTimePause(battleTimeRef.current);
+          syncBattleTimeUi();
+          rerender();
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rerender, startWave]);
+  }, [rerender, startWave, syncBattleTimeUi]);
 
   const s = gs.current;
   const selected = s.towers.find((t) => t.id === s.selectedId) ?? null;
@@ -2680,6 +2766,23 @@ export default function TarkovTD() {
               <Stat label="HEALTH" value={`${s.lives}/${START_LIVES}`} tone={s.lives < 7 ? "bad" : "good"} />
               <Stat label="WAVE" value={`${s.wave}`} />
               <Stat label="KILLS" value={`${s.killed}`} />
+              {inRaid && battleTimeRef.current.controlsEnabled && (
+                <div className="flex items-center gap-0.5 border-2 border-border bg-secondary/40 px-1 py-0.5">
+                  {BATTLE_TIME_MODE_ORDER.map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      title={battleTimeModeTitle(mode)}
+                      className={`pixel-btn min-w-[1.75rem] px-1.5 py-0.5 text-[10px] ${
+                        battleTimeMode === mode ? "pixel-btn-primary" : "text-muted-foreground"
+                      }`}
+                      onClick={() => applyBattleTimeMode(mode)}
+                    >
+                      {battleTimeModeLabel(mode)}
+                    </button>
+                  ))}
+                </div>
+              )}
               <DevToolsMenu enabled={DEV_TOOLS_ENABLED} onSelect={onDevTool} />
             </div>
           </header>
@@ -3692,12 +3795,11 @@ export default function TarkovTD() {
                             selected.targetMode === mode ? "text-primary" : "text-muted-foreground"
                           }`}
                           onClick={() => {
-                            selected.targetMode = mode;
-                            if (mode !== "MANUAL") selected.manualTargetId = null;
-                            if (mode !== "HOLD_ANGLE") {
-                              selected.holdAngle = null;
-                              selected.holdAnglePoint = null;
-                            }
+                            dispatchOperatorCommand(
+                              selected,
+                              { type: "SET_TARGETING", mode },
+                              { map: mapRef.current, towers: gs.current.towers },
+                            );
                             if (mode === "HOLD_ANGLE") {
                               setHoldAnglePending(selected.id);
                             }
@@ -3707,6 +3809,22 @@ export default function TarkovTD() {
                           {mode}
                         </button>
                       ))}
+                      <button
+                        type="button"
+                        className="pixel-btn px-1 py-0 text-[9px] text-muted-foreground"
+                        onClick={() => {
+                          const r = dispatchOperatorCommand(
+                            selected,
+                            { type: "RELOAD" },
+                            { map: mapRef.current, towers: gs.current.towers },
+                          );
+                          if (!r.ok) pushLog(r.reason);
+                          else if (r.message) pushLog(r.message);
+                          rerender();
+                        }}
+                      >
+                        RELOAD
+                      </button>
                     </div>
                   </div>
                   <div className="pt-1">
