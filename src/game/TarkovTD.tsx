@@ -52,7 +52,22 @@ import {
   type BattleTimeMode,
   type BattleTimeState,
 } from "./battleTime";
-import { dispatchOperatorCommand } from "./operatorCommands";
+import { clearOperatorOrders, dispatchOperatorCommand } from "./operatorCommands";
+import {
+  authoringForOperator,
+  beginPauseReloadSession,
+  canCancelPausedReload,
+  createPauseReloadSession,
+  hasMoveIntent,
+  holdPlanEmphasis,
+  isHoldingAngle,
+  movementPlanEmphasis,
+  noteReloadAuthoredInPause,
+  operatorPlanBadge,
+  reloadPlanLabelVisible,
+  type CommandAuthoringState,
+  type PauseReloadSession,
+} from "./tacticalCommandUi";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -305,11 +320,14 @@ import {
   requestTestWave,
 } from "./dev/waveLabCore";
 import {
+  getQuestLabOverrides,
   isQuestTestActive,
   noteQuestTestEvent,
   requestTestQuest,
   resetQuestTestProgress,
 } from "./dev/questLab";
+import { syncDevForcedQuestProgression } from "./dev/questForceCompleteSync";
+import { effectiveClaimedQuestIds } from "./dev/questForceComplete";
 import {
   effectiveItemDef,
   effectiveLootMult,
@@ -671,19 +689,30 @@ export default function TarkovTD() {
   const [choices, setChoices] = useState<Item[]>([]);
   const [pendingLoot, setPendingLoot] = useState<Item | null>(null);
   const [swapUid, setSwapUid] = useState<number | null>(null);
-  const [holdAnglePending, setHoldAnglePending] = useState<number | null>(null);
+  const [commandAuthoring, setCommandAuthoring] = useState<CommandAuthoringState>(null);
+  const commandAuthoringRef = useRef<CommandAuthoringState>(null);
+  const setAuthoring = useCallback((next: CommandAuthoringState) => {
+    commandAuthoringRef.current = next;
+    setCommandAuthoring(next);
+  }, []);
   const battleTimeRef = useRef<BattleTimeState>(createBattleTimeState());
+  const pauseReloadSessionRef = useRef<PauseReloadSession>(createPauseReloadSession());
   const [battleTimeMode, setBattleTimeModeUi] = useState<BattleTimeMode>("NORMAL");
   const syncBattleTimeUi = useCallback(() => {
     setBattleTimeModeUi(battleTimeRef.current.mode);
   }, []);
   const applyBattleTimeMode = useCallback(
     (mode: BattleTimeMode) => {
+      const prev = battleTimeRef.current.mode;
       battleTimeRef.current = setBattleTimeMode(battleTimeRef.current, mode);
+      if (mode === "PAUSED" && prev !== "PAUSED") {
+        pauseReloadSessionRef.current = beginPauseReloadSession(pauseReloadSessionRef.current);
+      }
+      if (mode !== "PAUSED") setAuthoring(null);
       syncBattleTimeUi();
       rerender();
     },
-    [rerender, syncBattleTimeUi],
+    [rerender, setAuthoring, syncBattleTimeUi],
   );
   const [sellValuableUids, setSellValuableUids] = useState<Set<number>>(() => new Set());
   const [leaveUids, setLeaveUids] = useState<Set<number>>(() => new Set());
@@ -731,6 +760,10 @@ export default function TarkovTD() {
 
   useEffect(() => {
     initRecruitmentLab(DEV_TOOLS_ENABLED);
+    if (DEV_TOOLS_ENABLED) {
+      syncDevForcedQuestProgression(metaRef.current, getQuestLabOverrides().forcedCompleted);
+      saveMeta(metaRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -2172,40 +2205,65 @@ export default function TarkovTD() {
           ctx.lineWidth = 4;
           ctx.stroke();
         }
-        // Aim cone visualization
+        // Aim cone visualization (selected) — subdued during tactical pause if HOLD; full otherwise
         const coneHalf = getShotDispersion(st.accuracy);
         const aimAngle = sel.angle;
         const coneLen = st.range;
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
-        ctx.arc(pos.x, pos.y, coneLen, aimAngle - coneHalf, aimAngle + coneHalf);
-        ctx.closePath();
-        ctx.fillStyle = sel.targetMode === "HOLD_ANGLE"
-          ? "rgba(232,140,48,0.10)"
-          : "rgba(110,220,255,0.08)";
-        ctx.fill();
-        ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
-          ? "rgba(232,140,48,0.45)"
-          : "rgba(110,220,255,0.35)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        // Aim direction line
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
-        ctx.lineTo(pos.x + Math.cos(aimAngle) * coneLen, pos.y + Math.sin(aimAngle) * coneLen);
-        ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
-          ? "rgba(232,140,48,0.6)"
-          : "rgba(110,220,255,0.5)";
-        ctx.stroke();
-        ctx.lineWidth = 1;
-        if (sel.move?.path.length) {
-          ctx.fillStyle = "rgba(110,220,255,0.35)";
+        const pausedNow = battleTimeRef.current.mode === "PAUSED";
+        const holdEmph = holdPlanEmphasis({
+          paused: pausedNow,
+          selected: true,
+          holding: isHoldingAngle(sel),
+        });
+        const showSelectedCone = !pausedNow || holdEmph === "selected" || sel.targetMode !== "HOLD_ANGLE";
+        if (showSelectedCone) {
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y);
+          ctx.arc(pos.x, pos.y, coneLen, aimAngle - coneHalf, aimAngle + coneHalf);
+          ctx.closePath();
+          ctx.fillStyle = sel.targetMode === "HOLD_ANGLE"
+            ? "rgba(232,140,48,0.10)"
+            : "rgba(110,220,255,0.08)";
+          ctx.fill();
+          ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
+            ? "rgba(232,140,48,0.45)"
+            : "rgba(110,220,255,0.35)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y);
+          ctx.lineTo(pos.x + Math.cos(aimAngle) * coneLen, pos.y + Math.sin(aimAngle) * coneLen);
+          ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
+            ? "rgba(232,140,48,0.6)"
+            : "rgba(110,220,255,0.5)";
+          ctx.stroke();
+          ctx.lineWidth = 1;
+        }
+        // Selected move path crumbs only while paused (strong plan) or subtle while executing
+        const selMoveEmph = movementPlanEmphasis({
+          paused: pausedNow,
+          selected: true,
+          hasMoveIntent: hasMoveIntent(sel),
+        });
+        if (selMoveEmph !== "hidden" && sel.move?.path.length) {
+          ctx.fillStyle =
+            selMoveEmph === "selected"
+              ? "rgba(125,220,90,0.55)"
+              : "rgba(110,220,255,0.22)";
           for (const step of sel.move.path) {
             const c = { x: step.tx * TILE + TILE / 2, y: step.ty * TILE + TILE / 2 };
-            ctx.fillRect(c.x - 2, c.y - 2, 4, 4);
+            const sz = selMoveEmph === "selected" ? 4 : 2;
+            ctx.fillRect(c.x - sz / 2, c.y - sz / 2, sz, sz);
           }
         }
-        if (!s.place && s.hoverTx >= 0) {
+        const authoring = commandAuthoringRef.current;
+        if (
+          authoring &&
+          authoring.operatorId === sel.id &&
+          authoring.mode === "MOVE" &&
+          !s.place &&
+          s.hoverTx >= 0
+        ) {
           const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), s.hoverTx, s.hoverTy);
           const path = dest ? findOperatorPath(mapRef.current, logicalNode(sel), dest) : null;
           const ok = !!dest && !!path;
@@ -2213,40 +2271,98 @@ export default function TarkovTD() {
           ctx.setLineDash([4, 4]);
           ctx.strokeRect(s.hoverTx * TILE + 2, s.hoverTy * TILE + 2, TILE - 4, TILE - 4);
           ctx.setLineDash([]);
+          if (ok && path && path.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            for (const step of path) {
+              ctx.lineTo(step.tx * TILE + TILE / 2, step.ty * TILE + TILE / 2);
+            }
+            ctx.strokeStyle = "rgba(125,220,90,0.55)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
         }
-      }
-
-      // Multi-operator planning overlays (readable while PAUSED / anytime intents exist)
-      for (const t of s.towers) {
-        const pos = towerPos(t);
-        const dest = t.move?.dest;
-        if (dest) {
-          const dx = dest.tx * TILE + TILE / 2;
-          const dy = dest.ty * TILE + TILE / 2;
+        if (
+          authoring &&
+          authoring.operatorId === sel.id &&
+          authoring.mode === "HOLD_ANGLE" &&
+          s.hoverTx >= 0
+        ) {
+          const worldX = s.hoverTx * TILE + TILE / 2;
+          const worldY = s.hoverTy * TILE + TILE / 2;
+          const ang = Math.atan2(worldY - pos.y + 4, worldX - pos.x);
           ctx.beginPath();
           ctx.moveTo(pos.x, pos.y);
-          ctx.lineTo(dx, dy);
-          ctx.strokeStyle = t.id === s.selectedId ? "rgba(125,220,90,0.85)" : "rgba(125,220,90,0.45)";
-          ctx.setLineDash([5, 4]);
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = t.id === s.selectedId ? "rgba(125,220,90,0.9)" : "rgba(125,220,90,0.55)";
-          ctx.fillRect(dx - 4, dy - 4, 8, 8);
-        }
-        if (t.targetMode === "HOLD_ANGLE" && t.holdAngle != null && t.id !== s.selectedId) {
-          const len = TILE * 2.2;
-          ctx.beginPath();
-          ctx.moveTo(pos.x, pos.y);
-          ctx.lineTo(pos.x + Math.cos(t.holdAngle) * len, pos.y + Math.sin(t.holdAngle) * len);
-          ctx.strokeStyle = "rgba(232,140,48,0.55)";
+          ctx.lineTo(pos.x + Math.cos(ang) * TILE * 3, pos.y + Math.sin(ang) * TILE * 3);
+          ctx.strokeStyle = "rgba(232,140,48,0.85)";
           ctx.lineWidth = 2;
           ctx.stroke();
         }
-        if (t.reloadLeft > 0) {
-          ctx.fillStyle = "rgba(240,180,0,0.9)";
-          ctx.font = "bold 8px monospace";
-          ctx.fillText("RLD", pos.x - 8, pos.y - TILE / 2 - 6);
+      }
+
+      // Squad planning overlays — full plan while PAUSED; selected-only subtle while live
+      {
+        const pausedNow = battleTimeRef.current.mode === "PAUSED";
+        for (const t of s.towers) {
+          const pos = towerPos(t);
+          const selected = t.id === s.selectedId;
+          const moveEmph = movementPlanEmphasis({
+            paused: pausedNow,
+            selected,
+            hasMoveIntent: hasMoveIntent(t),
+          });
+          if (moveEmph !== "hidden" && t.move?.dest) {
+            const dest = t.move.dest;
+            const dx = dest.tx * TILE + TILE / 2;
+            const dy = dest.ty * TILE + TILE / 2;
+            const strong = moveEmph === "selected";
+            const subtle = moveEmph === "subtle";
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            if (t.move.path.length) {
+              for (const step of t.move.path) {
+                ctx.lineTo(step.tx * TILE + TILE / 2, step.ty * TILE + TILE / 2);
+              }
+            }
+            ctx.lineTo(dx, dy);
+            ctx.strokeStyle = strong
+              ? "rgba(125,220,90,0.9)"
+              : subtle
+                ? "rgba(110,220,255,0.35)"
+                : "rgba(125,220,90,0.35)";
+            ctx.setLineDash(subtle ? [3, 5] : strong ? [] : [5, 4]);
+            ctx.lineWidth = strong ? 2.25 : subtle ? 1 : 1.25;
+            ctx.stroke();
+            ctx.setLineDash([]);
+            const mark = strong ? 5 : subtle ? 3 : 3.5;
+            ctx.fillStyle = strong
+              ? "rgba(125,220,90,0.95)"
+              : subtle
+                ? "rgba(110,220,255,0.45)"
+                : "rgba(125,220,90,0.45)";
+            ctx.fillRect(dx - mark, dy - mark, mark * 2, mark * 2);
+          }
+
+          const hEmph = holdPlanEmphasis({
+            paused: pausedNow,
+            selected,
+            holding: isHoldingAngle(t),
+          });
+          if (hEmph === "squad" && t.holdAngle != null) {
+            const len = TILE * 2.2;
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            ctx.lineTo(pos.x + Math.cos(t.holdAngle) * len, pos.y + Math.sin(t.holdAngle) * len);
+            ctx.strokeStyle = "rgba(232,140,48,0.4)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+
+          if (reloadPlanLabelVisible(pausedNow, t.reloadLeft)) {
+            ctx.fillStyle = "rgba(240,180,0,0.9)";
+            ctx.font = "bold 8px monospace";
+            ctx.fillText("RLD", pos.x - 8, pos.y - TILE / 2 - 6);
+          }
         }
       }
 
@@ -2377,13 +2493,16 @@ export default function TarkovTD() {
       s.selectedId = existing.id === s.selectedId ? null : existing.id;
       s.selectedObstacle = null;
       s.place = null;
+      setAuthoring(null);
       rerender();
       return;
     }
 
-    // HOLD_ANGLE placement: click on battlefield to set fixed aim direction
-    if (holdAnglePending != null) {
-      const sel = s.towers.find((t) => t.id === holdAnglePending);
+    // HOLD_ANGLE authoring: click on battlefield to set fixed aim direction
+    const holdAuth =
+      commandAuthoringRef.current?.mode === "HOLD_ANGLE" ? commandAuthoringRef.current : null;
+    if (holdAuth) {
+      const sel = s.towers.find((t) => t.id === holdAuth.operatorId);
       if (sel) {
         const world = toWorld(ev);
         const pos = towerPos(sel);
@@ -2397,7 +2516,7 @@ export default function TarkovTD() {
           { map: mapRef.current, towers: s.towers },
         );
       }
-      setHoldAnglePending(null);
+      setAuthoring(null);
       rerender();
       return;
     }
@@ -2420,6 +2539,7 @@ export default function TarkovTD() {
     if (edgeBag && !s.place) {
       s.selectedObstacle = edgeBag.id === s.selectedObstacle ? null : edgeBag.id;
       s.selectedId = null;
+      setAuthoring(null);
       rerender();
       return;
     }
@@ -2427,6 +2547,7 @@ export default function TarkovTD() {
     if (wirePick && !s.place) {
       s.selectedObstacle = wirePick.id === s.selectedObstacle ? null : wirePick.id;
       s.selectedId = null;
+      setAuthoring(null);
       rerender();
       return;
     }
@@ -2460,7 +2581,18 @@ export default function TarkovTD() {
     }
 
     const sel = s.towers.find((t) => t.id === s.selectedId);
-    if (sel && !s.place) {
+    const moveAuth =
+      commandAuthoringRef.current?.mode === "MOVE" &&
+      commandAuthoringRef.current.operatorId === s.selectedId
+        ? commandAuthoringRef.current
+        : null;
+    const paused = battleTimeRef.current.mode === "PAUSED";
+    // While PAUSED: require MOVE authoring. While live: click-to-move still works without palette.
+    if (sel && !s.place && (moveAuth || !paused)) {
+      if (paused && !moveAuth) {
+        // paused without authoring — ignore empty-tile click (keep selection)
+        return;
+      }
       const result = dispatchOperatorCommand(
         sel,
         { type: "MOVE", tx, ty },
@@ -2471,14 +2603,15 @@ export default function TarkovTD() {
         rerender();
         return;
       }
+      if (moveAuth) setAuthoring(null);
       if (!result.alreadyThere) rerender();
       return;
     }
 
     s.selectedObstacle = null;
 
-
     s.selectedId = null;
+    setAuthoring(null);
     rerender();
   };
 
@@ -2531,6 +2664,11 @@ export default function TarkovTD() {
     const onKey = (e: KeyboardEvent) => {
       const s = gs.current;
       if (e.key === "Escape") {
+        if (commandAuthoringRef.current) {
+          setAuthoring(null);
+          rerender();
+          return;
+        }
         s.place = null;
         s.selectedId = null;
         rerender();
@@ -2543,7 +2681,12 @@ export default function TarkovTD() {
           return;
         }
         if (s.phase === "combat" && battleTimeRef.current.controlsEnabled) {
+          const prev = battleTimeRef.current.mode;
           battleTimeRef.current = toggleBattleTimePause(battleTimeRef.current);
+          if (battleTimeRef.current.mode === "PAUSED" && prev !== "PAUSED") {
+            pauseReloadSessionRef.current = beginPauseReloadSession(pauseReloadSessionRef.current);
+          }
+          if (battleTimeRef.current.mode !== "PAUSED") setAuthoring(null);
           syncBattleTimeUi();
           rerender();
         }
@@ -2551,7 +2694,7 @@ export default function TarkovTD() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rerender, startWave, syncBattleTimeUi]);
+  }, [rerender, setAuthoring, startWave, syncBattleTimeUi]);
 
   const s = gs.current;
   const selected = s.towers.find((t) => t.id === s.selectedId) ?? null;
@@ -2767,7 +2910,13 @@ export default function TarkovTD() {
               <Stat label="WAVE" value={`${s.wave}`} />
               <Stat label="KILLS" value={`${s.killed}`} />
               {inRaid && battleTimeRef.current.controlsEnabled && (
-                <div className="flex items-center gap-0.5 border-2 border-border bg-secondary/40 px-1 py-0.5">
+                <div className="flex flex-col items-end gap-0.5">
+                  {battleTimeMode === "PAUSED" && (
+                    <span className="font-mono text-[9px] tracking-wide text-primary">
+                      PAUSED · ISSUE ORDERS
+                    </span>
+                  )}
+                  <div className="flex items-center gap-0.5 border-2 border-border bg-secondary/40 px-1 py-0.5">
                   {BATTLE_TIME_MODE_ORDER.map((mode) => (
                     <button
                       key={mode}
@@ -2781,6 +2930,7 @@ export default function TarkovTD() {
                       {battleTimeModeLabel(mode)}
                     </button>
                   ))}
+                  </div>
                 </div>
               )}
               <DevToolsMenu enabled={DEV_TOOLS_ENABLED} onSelect={onDevTool} />
@@ -2835,6 +2985,13 @@ export default function TarkovTD() {
                     gs.current.hoverEdge = null;
                   }}
                   onClick={onClick}
+                  onContextMenu={(ev) => {
+                    ev.preventDefault();
+                    if (commandAuthoringRef.current) {
+                      setAuthoring(null);
+                      rerender();
+                    }
+                  }}
                   onDragOver={(ev) => ev.preventDefault()}
                   onDrop={canvasDrop}
                   className="block w-full cursor-crosshair"
@@ -3020,12 +3177,7 @@ export default function TarkovTD() {
                   {scavTab === "quests" && (
                     <PlayerQuestsPanel
                       catalog={QUEST_SPECS}
-                      unlockCtx={{
-                        claimedQuestIds: meta.claimed,
-                        playerLevel: meta.pmc.level,
-                        radioState: (meta.crew.radio ?? freshRadioProgression()).radioState,
-                        uniqueContacts: meta.crew.radio?.uniqueContacts,
-                      }}
+                      unlockCtx={unlockContextFromMeta(meta)}
                       questProgress={meta.quests}
                       filter={questFilter}
                       onFilter={setQuestFilter}
@@ -3641,7 +3793,13 @@ export default function TarkovTD() {
                   EXTRACT
                 </button>
                 <span className="font-mono text-[10px] text-muted-foreground">
-                  Click an operator to select · click a free tile to move him · drag gear onto him to equip
+                  {battleTimeMode === "PAUSED"
+                    ? "TACTICAL PAUSE — select operator · COMMANDS → MOVE / HOLD / RELOAD · ESC cancels authoring"
+                    : commandAuthoring
+                      ? commandAuthoring.mode === "MOVE"
+                        ? "MOVE — click destination · ESC / right-click cancel"
+                        : "HOLD ANGLE — click direction · ESC / right-click cancel"
+                      : "Select operator · COMMANDS for orders · click tile to move when live"}
                 </span>
               </div>
             )}
@@ -3785,9 +3943,116 @@ export default function TarkovTD() {
                     }
                   />
                   <div className="pt-1">
+                    <div className="mb-1 flex items-center justify-between gap-2 text-[9px] tracking-wide text-muted-foreground">
+                      <span>COMMANDS</span>
+                      {(() => {
+                        const badge = operatorPlanBadge(selected, battleTimeMode === "PAUSED");
+                        return badge ? (
+                          <span className="text-primary">
+                            {badge}
+                            {battleTimeMode === "PAUSED" ? " · PLANNED" : badge === "MOVING" ? "" : ""}
+                          </span>
+                        ) : null;
+                      })()}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        className={`pixel-btn px-1 py-0 text-[9px] ${
+                          authoringForOperator(commandAuthoring, selected.id) === "MOVE"
+                            ? "pixel-btn-primary"
+                            : "text-muted-foreground"
+                        }`}
+                        onClick={() => {
+                          setAuthoring(
+                            authoringForOperator(commandAuthoring, selected.id) === "MOVE"
+                              ? null
+                              : { mode: "MOVE", operatorId: selected.id },
+                          );
+                          rerender();
+                        }}
+                      >
+                        MOVE
+                      </button>
+                      <button
+                        type="button"
+                        className={`pixel-btn px-1 py-0 text-[9px] ${
+                          authoringForOperator(commandAuthoring, selected.id) === "HOLD_ANGLE"
+                            ? "pixel-btn-primary"
+                            : "text-muted-foreground"
+                        }`}
+                        onClick={() => {
+                          setAuthoring(
+                            authoringForOperator(commandAuthoring, selected.id) === "HOLD_ANGLE"
+                              ? null
+                              : { mode: "HOLD_ANGLE", operatorId: selected.id },
+                          );
+                          rerender();
+                        }}
+                      >
+                        HOLD ANGLE
+                      </button>
+                      <button
+                        type="button"
+                        className="pixel-btn px-1 py-0 text-[9px] text-muted-foreground"
+                        onClick={() => {
+                          const wasReloading = selected.reloadLeft > 0;
+                          const r = dispatchOperatorCommand(
+                            selected,
+                            { type: "RELOAD" },
+                            { map: mapRef.current, towers: gs.current.towers },
+                          );
+                          if (!r.ok) pushLog(r.reason);
+                          else {
+                            if (battleTimeMode === "PAUSED") {
+                              noteReloadAuthoredInPause(
+                                pauseReloadSessionRef.current,
+                                selected.id,
+                                wasReloading,
+                              );
+                            }
+                            if (r.message) pushLog(r.message);
+                          }
+                          rerender();
+                        }}
+                      >
+                        RELOAD
+                      </button>
+                      <button
+                        type="button"
+                        className="pixel-btn px-1 py-0 text-[9px] text-muted-foreground"
+                        title="Clear move / hold; cancel reload only if authored this pause"
+                        onClick={() => {
+                          const ctx = { map: mapRef.current, towers: gs.current.towers };
+                          const cancelReload = canCancelPausedReload(
+                            pauseReloadSessionRef.current,
+                            selected.id,
+                            selected.reloadLeft,
+                            battleTimeMode === "PAUSED",
+                          );
+                          clearOperatorOrders(selected, ctx, { cancelReload });
+                          if (cancelReload) {
+                            pauseReloadSessionRef.current.authoredReloadIds.delete(selected.id);
+                          }
+                          setAuthoring(null);
+                          pushLog(
+                            cancelReload
+                              ? "ORDERS CLEARED"
+                              : selected.reloadLeft > 0
+                                ? "ORDERS CLEARED (RELOAD CONTINUES)"
+                                : "ORDERS CLEARED",
+                          );
+                          rerender();
+                        }}
+                      >
+                        CLEAR
+                      </button>
+                    </div>
+                  </div>
+                  <div className="pt-1">
                     <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">TARGETING</div>
                     <div className="flex flex-wrap gap-1">
-                      {TARGET_MODES.map((mode) => (
+                      {TARGET_MODES.filter((m) => m !== "HOLD_ANGLE").map((mode) => (
                         <button
                           key={mode}
                           type="button"
@@ -3800,31 +4065,13 @@ export default function TarkovTD() {
                               { type: "SET_TARGETING", mode },
                               { map: mapRef.current, towers: gs.current.towers },
                             );
-                            if (mode === "HOLD_ANGLE") {
-                              setHoldAnglePending(selected.id);
-                            }
+                            setAuthoring(null);
                             rerender();
                           }}
                         >
                           {mode}
                         </button>
                       ))}
-                      <button
-                        type="button"
-                        className="pixel-btn px-1 py-0 text-[9px] text-muted-foreground"
-                        onClick={() => {
-                          const r = dispatchOperatorCommand(
-                            selected,
-                            { type: "RELOAD" },
-                            { map: mapRef.current, towers: gs.current.towers },
-                          );
-                          if (!r.ok) pushLog(r.reason);
-                          else if (r.message) pushLog(r.message);
-                          rerender();
-                        }}
-                      >
-                        RELOAD
-                      </button>
                     </div>
                   </div>
                   <div className="pt-1">
@@ -4005,13 +4252,21 @@ export default function TarkovTD() {
           enabled={DEV_TOOLS_ENABLED}
           inRaid={s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted"}
           onClose={() => setLabs("none")}
-          onApplied={() => rerender()}
+          onApplied={(overrides) => {
+            syncDevForcedQuestProgression(metaRef.current, overrides.forcedCompleted);
+            saveMeta(metaRef.current);
+            rerender();
+          }}
           unlockContext={{
-            claimedQuestIds: metaRef.current.claimed,
+            claimedQuestIds: effectiveClaimedQuestIds(
+              metaRef.current.claimed,
+              getQuestLabOverrides().forcedCompleted,
+            ),
             playerLevel: metaRef.current.pmc.level,
             radioState: (metaRef.current.crew.radio ?? freshRadioProgression()).radioState,
             uniqueContacts: metaRef.current.crew.radio?.uniqueContacts,
           }}
+          canonicalClaimedIds={metaRef.current.claimed}
           onTestQuest={(questId) => {
             const inRaidNow = s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted";
             const r = requestTestQuest(DEV_TOOLS_ENABLED, inRaidNow, questId);

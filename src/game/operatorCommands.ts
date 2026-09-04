@@ -4,7 +4,7 @@
  */
 
 import type { GameMap } from "./map";
-import { issueOperatorMove, type IssueMoveResult } from "./movement";
+import { clearOperatorMove, issueOperatorMove, type IssueMoveResult } from "./movement";
 import type { TargetMode } from "./targeting";
 import type { Tower } from "./types";
 import { magSizeOf, maybeStartReload, reloadMsOf, reloadTypeOf } from "./weapons";
@@ -18,6 +18,9 @@ export type HoldAngleCommand = {
   point: { x: number; y: number };
 };
 export type ClearHoldAngleCommand = { type: "CLEAR_HOLD_ANGLE" };
+export type ClearMoveCommand = { type: "CLEAR_MOVE" };
+/** Cancels an in-progress reload timer without changing ammo. Caller must gate safety. */
+export type CancelReloadCommand = { type: "CANCEL_RELOAD" };
 export type SetTargetingCommand = {
   type: "SET_TARGETING";
   mode: TargetMode;
@@ -29,6 +32,8 @@ export type OperatorCommand =
   | ReloadCommand
   | HoldAngleCommand
   | ClearHoldAngleCommand
+  | ClearMoveCommand
+  | CancelReloadCommand
   | SetTargetingCommand;
 
 export type DispatchResult =
@@ -85,6 +90,15 @@ export function dispatchOperatorCommand(
       tower.holdAnglePoint = null;
       return { ok: true };
     }
+    case "CLEAR_MOVE": {
+      clearOperatorMove(tower);
+      return { ok: true };
+    }
+    case "CANCEL_RELOAD": {
+      if (tower.reloadLeft <= 0) return { ok: false, reason: "NOT RELOADING" };
+      tower.reloadLeft = 0;
+      return { ok: true };
+    }
     case "SET_TARGETING": {
       tower.targetMode = command.mode;
       if (command.mode !== "MANUAL") tower.manualTargetId = null;
@@ -96,4 +110,23 @@ export function dispatchOperatorCommand(
       return { ok: true };
     }
   }
+}
+
+/**
+ * Clear confirmed tactical intents for an operator.
+ * Reload cancel is optional and must be pre-validated by the caller.
+ */
+export function clearOperatorOrders(
+  tower: Tower,
+  ctx: OperatorCommandContext,
+  opts?: { cancelReload?: boolean },
+): DispatchResult {
+  dispatchOperatorCommand(tower, { type: "CLEAR_MOVE" }, ctx);
+  if (tower.targetMode === "HOLD_ANGLE") {
+    dispatchOperatorCommand(tower, { type: "CLEAR_HOLD_ANGLE" }, ctx);
+  }
+  if (opts?.cancelReload) {
+    dispatchOperatorCommand(tower, { type: "CANCEL_RELOAD" }, ctx);
+  }
+  return { ok: true };
 }

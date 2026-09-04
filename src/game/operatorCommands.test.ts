@@ -76,6 +76,36 @@ describe("operatorCommands", () => {
     expect(t.ammo).toBe(ammo);
   });
 
+  it("CLEAR_MOVE removes destination", () => {
+    const t = op({ tx: 2, ty: 8 });
+    dispatchOperatorCommand(t, { type: "MOVE", tx: 5, ty: 8 }, { map, towers: [t] });
+    expect(t.move?.dest).toBeTruthy();
+    dispatchOperatorCommand(t, { type: "CLEAR_MOVE" }, { map, towers: [t] });
+    expect(t.move).toBeFalsy();
+  });
+
+  it("CLEAR_HOLD uses canonical hold-clear behavior", () => {
+    const t = op({ tx: 2, ty: 8 });
+    dispatchOperatorCommand(
+      t,
+      { type: "HOLD_ANGLE", angle: 1.2, point: { x: 100, y: 100 } },
+      { map, towers: [t] },
+    );
+    dispatchOperatorCommand(t, { type: "CLEAR_HOLD_ANGLE" }, { map, towers: [t] });
+    expect(t.targetMode).toBe("FIRST");
+    expect(t.holdAngle).toBeNull();
+  });
+
+  it("CANCEL_RELOAD clears timer without changing ammo", () => {
+    const t = op({ tx: 2, ty: 8, ammo: 2 });
+    dispatchOperatorCommand(t, { type: "RELOAD" }, { map, towers: [t] });
+    const ammo = t.ammo;
+    expect(t.reloadLeft).toBeGreaterThan(0);
+    dispatchOperatorCommand(t, { type: "CANCEL_RELOAD" }, { map, towers: [t] });
+    expect(t.reloadLeft).toBe(0);
+    expect(t.ammo).toBe(ammo);
+  });
+
   it("SET_TARGETING updates mode", () => {
     const t = op({ tx: 2, ty: 8 });
     dispatchOperatorCommand(t, { type: "SET_TARGETING", mode: "MANUAL" }, { map, towers: [t] });
