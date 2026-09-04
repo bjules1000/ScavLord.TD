@@ -188,9 +188,13 @@ describe("Wave Lab enemies", () => {
     const patch = formatWaveLabPatch(over);
     expect(patch).toContain("ellipse");
     expect(patch).toMatch(/HEAD:ellipse/);
-    expect(patch).toContain("HITZONES_JSON raider");
+    expect(patch).toContain("ENEMY_JSON raider");
+    expect(patch).toContain('"hitZones"');
+    expect(patch).toContain('"behavior"');
+    expect(patch).toContain('"stats"');
     expect(patch).toContain('"width"');
     expect(patch).toContain('"height"');
+    expect(patch).toContain('"engagedSpeedMult"');
     over = resetEnemyItem(over, "raider");
     const restored = effectiveEnemy("raider", over, true);
     expect(restored.hitZones!.find((z) => z.id === "head")!.shape).toBe(baseZones.find((z) => z.id === "head")!.shape);
@@ -211,6 +215,12 @@ describe("Wave Lab enemies", () => {
     expect(live.requireLosToShoot).toBe(true);
     expect(live.sightRange).toBe(99);
     expect(live.targetMemoryMs).toBe(2222);
+    const patch = formatWaveLabPatch(over);
+    expect(patch).toContain("behavior.canShoot: true -> false");
+    expect(patch).toContain("behavior.sightRange:");
+    expect(patch).toContain("ENEMY_JSON raider");
+    expect(patch).toContain('"canShoot":false');
+    expect(patch).toContain('"sightRange":99');
   });
 });
 

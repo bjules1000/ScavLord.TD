@@ -616,6 +616,34 @@ export function requestTestWave(
 
 export type WavePatchLine = { scope: string; field: string; from: string | number; to: string | number };
 
+const BEHAVIOR_EXPORT_KEYS: (keyof EnemyBehaviorConfig)[] = [
+  "objective",
+  "canShoot",
+  "requireLosToShoot",
+  "fireWhileMoving",
+  "sightRange",
+  "normalSpeedMult",
+  "engagedSpeedMult",
+  "lostTargetSpeedMult",
+  "targetMemoryMs",
+  "onDamage",
+  "onDamageSpeedMult",
+  "onDamageDurationMs",
+  "rerouteChance",
+];
+
+const STAT_EXPORT_KEYS = [
+  "hp",
+  "speed",
+  "armor",
+  "towerDamage",
+  "fireRange",
+  "fireCooldown",
+  "damage",
+  "bounty",
+  "size",
+] as const;
+
 /** Compact one-line zone summary — always includes w×h so patches are bakeable. */
 export function summarizeHitZones(zones: EnemyHitZone[] | undefined): string {
   if (!zones || zones.length === 0) return "(fallback body)";
@@ -645,9 +673,58 @@ export function formatHitZonesJson(zones: readonly EnemyHitZone[]): string {
   );
 }
 
+export function formatBehaviorJson(cfg: EnemyBehaviorConfig): string {
+  const out: Record<string, string | number | boolean> = {};
+  for (const key of BEHAVIOR_EXPORT_KEYS) out[key] = cfg[key] as string | number | boolean;
+  return JSON.stringify(out);
+}
+
+/** Full bake payload: stats + hitZones + behavior (+ profiles) for one enemy/boss. */
+export function formatEnemyBakePayload(def: EnemyDef): Record<string, unknown> {
+  const behavior = def.behavior ?? builtinBehaviorForKind(def.kind);
+  const stats: Record<string, number> = {};
+  for (const key of STAT_EXPORT_KEYS) stats[key] = def[key];
+  return {
+    kind: def.kind,
+    name: def.name,
+    role: isBossKind(def.kind) ? "boss" : "enemy",
+    custom: !!def.custom,
+    disabled: !!def.disabled,
+    attackProfile: def.attackProfile ?? null,
+    artProfile: def.artProfile ?? null,
+    stats,
+    hitZones: def.hitZones ? cloneHitZones(def.hitZones) : null,
+    behavior: cloneBehavior(behavior),
+  };
+}
+
+export function formatEnemyBakeJson(def: EnemyDef): string {
+  return JSON.stringify(formatEnemyBakePayload(def));
+}
+
 function summarizeBehavior(cfg: EnemyBehaviorConfig | undefined, kind: string): string {
   const b = cfg ?? builtinBehaviorForKind(kind);
-  return derivedBehaviorSummary(b).slice(0, 2).join(" · ");
+  return derivedBehaviorSummary(b).join(" · ");
+}
+
+function pushBehaviorFieldDiffs(
+  lines: WavePatchLine[],
+  scope: string,
+  from: EnemyBehaviorConfig,
+  to: EnemyBehaviorConfig,
+): void {
+  for (const key of BEHAVIOR_EXPORT_KEYS) {
+    const a = from[key];
+    const b = to[key];
+    if (a === b) continue;
+    if (typeof a === "number" && typeof b === "number" && nearlyEqual(a, b)) continue;
+    lines.push({
+      scope,
+      field: `behavior.${key}`,
+      from: typeof a === "boolean" ? String(a) : (a as string | number),
+      to: typeof b === "boolean" ? String(b) : (b as string | number),
+    });
+  }
 }
 
 export function waveLabPatchLines(overrides: WaveLabOverrides): WavePatchLine[] {
@@ -655,27 +732,46 @@ export function waveLabPatchLines(overrides: WaveLabOverrides): WavePatchLine[] 
   const lines: WavePatchLine[] = [];
 
   for (const [kind, def] of Object.entries(clean.customEnemies)) {
+    const scope = def.name.toUpperCase();
     lines.push({
-      scope: def.name.toUpperCase(),
+      scope,
       field: "customEnemy",
       from: "(none)",
       to: kind,
     });
+    for (const key of STAT_EXPORT_KEYS) {
+      lines.push({ scope, field: key, from: "(new)", to: def[key] });
+    }
+    if (def.attackProfile) {
+      lines.push({ scope, field: "attackProfile", from: "(new)", to: def.attackProfile });
+    }
+    if (def.artProfile) {
+      lines.push({ scope, field: "artProfile", from: "(new)", to: def.artProfile });
+    }
     if (def.hitZones) {
       lines.push({
-        scope: def.name.toUpperCase(),
+        scope,
         field: "hitZones",
-        from: "(builtin)",
+        from: "(new)",
         to: summarizeHitZones(def.hitZones),
       });
     }
     if (def.behavior) {
       lines.push({
-        scope: def.name.toUpperCase(),
+        scope,
         field: "behavior",
-        from: "(builtin)",
+        from: "(new)",
         to: summarizeBehavior(def.behavior, kind),
       });
+      for (const key of BEHAVIOR_EXPORT_KEYS) {
+        const v = def.behavior[key];
+        lines.push({
+          scope,
+          field: `behavior.${key}`,
+          from: "(new)",
+          to: typeof v === "boolean" ? String(v) : (v as string | number),
+        });
+      }
     }
   }
 
@@ -693,12 +789,15 @@ export function waveLabPatchLines(overrides: WaveLabOverrides): WavePatchLine[] 
         continue;
       }
       if (field === "behavior") {
+        const fromB = base.behavior ?? builtinBehaviorForKind(kind);
+        const toB = to as EnemyBehaviorConfig;
         lines.push({
           scope,
           field: "behavior",
-          from: summarizeBehavior(base.behavior, kind),
-          to: summarizeBehavior(to as EnemyBehaviorConfig, kind),
+          from: summarizeBehavior(fromB, kind),
+          to: summarizeBehavior(toB, kind),
         });
+        pushBehaviorFieldDiffs(lines, scope, fromB, toB);
         continue;
       }
       const from = base[field as keyof EnemyDef];
@@ -755,6 +854,15 @@ function overrideName(fields: EnemyOverride, base: EnemyDef): string {
   return (typeof fields.name === "string" ? fields.name : base.name).toUpperCase();
 }
 
+/** Kinds that appear in enemy/boss override bags or as custom defs. */
+function modifiedEnemyKinds(clean: WaveLabOverrides): string[] {
+  const kinds = new Set<string>([
+    ...Object.keys(clean.enemies),
+    ...Object.keys(clean.customEnemies),
+  ]);
+  return [...kinds].sort();
+}
+
 export function formatWaveLabPatch(overrides: WaveLabOverrides): string {
   const clean = pruneWaveLabOverrides(overrides);
   const lines = waveLabPatchLines(overrides);
@@ -772,27 +880,18 @@ export function formatWaveLabPatch(overrides: WaveLabOverrides): string {
     parts.push("");
   }
 
-  // Full hit-zone JSON blocks so future bakes never lose width/height.
-  const jsonBlocks: string[] = [];
-  for (const [kind, fields] of Object.entries(clean.enemies)) {
-    if (!fields.hitZones) continue;
-    const base = resolveBaseEnemy(kind, clean, true);
-    jsonBlocks.push(`HITZONES_JSON ${kind}`);
-    jsonBlocks.push(formatHitZonesJson(fields.hitZones as EnemyHitZone[]));
-    jsonBlocks.push(`# base was: ${summarizeHitZones(base.hitZones)}`);
-    jsonBlocks.push("");
-  }
-  for (const [kind, def] of Object.entries(clean.customEnemies)) {
-    if (!def.hitZones) continue;
-    jsonBlocks.push(`HITZONES_JSON ${kind}`);
-    jsonBlocks.push(formatHitZonesJson(def.hitZones));
-    jsonBlocks.push("");
-  }
-  if (jsonBlocks.length) {
+  // Full bake blocks: stats + hitZones + behavior for every touched enemy/boss.
+  const bakeKinds = modifiedEnemyKinds(clean);
+  if (bakeKinds.length) {
     parts.push("---");
-    parts.push("HIT ZONE JSON (paste-ready for bake)");
+    parts.push("ENEMY BAKE JSON (stats + hitZones + behavior — paste-ready)");
     parts.push("");
-    parts.push(...jsonBlocks);
+    for (const kind of bakeKinds) {
+      const live = effectiveEnemy(kind, clean, true);
+      parts.push(`ENEMY_JSON ${kind}`);
+      parts.push(formatEnemyBakeJson(live));
+      parts.push("");
+    }
   }
 
   return parts.join("\n").trim() + "\n";
