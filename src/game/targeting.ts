@@ -1,6 +1,26 @@
 export type TargetMode = "FIRST" | "LAST" | "CLOSEST" | "STRONGEST" | "MANUAL" | "HOLD_ANGLE";
 
+/** AUTO preference modes — never control aim while HOLD ANGLE is active. */
+export type AutoTargetMode = "FIRST" | "LAST" | "CLOSEST" | "STRONGEST";
+
+export const AUTO_TARGET_MODES: readonly AutoTargetMode[] = ["FIRST", "LAST", "CLOSEST", "STRONGEST"];
+
 export const TARGET_MODES: readonly TargetMode[] = ["FIRST", "LAST", "CLOSEST", "STRONGEST", "MANUAL", "HOLD_ANGLE"];
+
+export function isAutoTargetMode(mode: TargetMode | null | undefined): mode is AutoTargetMode {
+  return mode === "FIRST" || mode === "LAST" || mode === "CLOSEST" || mode === "STRONGEST";
+}
+
+/**
+ * HOLD ANGLE is active when mode is HOLD_ANGLE and an authored angle exists.
+ * While active, AUTO modes must not control aim direction.
+ */
+export function isHoldAimActive(t: {
+  targetMode: TargetMode;
+  holdAngle?: number | null;
+}): boolean {
+  return t.targetMode === "HOLD_ANGLE" && t.holdAngle != null && Number.isFinite(t.holdAngle);
+}
 
 export interface AimOrigin {
   x: number;
@@ -43,7 +63,7 @@ function compareStrongest(a: Targetable, b: Targetable): number {
 }
 
 export function pickAutoTarget<T extends Targetable>(
-  mode: Exclude<TargetMode, "MANUAL">,
+  mode: AutoTargetMode,
   origin: AimOrigin,
   range: number,
   enemies: readonly T[],
@@ -99,7 +119,34 @@ export function selectTarget<T extends Targetable>(
     // Returns null; the firing loop checks sector eligibility separately.
     return null;
   }
+  if (!isAutoTargetMode(mode)) return null;
   return pickAutoTarget(mode, origin, range, enemies, visible);
+}
+
+/**
+ * Resolve operator facing for this tick.
+ * HOLD ANGLE always wins over AUTO/MANUAL recenter while active.
+ */
+export function resolveOperatorAimAngle(args: {
+  holding: boolean;
+  holdAngle: number | null | undefined;
+  targetMode: TargetMode;
+  locked: { x: number; y: number } | null;
+  best: { x: number; y: number } | null;
+  originX: number;
+  originY: number;
+  currentAngle: number;
+}): number {
+  if (args.holding && args.holdAngle != null && Number.isFinite(args.holdAngle)) {
+    return args.holdAngle;
+  }
+  if (args.targetMode === "MANUAL" && args.locked) {
+    return Math.atan2(args.locked.y - args.originY - 4, args.locked.x - args.originX);
+  }
+  if (args.best) {
+    return Math.atan2(args.best.y - args.originY - 4, args.best.x - args.originX);
+  }
+  return args.currentAngle;
 }
 
 export function hitTestEnemy<T extends { id: number; x: number; y: number }>(

@@ -167,10 +167,12 @@ import {
 } from "./combat";
 import { settleHaul } from "./extract";
 import {
-  TARGET_MODES,
+  AUTO_TARGET_MODES,
   hitTestEnemy,
   inRange,
+  isHoldAimActive,
   pickManualTarget,
+  resolveOperatorAimAngle,
   selectTarget,
 } from "./targeting";
 import {
@@ -1766,13 +1768,19 @@ export default function TarkovTD() {
             y: e.y,
             surface: e.surface ?? "GROUND",
           });
+        const holding = isHoldAimActive(t);
+        // While HOLD ANGLE is active, AUTO modes must not acquire a recenter target.
         const locked =
-          t.targetMode === "MANUAL" ? pickManualTarget(t.manualTargetId, origin, st.range, live) : null;
-        const best = selectTarget(t.targetMode, origin, st.range, live, t.manualTargetId, visible);
+          !holding && t.targetMode === "MANUAL"
+            ? pickManualTarget(t.manualTargetId, origin, st.range, live)
+            : null;
+        const best = holding
+          ? null
+          : selectTarget(t.targetMode, origin, st.range, live, t.manualTargetId, visible);
 
-        // HOLD_ANGLE: check if any enemy is in the held sector
+        // HOLD_ANGLE: check if any enemy is in the held sector (fire eligibility only)
         let holdAngleCanFire = false;
-        if (t.targetMode === "HOLD_ANGLE" && t.holdAngle != null) {
+        if (holding && t.holdAngle != null) {
           const halfCone = getShotDispersion(st.accuracy) + 0.15; // sector = dispersion + base sector width
           for (const e of live) {
             if (!inRange(origin, st.range, e)) continue;
@@ -1812,18 +1820,29 @@ export default function TarkovTD() {
             if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
           }
         }
-        t.engageTargetId = t.targetMode === "MANUAL" ? (locked?.id ?? null) : (best?.id ?? null);
+        t.engageTargetId = holding
+          ? null
+          : t.targetMode === "MANUAL"
+            ? (locked?.id ?? null)
+            : (best?.id ?? null);
 
-        // Update aim direction
-        if (t.targetMode === "HOLD_ANGLE" && t.holdAngle != null) {
-          t.angle = t.holdAngle;
-        } else if (t.targetMode === "MANUAL" && locked) {
-          t.angle = Math.atan2(locked.y - cy - 4, locked.x - cx);
-        } else if (best) {
-          t.angle = Math.atan2(best.y - cy - 4, best.x - cx);
-        }
+        // Update aim direction — HOLD locks authored angle; never recenter onto AUTO/MANUAL target.
+        t.angle = resolveOperatorAimAngle({
+          holding,
+          holdAngle: t.holdAngle,
+          targetMode: t.targetMode,
+          locked,
+          best,
+          originX: cx,
+          originY: cy,
+          currentAngle: t.angle,
+        });
 
-        const canFire = (best || holdAngleCanFire) && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft) && operatorCanFire(t);
+        const canFire =
+          (holding ? holdAngleCanFire : !!best || !!locked) &&
+          t.cd <= 0 &&
+          canShoot(t.ammo, t.reloadLeft) &&
+          operatorCanFire(t);
         if (canFire) {
             t.cd = st.cooldown;
             t.flash = 0.06;
@@ -2255,7 +2274,8 @@ export default function TarkovTD() {
         }
         // Aim cone visualization (selected) — subdued during tactical pause if HOLD; full otherwise
         const coneHalf = getShotDispersion(st.accuracy);
-        const aimAngle = sel.angle;
+        const aimAngle =
+          isHoldAimActive(sel) && sel.holdAngle != null ? sel.holdAngle : sel.angle;
         const coneLen = st.range;
         {
           ctx.beginPath();
@@ -4203,14 +4223,26 @@ export default function TarkovTD() {
                     <p className="mt-1 text-[8px] text-muted-foreground">L-CLICK map = MOVE</p>
                   </div>
                   <div className="pt-1">
-                    <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">TARGETING</div>
+                    <div className="mb-1 flex items-center justify-between gap-2 text-[9px] tracking-wide text-muted-foreground">
+                      <span>TARGETING</span>
+                      {isHoldAimActive(selected) ? (
+                        <span className="text-primary">HOLD ACTIVE</span>
+                      ) : null}
+                    </div>
                     <div className="flex flex-wrap gap-1">
-                      {TARGET_MODES.filter((m) => m !== "HOLD_ANGLE").map((mode) => (
+                      {AUTO_TARGET_MODES.map((mode) => (
                         <button
                           key={mode}
                           type="button"
+                          title={
+                            isHoldAimActive(selected)
+                              ? `Exit HOLD → ${mode}`
+                              : mode
+                          }
                           className={`pixel-btn px-1 py-0 text-[9px] ${
-                            selected.targetMode === mode ? "text-primary" : "text-muted-foreground"
+                            !isHoldAimActive(selected) && selected.targetMode === mode
+                              ? "text-primary"
+                              : "text-muted-foreground"
                           }`}
                           onClick={() => {
                             dispatchOperatorCommand(
@@ -4225,7 +4257,47 @@ export default function TarkovTD() {
                           {mode}
                         </button>
                       ))}
+                      <button
+                        type="button"
+                        className={`pixel-btn px-1 py-0 text-[9px] ${
+                          selected.targetMode === "MANUAL" && !isHoldAimActive(selected)
+                            ? "text-primary"
+                            : "text-muted-foreground"
+                        }`}
+                        onClick={() => {
+                          dispatchOperatorCommand(
+                            selected,
+                            { type: "SET_TARGETING", mode: "MANUAL" },
+                            { map: mapRef.current, towers: gs.current.towers },
+                          );
+                          closeOrdersUi();
+                          rerender();
+                        }}
+                      >
+                        MANUAL
+                      </button>
+                      {isHoldAimActive(selected) && (
+                        <button
+                          type="button"
+                          className="pixel-btn px-1 py-0 text-[9px] text-primary"
+                          onClick={() => {
+                            dispatchOperatorCommand(
+                              selected,
+                              { type: "CLEAR_HOLD_ANGLE" },
+                              { map: mapRef.current, towers: gs.current.towers },
+                            );
+                            rerender();
+                          }}
+                        >
+                          CLEAR HOLD
+                        </button>
+                      )}
                     </div>
+                    {isHoldAimActive(selected) && (
+                      <p className="mt-1 text-[8px] text-muted-foreground">
+                        Aim locked · AUTO resume: {selected.autoTargetMode ?? "FIRST"}
+                      </p>
+                    )}
                   </div>
                   <div className="pt-1">
                     <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">ATTACHMENTS</div>

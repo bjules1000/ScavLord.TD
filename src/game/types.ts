@@ -72,6 +72,11 @@ export interface Tower {
   /** Milliseconds remaining on the current reload action. 0 = not reloading. */
   reloadLeft: number;
   targetMode: TargetMode;
+  /**
+   * Preferred AUTO mode restored when CLEAR HOLD exits HOLD_ANGLE.
+   * Retained while HOLD is active so FIRST/LAST/etc is not lost.
+   */
+  autoTargetMode?: import("./targeting").AutoTargetMode;
   /** MANUAL lock. Null means hold fire. */
   manualTargetId: number | null;
   /** Last chosen target this tick, for UI. */

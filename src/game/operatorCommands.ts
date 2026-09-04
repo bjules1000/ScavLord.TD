@@ -5,10 +5,21 @@
 
 import type { GameMap } from "./map";
 import { clearOperatorMove, issueOperatorMove, type IssueMoveResult } from "./movement";
-import type { TargetMode } from "./targeting";
+import { isAutoTargetMode, type AutoTargetMode, type TargetMode } from "./targeting";
 import type { Tower } from "./types";
 import { magSizeOf, maybeStartReload, reloadMsOf, reloadTypeOf } from "./weapons";
 import { fittedWeaponStats } from "./weaponAttachments";
+
+function rememberAutoPreference(tower: Tower): void {
+  if (isAutoTargetMode(tower.targetMode)) {
+    tower.autoTargetMode = tower.targetMode;
+  }
+}
+
+function restoreAutoPreference(tower: Tower): AutoTargetMode {
+  const pref = tower.autoTargetMode;
+  return isAutoTargetMode(pref) ? pref : "FIRST";
+}
 
 export type MoveCommand = { type: "MOVE"; tx: number; ty: number };
 export type ReloadCommand = { type: "RELOAD" };
@@ -78,16 +89,23 @@ export function dispatchOperatorCommand(
       return { ok: true, message: "RELOAD STARTED" };
     }
     case "HOLD_ANGLE": {
+      // Retain AUTO preference for CLEAR HOLD / later resume.
+      rememberAutoPreference(tower);
       tower.targetMode = "HOLD_ANGLE";
       tower.holdAngle = command.angle;
       tower.holdAnglePoint = { x: command.point.x, y: command.point.y };
+      // Clear locks that would recenter aim onto an enemy.
       tower.manualTargetId = null;
+      tower.engageTargetId = null;
+      // Snap aim immediately so visuals match intent before the next tick.
+      tower.angle = command.angle;
       return { ok: true };
     }
     case "CLEAR_HOLD_ANGLE": {
-      if (tower.targetMode === "HOLD_ANGLE") tower.targetMode = "FIRST";
       tower.holdAngle = null;
       tower.holdAnglePoint = null;
+      tower.targetMode = restoreAutoPreference(tower);
+      tower.manualTargetId = null;
       return { ok: true };
     }
     case "CLEAR_MOVE": {
@@ -100,13 +118,19 @@ export function dispatchOperatorCommand(
       return { ok: true };
     }
     case "SET_TARGETING": {
+      // Explicit FIRST/LAST/CLOSEST/STRONGEST/MANUAL exits HOLD ANGLE.
+      if (command.mode === "HOLD_ANGLE") {
+        rememberAutoPreference(tower);
+      } else {
+        tower.holdAngle = null;
+        tower.holdAnglePoint = null;
+        if (isAutoTargetMode(command.mode)) {
+          tower.autoTargetMode = command.mode;
+        }
+      }
       tower.targetMode = command.mode;
       if (command.mode !== "MANUAL") tower.manualTargetId = null;
       else if (command.manualTargetId !== undefined) tower.manualTargetId = command.manualTargetId;
-      if (command.mode !== "HOLD_ANGLE") {
-        tower.holdAngle = null;
-        tower.holdAnglePoint = null;
-      }
       return { ok: true };
     }
   }

@@ -84,16 +84,35 @@ describe("operatorCommands", () => {
     expect(t.move).toBeFalsy();
   });
 
-  it("CLEAR_HOLD uses canonical hold-clear behavior", () => {
+  it("CLEAR_HOLD restores stored AUTO preference", () => {
     const t = op({ tx: 2, ty: 8 });
+    dispatchOperatorCommand(t, { type: "SET_TARGETING", mode: "STRONGEST" }, { map, towers: [t] });
     dispatchOperatorCommand(
       t,
       { type: "HOLD_ANGLE", angle: 1.2, point: { x: 100, y: 100 } },
       { map, towers: [t] },
     );
+    expect(t.autoTargetMode).toBe("STRONGEST");
     dispatchOperatorCommand(t, { type: "CLEAR_HOLD_ANGLE" }, { map, towers: [t] });
-    expect(t.targetMode).toBe("FIRST");
+    expect(t.targetMode).toBe("STRONGEST");
     expect(t.holdAngle).toBeNull();
+  });
+
+  it("SET_TARGETING MANUAL exits HOLD", () => {
+    const t = op({ tx: 2, ty: 8 });
+    dispatchOperatorCommand(
+      t,
+      { type: "HOLD_ANGLE", angle: 0.3, point: { x: 10, y: 10 } },
+      { map, towers: [t] },
+    );
+    dispatchOperatorCommand(
+      t,
+      { type: "SET_TARGETING", mode: "MANUAL", manualTargetId: 7 },
+      { map, towers: [t] },
+    );
+    expect(t.targetMode).toBe("MANUAL");
+    expect(t.holdAngle).toBeNull();
+    expect(t.manualTargetId).toBe(7);
   });
 
   it("CANCEL_RELOAD clears timer without changing ammo", () => {
