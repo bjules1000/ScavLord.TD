@@ -10,22 +10,22 @@ import {
 import { createEmptyPlan, type OperatorPlan } from "./operatorPlans";
 
 describe("actionWheel operator set", () => {
-  it("lists MOVE ORDERS HOLD RELOAD CANCEL", () => {
+  it("lists MOVE ORDERS FRAG HOLD RELOAD CANCEL", () => {
     expect(listOperatorWheelActions().map((a) => a.id)).toEqual([
       "MOVE",
       "ORDERS",
+      "THROW_FRAG",
       "HOLD_ANGLE",
       "RELOAD",
       "CANCEL",
     ]);
   });
 
-  it("does not include tile-build or THROW actions", () => {
+  it("does not include tile-build actions", () => {
     const ids = listOperatorWheelActions().map((a) => a.id);
     expect(ids).not.toContain("BARRICADE");
     expect(ids).not.toContain("WIRE");
     expect(ids).not.toContain("HIRE");
-    expect(ids).not.toContain("THROW");
   });
 });
 

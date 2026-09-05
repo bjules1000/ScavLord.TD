@@ -12,7 +12,7 @@
 import type { ItemDef, ItemKind } from "./gear";
 import { MAP_DEFS } from "./map";
 
-export const LOOTABLE_KINDS: readonly ItemKind[] = ["weapon", "attachment", "armor", "meds", "valuable"];
+export const LOOTABLE_KINDS: readonly ItemKind[] = ["weapon", "attachment", "armor", "meds", "throwable", "valuable"];
 
 export function isLootableKind(kind: ItemKind): boolean {
   return (LOOTABLE_KINDS as readonly string[]).includes(kind);
@@ -201,6 +201,7 @@ export function kindsWithEligibleItems(items: readonly ItemDef[]): Record<ItemKi
     attachment: false,
     armor: false,
     meds: false,
+    throwable: false,
     valuable: false,
     backpack: false,
   };

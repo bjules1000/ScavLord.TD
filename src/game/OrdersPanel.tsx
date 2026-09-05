@@ -17,6 +17,7 @@ export type OrdersEditorMode =
   | { kind: "idle" }
   | { kind: "pick_add" }
   | { kind: "author_move"; editIndex: number | null }
+  | { kind: "author_frag"; editIndex: number | null }
   | { kind: "author_hold"; editIndex: number | null };
 
 export type OrdersPanelProps = {
@@ -25,7 +26,7 @@ export type OrdersPanelProps = {
   editorMode: OrdersEditorMode;
   /** sidebar = permanent raid chrome; overlay = legacy floating (unused). */
   variant?: "sidebar" | "overlay";
-  onAddPick: (type: "MOVE" | "RELOAD" | "HOLD_ANGLE") => void;
+  onAddPick: (type: "MOVE" | "RELOAD" | "THROW_FRAG" | "HOLD_ANGLE") => void;
   onRequestAddMenu: () => void;
   onCancelAddMenu: () => void;
   onEdit: (index: number) => void;
@@ -135,12 +136,14 @@ export function OrdersPanel({
 
       {showAddMenu ? (
         <div className="mt-2 flex flex-wrap gap-1 border-t border-border pt-2">
-          {(["MOVE", "RELOAD", "HOLD_ANGLE"] as const).map((type) => {
+          {(["MOVE", "RELOAD", "THROW_FRAG", "HOLD_ANGLE"] as const).map((type) => {
             const probe =
               type === "MOVE"
                 ? canAppendToPlan(plan, { type: "MOVE", tx: 0, ty: 0 })
                 : type === "RELOAD"
                   ? canAppendToPlan(plan, { type: "RELOAD" })
+                  : type === "THROW_FRAG"
+                    ? canAppendToPlan(plan, { type: "THROW_FRAG", point: { x: 0, y: 0 } })
                   : canAppendToPlan(plan, {
                       type: "HOLD_ANGLE",
                       angle: 0,
@@ -154,7 +157,7 @@ export function OrdersPanel({
                 className="pixel-btn px-1.5 py-0.5 text-[9px] disabled:opacity-40"
                 onClick={() => onAddPick(type)}
               >
-                {type === "HOLD_ANGLE" ? "HOLD ANGLE" : type}
+                {type === "HOLD_ANGLE" ? "HOLD ANGLE" : type === "THROW_FRAG" ? "THROW FRAG" : type}
               </button>
             );
           })}
@@ -182,11 +185,11 @@ export function OrdersPanel({
         </div>
       )}
 
-      {(editorMode.kind === "author_move" || editorMode.kind === "author_hold") && (
+      {(editorMode.kind === "author_move" || editorMode.kind === "author_hold" || editorMode.kind === "author_frag") && (
         <p className="mt-2 font-mono text-[9px] text-primary">
           {editorMode.kind === "author_move"
             ? "CLICK DESTINATION · ESC CANCEL"
-            : "CLICK HOLD DIRECTION · ESC CANCEL"}
+            : editorMode.kind === "author_frag" ? "CLICK FRAG TARGET · ESC CANCEL" : "CLICK HOLD DIRECTION · ESC CANCEL"}
         </p>
       )}
 
@@ -214,5 +217,6 @@ function formatOrderRow(order: OperatorOrder): string {
     const deg = Math.round(((order.angle * 180) / Math.PI + 360) % 360);
     return `HOLD → ${deg}°`;
   }
+  if (order.type === "THROW_FRAG") return "THROW FRAG";
   return orderLabel(order);
 }

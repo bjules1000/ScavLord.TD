@@ -26,6 +26,32 @@ function op(partial: Partial<Tower> & Pick<Tower, "tx" | "ty">): Tower {
 describe("operatorCommands", () => {
   const map = buildMap(MAP_BY_ID["woods"]!);
 
+  it("THROW_FRAG crosses the command boundary exactly once", () => {
+    const t = op({ tx: 1, ty: 8 });
+    const calls: Array<{ id: number; point: { x: number; y: number } }> = [];
+    const r = dispatchOperatorCommand(
+      t,
+      { type: "THROW_FRAG", point: { x: 120, y: 80 } },
+      {
+        map,
+        towers: [t],
+        throwFrag: (tower, point) => {
+          calls.push({ id: tower.id, point });
+          return { ok: true };
+        },
+      },
+    );
+    expect(r.ok).toBe(true);
+    expect(calls).toEqual([{ id: t.id, point: { x: 120, y: 80 } }]);
+  });
+
+  it("THROW_FRAG fails safely when no inventory handler is available", () => {
+    const t = op({ tx: 1, ty: 8 });
+    expect(
+      dispatchOperatorCommand(t, { type: "THROW_FRAG", point: { x: 120, y: 80 } }, { map, towers: [t] }),
+    ).toEqual({ ok: false, reason: "NO FRAG GRENADE" });
+  });
+
   it("MOVE sets destination without requiring simulation", () => {
     const t = op({ tx: 1, ty: 8 });
     const r = dispatchOperatorCommand(t, { type: "MOVE", tx: 3, ty: 8 }, { map, towers: [t] });

@@ -248,7 +248,7 @@ export function saveMeta(m: Meta) {
 }
 
 export function unlockedIds(claimed: string[]): string[] {
-  const out = new Set<string>(["w_pm", "w_toz", "m_ifak", "bp_scav", "bp_pilgrim", "bp_trizip"]);
+  const out = new Set<string>(["w_pm", "w_toz", "m_ifak", "g_frag", "bp_scav", "bp_pilgrim", "bp_trizip"]);
   for (const quest of QUESTS)
     if (claimed.includes(quest.id)) quest.unlocks.forEach((u) => out.add(u));
   return [...out];

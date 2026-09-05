@@ -125,7 +125,7 @@ export function profileWeight(id: string, profile: LootProfile | undefined, weig
 }
 
 export function emptyKindChances(): KindChanceMap {
-  return { weapon: 0, attachment: 0, armor: 0, meds: 0, valuable: 0, backpack: 0 };
+  return { weapon: 0, attachment: 0, armor: 0, meds: 0, throwable: 0, valuable: 0, backpack: 0 };
 }
 
 /**
@@ -183,7 +183,8 @@ export function kindProbabilities(weaponAllowed: boolean, wave: number, rules: L
     attachment: rest * rules.restAttachment,
     armor: rest * (rules.restArmor - rules.restAttachment),
     meds: rest * (rules.restMeds - rules.restArmor),
-    valuable: rest * (1 - rules.restMeds),
+    throwable: rest * 0.04,
+    valuable: rest * (1 - rules.restMeds - 0.04),
     backpack: 0,
   };
 }

@@ -78,7 +78,11 @@ describe("DEV item picker catalog", () => {
     expect(filterDevPickerItems(defs, "WEAPONS", "").every((d) => d.kind === "weapon")).toBe(true);
     expect(filterDevPickerItems(defs, "ARMOR", "").map((d) => d.ref)).toEqual(["paca", "sixb23", "slick"]);
     expect(filterDevPickerItems(defs, "ATTACHMENTS", "optic").some((d) => d.ref === "optic")).toBe(true);
-    expect(filterDevPickerItems(defs, "LOOT", "").every((d) => d.kind === "valuable" || d.kind === "meds")).toBe(true);
+    expect(
+      filterDevPickerItems(defs, "LOOT", "").every(
+        (d) => d.kind === "valuable" || d.kind === "meds" || d.kind === "throwable",
+      ),
+    ).toBe(true);
   });
 });
 

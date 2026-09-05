@@ -16,13 +16,14 @@ export const MAX_OPERATOR_ORDERS = 3;
 
 export type MoveOrder = { type: "MOVE"; tx: number; ty: number };
 export type ReloadOrder = { type: "RELOAD" };
+export type ThrowFragOrder = { type: "THROW_FRAG"; point: { x: number; y: number } };
 export type HoldAngleOrder = {
   type: "HOLD_ANGLE";
   angle: number;
   point: { x: number; y: number };
 };
 /** Future M10: ThrowOrder — keep union extensible. */
-export type OperatorOrder = MoveOrder | ReloadOrder | HoldAngleOrder;
+export type OperatorOrder = MoveOrder | ReloadOrder | ThrowFragOrder | HoldAngleOrder;
 
 export type OperatorPlanState = "PLANNED" | "EXECUTING" | "DONE" | "FAILED";
 
@@ -77,6 +78,8 @@ export function orderLabel(order: OperatorOrder): string {
       return `MOVE → ${order.tx},${order.ty}`;
     case "RELOAD":
       return "RELOAD";
+    case "THROW_FRAG":
+      return "THROW FRAG";
     case "HOLD_ANGLE":
       return "HOLD ANGLE";
   }
@@ -88,6 +91,8 @@ export function orderShort(order: OperatorOrder): string {
       return "MOVE";
     case "RELOAD":
       return "RLD";
+    case "THROW_FRAG":
+      return "FRAG";
     case "HOLD_ANGLE":
       return "HOLD";
   }
@@ -112,6 +117,9 @@ export function validatePlanOrders(orders: readonly OperatorOrder[]): PlanValida
     }
     if (o.type === "HOLD_ANGLE" && !Number.isFinite(o.angle)) {
       return { ok: false, reason: "INVALID HOLD DIRECTION" };
+    }
+    if (o.type === "THROW_FRAG" && (!Number.isFinite(o.point.x) || !Number.isFinite(o.point.y))) {
+      return { ok: false, reason: "INVALID FRAG TARGET" };
     }
   }
   return { ok: true };
@@ -286,6 +294,8 @@ export function orderToCommand(order: OperatorOrder): OperatorCommand {
       return { type: "MOVE", tx: order.tx, ty: order.ty };
     case "RELOAD":
       return { type: "RELOAD" };
+    case "THROW_FRAG":
+      return { type: "THROW_FRAG", point: { ...order.point } };
     case "HOLD_ANGLE":
       return { type: "HOLD_ANGLE", angle: order.angle, point: { ...order.point } };
   }
@@ -330,6 +340,7 @@ export function dispatchCurrentOrder(
     next.awaiting = "MOVE";
     return { plan: next, ok: true };
   }
+  if (order.type === "THROW_FRAG") return advancePlan(tower, next, ctx);
   // RELOAD
   if (tower.reloadLeft <= 0) {
     // Mag full / already done — skip ahead
@@ -473,8 +484,9 @@ export function startAllPlanned(
   book: OperatorPlanBook,
   towers: readonly Tower[],
   map: GameMap,
+  throwFrag?: OperatorCommandContext["throwFrag"],
 ): void {
-  const ctx: OperatorCommandContext = { map, towers };
+  const ctx: OperatorCommandContext = { map, towers, ...(throwFrag ? { throwFrag } : {}) };
   for (const t of towers) {
     const plan = book.get(t.id);
     if (!plan || plan.state !== "PLANNED" || plan.orders.length === 0) continue;

@@ -93,6 +93,7 @@ import {
   type WheelActionId,
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
+import { FRAG_ITEM_ID, FRAG_RADIUS, clampFragTarget, consumeFragItem, fragDamageAt, spawnFragGrenade, tickFragGrenade, type FragGrenade } from "./grenades";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -377,7 +378,8 @@ const STASH_KIND_ORDER: Record<string, number> = {
   armor: 2,
   backpack: 3,
   meds: 4,
-  valuable: 5,
+  throwable: 5,
+  valuable: 6,
 };
 const RARITY_ORDER: Record<string, number> = { epic: 0, rare: 1, common: 2 };
 
@@ -409,6 +411,7 @@ interface GameState {
   bullets: Bullet[];
   /** Traveling physical projectiles (damage on impact). */
   projectiles: Projectile[];
+  grenades: FragGrenade[];
   particles: Particle[];
   floats: FloatText[];
   drops: Drop[];
@@ -444,6 +447,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     enemies: [],
     bullets: [],
     projectiles: [],
+    grenades: [],
     particles: [],
     floats: [],
     drops: [],
@@ -693,9 +697,9 @@ export default function TarkovTD() {
   const [deployOperatorIds, setDeployOperatorIds] = useState<string[]>(() =>
     aliveOperators(loadMeta()).map((o) => o.id),
   );
-  const [shopTab, setShopTab] = useState<"weapon" | "attachment" | "armor" | "backpack" | "meds">("weapon");
+  const [shopTab, setShopTab] = useState<"weapon" | "attachment" | "armor" | "backpack" | "meds" | "throwable">("weapon");
   const [stashTab, setStashTab] = useState<
-    "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable"
+    "all" | "weapon" | "attachment" | "armor" | "meds" | "throwable" | "valuable"
   >("all");
   const [questFilter, setQuestFilter] = useState<PlayerQuestFilter>("active");
   const [progressionNotices, setProgressionNotices] = useState<ProgressionNotice[]>([]);
@@ -755,7 +759,7 @@ export default function TarkovTD() {
         pauseReloadSessionRef.current = beginPauseReloadSession(pauseReloadSessionRef.current);
       }
       if (prev === "PAUSED" && mode !== "PAUSED") {
-        startAllPlanned(planBookRef.current, gs.current.towers, mapRef.current);
+        startAllPlanned(planBookRef.current, gs.current.towers, mapRef.current, throwFrag);
         setOrdersMode({ kind: "idle" });
       }
       if (mode !== "PAUSED") setOrdersMode({ kind: "idle" });
@@ -801,6 +805,14 @@ export default function TarkovTD() {
     [stash, stashTab],
   );
   const newUid = () => 100000 + uidRef.current++;
+
+  function throwFrag(tower: Tower, point: { x: number; y: number }) {
+    const state = gs.current;
+    if (!consumeFragItem(state.backpack)) return { ok: false as const, reason: "NO FRAG GRENADE" };
+    state.grenades.push(spawnFragGrenade(state.nextId++, tower.id, towerPos(tower), point));
+    tower.angle = Math.atan2(point.y - towerPos(tower).y, point.x - towerPos(tower).x);
+    return { ok: true as const, message: "FRAG OUT" };
+  }
 
   const persist = useCallback((nextStash: Item[], nextLoadout: Item[]) => {
     const m = metaRef.current;
@@ -1767,7 +1779,7 @@ export default function TarkovTD() {
         {
           const plan = planBookRef.current.get(t.id);
           if (plan) {
-            const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers }, wasMoving);
+            const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers, throwFrag }, wasMoving);
             if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
           }
         }
@@ -1839,7 +1851,7 @@ export default function TarkovTD() {
             const step = onReloadTickComplete(
               t,
               plan,
-              { map: mapRef.current, towers: s.towers },
+              { map: mapRef.current, towers: s.towers, throwFrag },
               prevReloadLeft,
             );
             if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
@@ -1998,6 +2010,22 @@ export default function TarkovTD() {
         }
         s.projectiles = liveProjectiles;
       }
+
+      const liveGrenades: FragGrenade[] = [];
+      for (const grenade of s.grenades) {
+        if (!tickFragGrenade(grenade, dt)) {
+          liveGrenades.push(grenade);
+          continue;
+        }
+        spawnParticles(grenade.x, grenade.y, "#ffb347", 24, 150);
+        spawnParticles(grenade.x, grenade.y, "#5a5142", 14, 110);
+        s.shake = Math.max(s.shake, 6);
+        for (const enemy of s.enemies) {
+          const damage = fragDamageAt(Math.hypot(enemy.x - grenade.x, enemy.y - grenade.y));
+          if (damage > 0) hurtEnemy(enemy, damage, 0);
+        }
+      }
+      s.grenades = liveGrenades;
 
       // bullets (legacy: hostile enemy bullets + old tracers)
       const liveBullets: Bullet[] = [];
@@ -2369,6 +2397,24 @@ export default function TarkovTD() {
           ctx.lineWidth = 2;
           ctx.stroke();
         }
+        if (oMode.kind === "author_frag" && s.hoverTx >= 0) {
+          const fragIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
+          const geometry = getProjectedActionGeometry(pos, liveOrdersDraft, fragIndex, TILE, {
+            x: s.hoverTx * TILE + TILE / 2,
+            y: s.hoverTy * TILE + TILE / 2,
+          });
+          const target = clampFragTarget(geometry.origin, geometry.point);
+          ctx.strokeStyle = "rgba(255,179,71,0.9)";
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(geometry.origin.x, geometry.origin.y);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(target.x, target.y, FRAG_RADIUS, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
       }
 
       // Squad order-plan overlays — detailed while PAUSED; selected subtle while live
@@ -2418,6 +2464,17 @@ export default function TarkovTD() {
               ctx.font = "bold 8px monospace";
               ctx.textAlign = "left";
               ctx.fillText("RLD", prevX + 6, prevY - 8);
+            } else if (order.type === "THROW_FRAG") {
+              ctx.strokeStyle = strong ? "rgba(255,179,71,0.9)" : "rgba(255,179,71,0.4)";
+              ctx.setLineDash([3, 4]);
+              ctx.beginPath();
+              ctx.moveTo(prevX, prevY);
+              ctx.lineTo(order.point.x, order.point.y);
+              ctx.stroke();
+              ctx.setLineDash([]);
+              ctx.beginPath();
+              ctx.arc(order.point.x, order.point.y, FRAG_RADIUS, 0, Math.PI * 2);
+              ctx.stroke();
             } else if (order.type === "HOLD_ANGLE") {
               const len = TILE * (strong ? 2.6 : 2);
               ctx.beginPath();
@@ -2479,6 +2536,14 @@ export default function TarkovTD() {
         ctx.fillStyle = proj.color;
         const sz = proj.splash > 0 ? 5 : proj.pellet ? 2 : 3;
         ctx.fillRect(Math.round(proj.x) - 1, Math.round(proj.y) - 1, sz, sz);
+      }
+      for (const grenade of s.grenades) {
+        ctx.fillStyle = "#6f7b52";
+        ctx.fillRect(Math.round(grenade.x) - 3, Math.round(grenade.y) - 3, 6, 6);
+        ctx.strokeStyle = "rgba(255,179,71,0.35)";
+        ctx.beginPath();
+        ctx.arc(grenade.targetX, grenade.targetY, FRAG_RADIUS, 0, Math.PI * 2);
+        ctx.stroke();
       }
       for (const p of s.particles) {
         ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
@@ -2552,7 +2617,7 @@ export default function TarkovTD() {
     setOrdersDraft(decision.plan);
     setOrdersOpenFor(sel.id);
     if (decision.executeNow) {
-      const r = beginPlanExecution(sel, decision.plan, { map: mapRef.current, towers: s.towers });
+      const r = beginPlanExecution(sel, decision.plan, { map: mapRef.current, towers: s.towers, throwFrag });
       setPlan(planBookRef.current, sel.id, r.plan);
       setOrdersDraft(r.plan);
       if (!r.ok && r.reason) pushLog(r.reason);
@@ -2568,7 +2633,7 @@ export default function TarkovTD() {
       return;
     }
     const s = gs.current;
-    const ctx = { map: mapRef.current, towers: s.towers };
+    const ctx = { map: mapRef.current, towers: s.towers, throwFrag };
 
     if (wheel.kind === "operator") {
       const sel = s.towers.find((t) => t.id === wheel.operatorId);
@@ -2591,6 +2656,13 @@ export default function TarkovTD() {
           }
           if (r.message) pushLog(r.message);
         }
+        rerender();
+        return;
+      }
+      if (id === "THROW_FRAG") {
+        const r = throwFrag(sel, { x: wheel.worldX, y: wheel.worldY });
+        if (!r.ok) pushLog(r.reason);
+        else pushLog(r.message);
         rerender();
         return;
       }
@@ -2721,6 +2793,27 @@ export default function TarkovTD() {
 
     // Orders editor authoring: MOVE destination / HOLD direction
     const oMode = ordersEditorModeRef.current;
+    if (oMode.kind === "author_frag" && ordersOpenFor != null) {
+      const sel = s.towers.find((t) => t.id === ordersOpenFor);
+      if (sel) {
+        const world = toWorld(ev);
+        const liveOrdersDraft = ordersDraftRef.current;
+        const fragIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
+        const geometry = getProjectedActionGeometry(towerPos(sel), liveOrdersDraft, fragIndex, TILE, world);
+        const order = { type: "THROW_FRAG" as const, point: clampFragTarget(geometry.origin, geometry.point) };
+        const result = oMode.editIndex == null
+          ? appendOrder(liveOrdersDraft, order)
+          : replaceOrderAt(liveOrdersDraft, oMode.editIndex, order);
+        if (!result.ok) pushLog(result.reason);
+        else {
+          setOrdersDraft(result.plan!);
+          setPlan(planBookRef.current, ordersOpenFor, result.plan!);
+        }
+        setOrdersMode({ kind: "idle" });
+      }
+      rerender();
+      return;
+    }
     if (oMode.kind === "author_hold" && ordersOpenFor != null) {
       const sel = s.towers.find((t) => t.id === ordersOpenFor);
       if (sel) {
@@ -2949,7 +3042,7 @@ export default function TarkovTD() {
             pauseReloadSessionRef.current = beginPauseReloadSession(pauseReloadSessionRef.current);
           }
           if (prev === "PAUSED" && battleTimeRef.current.mode !== "PAUSED") {
-            startAllPlanned(planBookRef.current, s.towers, mapRef.current);
+            startAllPlanned(planBookRef.current, s.towers, mapRef.current, throwFrag);
             setOrdersMode({ kind: "idle" });
           }
           syncBattleTimeUi();
@@ -4500,6 +4593,16 @@ export default function TarkovTD() {
                         rerender();
                         return;
                       }
+                      if (type === "THROW_FRAG") {
+                        if (!s.backpack.some((item) => item.id === FRAG_ITEM_ID)) {
+                          pushLog("NO FRAG GRENADE");
+                          setOrdersMode({ kind: "idle" });
+                          return;
+                        }
+                        setOrdersMode({ kind: "author_frag", editIndex: null });
+                        rerender();
+                        return;
+                      }
                       setOrdersMode({ kind: "author_hold", editIndex: null });
                       rerender();
                     }}
@@ -4507,6 +4610,7 @@ export default function TarkovTD() {
                       const order = ordersDraft.orders[index];
                       if (!order || order.type === "RELOAD") return;
                       if (order.type === "MOVE") setOrdersMode({ kind: "author_move", editIndex: index });
+                      else if (order.type === "THROW_FRAG") setOrdersMode({ kind: "author_frag", editIndex: index });
                       else setOrdersMode({ kind: "author_hold", editIndex: index });
                       rerender();
                     }}
@@ -4545,6 +4649,7 @@ export default function TarkovTD() {
                         const r = beginPlanExecution(selected, ordersDraft, {
                           map: mapRef.current,
                           towers: gs.current.towers,
+                          throwFrag,
                         });
                         setPlan(planBookRef.current, oid, r.plan);
                         result = r.plan;
@@ -4873,8 +4978,8 @@ function useLongPress(onLong?: () => void, ms = 450) {
   };
 }
 
-type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable";
-type ShopKindTab = "weapon" | "attachment" | "armor" | "backpack" | "meds";
+type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "throwable" | "valuable";
+type ShopKindTab = "weapon" | "attachment" | "armor" | "backpack" | "meds" | "throwable";
 
 function StashPanel({
   stashSlots,
@@ -4899,7 +5004,7 @@ function StashPanel({
         </div>
         <p className="mt-1 font-mono text-[9px] text-muted-foreground">Hold / right-click to sell</p>
         <div className="mt-2 flex flex-wrap gap-1">
-          {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
+          {(["all", "weapon", "attachment", "armor", "meds", "throwable", "valuable"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setStashTab(t)}
@@ -4950,7 +5055,7 @@ function MarketPanel({
         <div className="font-display text-[10px] text-primary">BLACK MARKET</div>
         <p className="mt-1 font-mono text-[9px] text-muted-foreground">Buy into stash · quests unlock stock</p>
         <div className="mt-2 flex flex-wrap gap-1">
-          {(["weapon", "attachment", "armor", "backpack", "meds"] as const).map((t) => (
+          {(["weapon", "attachment", "armor", "backpack", "meds", "throwable"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setShopTab(t)}

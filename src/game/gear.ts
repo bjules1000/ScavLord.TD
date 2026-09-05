@@ -563,7 +563,7 @@ export const BACKPACKS: Record<string, BackpackDef> = {
 
 export const BACKPACK_ORDER = ["sling", "scavpack", "pilgrim", "trizip"];
 
-export type ItemKind = "weapon" | "attachment" | "armor" | "meds" | "valuable" | "backpack";
+export type ItemKind = "weapon" | "attachment" | "armor" | "meds" | "throwable" | "valuable" | "backpack";
 
 export interface ItemDef {
   id: string;
@@ -630,6 +630,8 @@ export const ITEMS: ItemDef[] = [
   { id: "ar_6b23", kind: "armor", ref: "sixb23", name: "RIOT PLATES", rarity: "rare", value: 480, desc: "-35% incoming, 190 durability.", price: 1600 },
   { id: "ar_slick", kind: "armor", ref: "slick", name: "PLATE CARRIER", rarity: "epic", value: 820, desc: "-55% incoming, 300 durability.", price: 3800 },
   // meds
+
+  { id: "g_frag", kind: "throwable", name: "FRAG GRENADE", rarity: "rare", value: 180, desc: "Thrown fragmentation grenade. 0.8s fuse, heavy area damage.", price: 650 },
 
   { id: "m_ifak", kind: "meds", name: "POCKET KIT", rarity: "common", value: 80, heal: 45, desc: "Heals an operator for 45 HP.", price: 260 },
   { id: "m_salewa", kind: "meds", name: "TRAUMA BAG", rarity: "common", value: 140, heal: 90, desc: "Heals an operator for 90 HP.", price: 420 },

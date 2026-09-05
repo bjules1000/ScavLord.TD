@@ -1,7 +1,7 @@
 import { ITEMS, makeItem, type Item, type ItemDef, type ItemKind } from "../gear";
 
 /** Shop-only pack upgrades never occupy raid backpack slots. */
-const RAID_BACKPACK_KINDS: readonly ItemKind[] = ["weapon", "attachment", "armor", "meds", "valuable"];
+const RAID_BACKPACK_KINDS: readonly ItemKind[] = ["weapon", "attachment", "armor", "meds", "throwable", "valuable"];
 
 export type DevPickerCategory = "ALL" | "WEAPONS" | "ARMOR" | "ATTACHMENTS" | "LOOT";
 
@@ -10,7 +10,7 @@ const CATEGORY_KINDS: Record<DevPickerCategory, readonly ItemKind[] | null> = {
   WEAPONS: ["weapon"],
   ARMOR: ["armor"],
   ATTACHMENTS: ["attachment"],
-  LOOT: ["valuable", "meds"],
+  LOOT: ["valuable", "meds", "throwable"],
 };
 
 export const DEV_PICKER_CATEGORIES: readonly DevPickerCategory[] = [
