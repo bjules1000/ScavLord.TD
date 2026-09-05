@@ -27,6 +27,8 @@ import {
   summarizeUniqueState,
   type ProgressionNotice,
 } from "./progressionNotifications";
+import { effectiveClaimedQuestIds } from "./dev/questForceComplete";
+import { getQuestLabOverrides } from "./dev/questLab";
 
 export type RedeemQuestResult =
   | {
@@ -39,13 +41,26 @@ export type RedeemQuestResult =
   | { ok: true; alreadySettled: true; meta: Meta; notice: null; newlyUnlockedQuestIds: [] }
   | { ok: false; reason: string };
 
-export function unlockContextFromMeta(meta: Meta): QuestUnlockContext {
+/** Canonical unlock context (Meta.claimed only) — ignores DEV force-complete. */
+export function unlockContextFromMetaCanonical(meta: Meta): QuestUnlockContext {
   const radio = meta.crew.radio ?? freshRadioProgression();
   return {
     claimedQuestIds: meta.claimed,
     playerLevel: meta.pmc.level,
     radioState: radio.radioState,
     uniqueContacts: radio.uniqueContacts,
+  };
+}
+
+/**
+ * Unlock context for progression gates. When DEV tools are enabled, merges
+ * Quest Lab FORCE COMPLETED overrides into claimed ids (not Meta.claimed).
+ */
+export function unlockContextFromMeta(meta: Meta): QuestUnlockContext {
+  const base = unlockContextFromMetaCanonical(meta);
+  return {
+    ...base,
+    claimedQuestIds: effectiveClaimedQuestIds(meta.claimed, getQuestLabOverrides().forcedCompleted),
   };
 }
 
@@ -64,7 +79,7 @@ export function redeemQuest(
     return { ok: true, alreadySettled: true, meta, notice: null, newlyUnlockedQuestIds: [] };
   }
 
-  const beforeCtx = unlockContextFromMeta(meta);
+  const beforeCtx = unlockContextFromMetaCanonical(meta);
   const life = getQuestLifecycle(spec, beforeCtx, meta.quests);
   if (life !== "READY_TO_REDEEM") {
     return { ok: false, reason: life === "ACTIVE" ? "Objectives incomplete." : "Quest not redeemable." };

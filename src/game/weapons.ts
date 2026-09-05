@@ -41,6 +41,7 @@ export function weaponRuntimeFields(weaponId: string) {
     ammo: initAmmo(weaponId),
     reloadLeft: 0,
     targetMode: "FIRST" as TargetMode,
+    autoTargetMode: "FIRST" as const,
     manualTargetId: null as number | null,
     engageTargetId: null as number | null,
   };

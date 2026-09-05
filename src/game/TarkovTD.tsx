@@ -31,7 +31,6 @@ import {
   clearOperatorMove,
   findOperatorPath,
   isOperatorMoving,
-  issueOperatorMove,
   logicalNode,
   operatorCanFire,
   operatorMoveSpeedPx,
@@ -40,16 +39,68 @@ import {
   resolveMoveDestination,
   stepOperatorMove,
 } from "./movement";
+import {
+  BATTLE_TIME_MODE_ORDER,
+  battleTimeModeLabel,
+  battleTimeModeTitle,
+  createBattleTimeState,
+  resetBattleTimeState,
+  resolveEffectiveBattleTimeScale,
+  setBattleTimeMode,
+  simulationStepsFromWallDt,
+  toggleBattleTimePause,
+  type BattleTimeMode,
+  type BattleTimeState,
+} from "./battleTime";
+import { clearOperatorOrders, dispatchOperatorCommand } from "./operatorCommands";
+import {
+  beginPauseReloadSession,
+  canCancelPausedReload,
+  createPauseReloadSession,
+  noteReloadAuthoredInPause,
+  type PauseReloadSession,
+} from "./tacticalCommandUi";
+import {
+  appendOrder,
+  beginPlanExecution,
+  clearAllPlans,
+  clearFutureOrders,
+  clearPlan,
+  createEmptyPlan,
+  getProjectedActionGeometry,
+  getProjectedOperatorPositionBeforeOrder,
+  onMoveStepComplete,
+  onReloadTickComplete,
+  planMoveWaypoints,
+  planSummary,
+  removeOrderAt,
+  replaceOrderAt,
+  resolveLeftClickMovePlan,
+  setPlan,
+  startAllPlanned,
+  type OperatorPlan,
+  type OperatorPlanBook,
+} from "./operatorPlans";
+import { ActionWheel } from "./ContextualActionWheel";
+import {
+  listOperatorWheelActions,
+  listTileWheelActions,
+  operatorActivityLabel,
+  raidInteractionHint,
+  resolveOrdersSeedFromRightClick,
+  tileAllowsAnyBarricadeEdge,
+  type ActionWheelState,
+  type WheelActionId,
+} from "./actionWheel";
+import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
   BARRICADE_HP,
-  BARRICADE_COST,
   COVER_MISS_FACTOR,
   EDGE_LABEL,
   MAX_BARRICADE_LEVEL,
   WIRE_BUILD_COST,
-  WIRE_COST,
   WIRE_HP,
   WIRE_SLOW_DURATION,
   WIRE_SPEED_MULT,
@@ -125,12 +176,14 @@ import {
   settleRemovedEnemies,
   type KillBook,
 } from "./combat";
-import { settleHaul } from "./extract";
+import { buildExtractHaul, recoveredLootFromSurvivingTowers, settleHaul } from "./extract";
 import {
-  TARGET_MODES,
+  AUTO_TARGET_MODES,
   hitTestEnemy,
   inRange,
+  isHoldAimActive,
   pickManualTarget,
+  resolveOperatorAimAngle,
   selectTarget,
 } from "./targeting";
 import {
@@ -138,7 +191,6 @@ import {
   STARTER_WEAPON_ID,
   attachmentDef,
   canShoot,
-  combatStatus,
   consumeRound,
   maybeStartReload,
   reloadProgress,
@@ -292,11 +344,14 @@ import {
   requestTestWave,
 } from "./dev/waveLabCore";
 import {
+  getQuestLabOverrides,
   isQuestTestActive,
   noteQuestTestEvent,
   requestTestQuest,
   resetQuestTestProgress,
 } from "./dev/questLab";
+import { syncDevForcedQuestProgression } from "./dev/questForceCompleteSync";
+import { effectiveClaimedQuestIds } from "./dev/questForceComplete";
 import {
   effectiveItemDef,
   effectiveLootMult,
@@ -658,7 +713,57 @@ export default function TarkovTD() {
   const [choices, setChoices] = useState<Item[]>([]);
   const [pendingLoot, setPendingLoot] = useState<Item | null>(null);
   const [swapUid, setSwapUid] = useState<number | null>(null);
-  const [holdAnglePending, setHoldAnglePending] = useState<number | null>(null);
+  const [ordersOpenFor, setOrdersOpenFor] = useState<number | null>(null);
+  const [ordersDraft, setOrdersDraft] = useState<OperatorPlan>(() => createEmptyPlan());
+  // The RAF renderer is intentionally long-lived, so it must read the current draft
+  // through a ref instead of the React state captured when the loop was installed.
+  const ordersDraftRef = useRef<OperatorPlan>(ordersDraft);
+  ordersDraftRef.current = ordersDraft;
+  const [ordersEditorMode, setOrdersEditorMode] = useState<OrdersEditorMode>({ kind: "idle" });
+  const ordersEditorModeRef = useRef<OrdersEditorMode>({ kind: "idle" });
+  const [operatorDetailsOpen, setOperatorDetailsOpen] = useState(false);
+  const [actionWheel, setActionWheel] = useState<ActionWheelState | null>(null);
+  const planBookRef = useRef<OperatorPlanBook>(new Map());
+  const battleTimeRef = useRef<BattleTimeState>(createBattleTimeState());
+  const pauseReloadSessionRef = useRef<PauseReloadSession>(createPauseReloadSession());
+  const [battleTimeMode, setBattleTimeModeUi] = useState<BattleTimeMode>("NORMAL");
+  const syncBattleTimeUi = useCallback(() => {
+    setBattleTimeModeUi(battleTimeRef.current.mode);
+  }, []);
+  const setOrdersMode = useCallback((mode: OrdersEditorMode) => {
+    ordersEditorModeRef.current = mode;
+    setOrdersEditorMode(mode);
+  }, []);
+  const closeActionWheel = useCallback(() => setActionWheel(null), []);
+  const closeOrdersUi = useCallback(() => {
+    setOrdersOpenFor(null);
+    setOrdersMode({ kind: "idle" });
+  }, [setOrdersMode]);
+  const openOrdersForOperator = useCallback(
+    (operatorId: number, plan: OperatorPlan) => {
+      setOrdersDraft(plan);
+      setOrdersOpenFor(operatorId);
+      setOrdersMode({ kind: "idle" });
+    },
+    [setOrdersMode],
+  );
+  const applyBattleTimeMode = useCallback(
+    (mode: BattleTimeMode) => {
+      const prev = battleTimeRef.current.mode;
+      battleTimeRef.current = setBattleTimeMode(battleTimeRef.current, mode);
+      if (mode === "PAUSED" && prev !== "PAUSED") {
+        pauseReloadSessionRef.current = beginPauseReloadSession(pauseReloadSessionRef.current);
+      }
+      if (prev === "PAUSED" && mode !== "PAUSED") {
+        startAllPlanned(planBookRef.current, gs.current.towers, mapRef.current);
+        setOrdersMode({ kind: "idle" });
+      }
+      if (mode !== "PAUSED") setOrdersMode({ kind: "idle" });
+      syncBattleTimeUi();
+      rerender();
+    },
+    [rerender, setOrdersMode, syncBattleTimeUi],
+  );
   const [sellValuableUids, setSellValuableUids] = useState<Set<number>>(() => new Set());
   const [leaveUids, setLeaveUids] = useState<Set<number>>(() => new Set());
   const [loadout, setLoadout] = useState<Item[]>([]);
@@ -705,6 +810,10 @@ export default function TarkovTD() {
 
   useEffect(() => {
     initRecruitmentLab(DEV_TOOLS_ENABLED);
+    if (DEV_TOOLS_ENABLED) {
+      syncDevForcedQuestProgression(metaRef.current, getQuestLabOverrides().forcedCompleted);
+      saveMeta(metaRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -782,8 +891,12 @@ export default function TarkovTD() {
     setLog([
       `${m.pmc.name} inserted at ${mapRef.current.def.name}${crewNote}. Keep them alive — if they die, the run is over for good.`,
     ]);
+    battleTimeRef.current = resetBattleTimeState(true);
+    clearAllPlans(planBookRef.current);
+    closeOrdersUi();
+    syncBattleTimeUi();
     rerender();
-  }, [deployOperatorIds, loadout, persist, rerender, stash]);
+  }, [closeOrdersUi, deployOperatorIds, loadout, persist, rerender, stash, syncBattleTimeUi]);
 
   const toHideout = useCallback(
     (keepBackpack: boolean) => {
@@ -791,7 +904,7 @@ export default function TarkovTD() {
       const m = metaRef.current;
       let next = [...stash];
       if (keepBackpack) {
-        const haul = [...s.backpack, ...s.recovered];
+        const haul = buildExtractHaul(s.backpack, s.recovered);
         const settled = settleHaul(stash, haul, sellValuableUids, stashSlots, leaveUids, saleValueOf);
         if (!settled.ok) {
           pushLog(
@@ -858,9 +971,13 @@ export default function TarkovTD() {
       setSellValuableUids(new Set());
       setLeaveUids(new Set());
       setScreen("hideout");
+      battleTimeRef.current = resetBattleTimeState(true);
+      clearAllPlans(planBookRef.current);
+      closeOrdersUi();
+      syncBattleTimeUi();
       rerender();
     },
-    [leaveUids, pushLog, rerender, sellValuableUids, stash, stashSlots],
+    [closeOrdersUi, leaveUids, pushLog, rerender, sellValuableUids, stash, stashSlots, syncBattleTimeUi],
   );
 
 
@@ -1645,7 +1762,15 @@ export default function TarkovTD() {
 
       // towers move, then fire (moving operators cannot shoot)
       for (const t of s.towers) {
-        if (isOperatorMoving(t)) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
+        const wasMoving = isOperatorMoving(t);
+        if (wasMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
+        {
+          const plan = planBookRef.current.get(t.id);
+          if (plan) {
+            const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers }, wasMoving);
+            if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
+          }
+        }
         const st = towerStats(t, mods, mapRef.current, metaRef.current);
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
@@ -1668,13 +1793,19 @@ export default function TarkovTD() {
             y: e.y,
             surface: e.surface ?? "GROUND",
           });
+        const holding = isHoldAimActive(t);
+        // While HOLD ANGLE is active, AUTO modes must not acquire a recenter target.
         const locked =
-          t.targetMode === "MANUAL" ? pickManualTarget(t.manualTargetId, origin, st.range, live) : null;
-        const best = selectTarget(t.targetMode, origin, st.range, live, t.manualTargetId, visible);
+          !holding && t.targetMode === "MANUAL"
+            ? pickManualTarget(t.manualTargetId, origin, st.range, live)
+            : null;
+        const best = holding
+          ? null
+          : selectTarget(t.targetMode, origin, st.range, live, t.manualTargetId, visible);
 
-        // HOLD_ANGLE: check if any enemy is in the held sector
+        // HOLD_ANGLE: check if any enemy is in the held sector (fire eligibility only)
         let holdAngleCanFire = false;
-        if (t.targetMode === "HOLD_ANGLE" && t.holdAngle != null) {
+        if (holding && t.holdAngle != null) {
           const halfCone = getShotDispersion(st.accuracy) + 0.15; // sector = dispersion + base sector width
           for (const e of live) {
             if (!inRange(origin, st.range, e)) continue;
@@ -1690,6 +1821,7 @@ export default function TarkovTD() {
         if (!moving && t.targetMode === "MANUAL" && t.manualTargetId != null && !locked) {
           t.manualTargetId = null;
         }
+        const prevReloadLeft = t.reloadLeft;
         const reloaded = tickReload(
           t.ammo,
           t.reloadLeft,
@@ -1701,18 +1833,41 @@ export default function TarkovTD() {
         );
         t.ammo = reloaded.ammo;
         t.reloadLeft = reloaded.reloadLeft;
-        t.engageTargetId = t.targetMode === "MANUAL" ? (locked?.id ?? null) : (best?.id ?? null);
-
-        // Update aim direction
-        if (t.targetMode === "HOLD_ANGLE" && t.holdAngle != null) {
-          t.angle = t.holdAngle;
-        } else if (t.targetMode === "MANUAL" && locked) {
-          t.angle = Math.atan2(locked.y - cy - 4, locked.x - cx);
-        } else if (best) {
-          t.angle = Math.atan2(best.y - cy - 4, best.x - cx);
+        {
+          const plan = planBookRef.current.get(t.id);
+          if (plan) {
+            const step = onReloadTickComplete(
+              t,
+              plan,
+              { map: mapRef.current, towers: s.towers },
+              prevReloadLeft,
+            );
+            if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
+          }
         }
+        t.engageTargetId = holding
+          ? null
+          : t.targetMode === "MANUAL"
+            ? (locked?.id ?? null)
+            : (best?.id ?? null);
 
-        const canFire = (best || holdAngleCanFire) && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft) && operatorCanFire(t);
+        // Update aim direction — HOLD locks authored angle; never recenter onto AUTO/MANUAL target.
+        t.angle = resolveOperatorAimAngle({
+          holding,
+          holdAngle: t.holdAngle,
+          targetMode: t.targetMode,
+          locked,
+          best,
+          originX: cx,
+          originY: cy,
+          currentAngle: t.angle,
+        });
+
+        const canFire =
+          (holding ? holdAngleCanFire : !!best || !!locked) &&
+          t.cd <= 0 &&
+          canShoot(t.ammo, t.reloadLeft) &&
+          operatorCanFire(t);
         if (canFire) {
             t.cd = st.cooldown;
             t.flash = 0.06;
@@ -2142,47 +2297,166 @@ export default function TarkovTD() {
           ctx.lineWidth = 4;
           ctx.stroke();
         }
-        // Aim cone visualization
+        // Aim cone visualization (selected) — subdued during tactical pause if HOLD; full otherwise
         const coneHalf = getShotDispersion(st.accuracy);
-        const aimAngle = sel.angle;
+        const aimAngle =
+          isHoldAimActive(sel) && sel.holdAngle != null ? sel.holdAngle : sel.angle;
         const coneLen = st.range;
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
-        ctx.arc(pos.x, pos.y, coneLen, aimAngle - coneHalf, aimAngle + coneHalf);
-        ctx.closePath();
-        ctx.fillStyle = sel.targetMode === "HOLD_ANGLE"
-          ? "rgba(232,140,48,0.10)"
-          : "rgba(110,220,255,0.08)";
-        ctx.fill();
-        ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
-          ? "rgba(232,140,48,0.45)"
-          : "rgba(110,220,255,0.35)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        // Aim direction line
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
-        ctx.lineTo(pos.x + Math.cos(aimAngle) * coneLen, pos.y + Math.sin(aimAngle) * coneLen);
-        ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
-          ? "rgba(232,140,48,0.6)"
-          : "rgba(110,220,255,0.5)";
-        ctx.stroke();
-        ctx.lineWidth = 1;
-        if (sel.move?.path.length) {
-          ctx.fillStyle = "rgba(110,220,255,0.35)";
-          for (const step of sel.move.path) {
-            const c = { x: step.tx * TILE + TILE / 2, y: step.ty * TILE + TILE / 2 };
-            ctx.fillRect(c.x - 2, c.y - 2, 4, 4);
-          }
+        {
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y);
+          ctx.arc(pos.x, pos.y, coneLen, aimAngle - coneHalf, aimAngle + coneHalf);
+          ctx.closePath();
+          ctx.fillStyle = sel.targetMode === "HOLD_ANGLE"
+            ? "rgba(232,140,48,0.10)"
+            : "rgba(110,220,255,0.08)";
+          ctx.fill();
+          ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
+            ? "rgba(232,140,48,0.45)"
+            : "rgba(110,220,255,0.35)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y);
+          ctx.lineTo(pos.x + Math.cos(aimAngle) * coneLen, pos.y + Math.sin(aimAngle) * coneLen);
+          ctx.strokeStyle = sel.targetMode === "HOLD_ANGLE"
+            ? "rgba(232,140,48,0.6)"
+            : "rgba(110,220,255,0.5)";
+          ctx.stroke();
+          ctx.lineWidth = 1;
         }
-        if (!s.place && s.hoverTx >= 0) {
-          const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), s.hoverTx, s.hoverTy);
-          const path = dest ? findOperatorPath(mapRef.current, logicalNode(sel), dest) : null;
+        const oMode = ordersEditorModeRef.current;
+        const liveOrdersDraft = ordersDraftRef.current;
+        if (oMode.kind === "author_move" && !s.place && s.hoverTx >= 0) {
+          const moveIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
+          const origin = getProjectedOperatorPositionBeforeOrder(
+            pos,
+            liveOrdersDraft,
+            moveIndex,
+            TILE,
+          );
+          const fromNode = {
+            tx: Math.floor(origin.x / TILE),
+            ty: Math.floor(origin.y / TILE),
+            surface: sel.surface ?? ("GROUND" as const),
+          };
+          const dest = resolveMoveDestination(mapRef.current, fromNode, s.hoverTx, s.hoverTy);
+          const path = dest ? findOperatorPath(mapRef.current, fromNode, dest) : null;
           const ok = !!dest && !!path;
           ctx.strokeStyle = ok ? "rgba(125,220,90,0.8)" : "rgba(255,70,50,0.55)";
           ctx.setLineDash([4, 4]);
           ctx.strokeRect(s.hoverTx * TILE + 2, s.hoverTy * TILE + 2, TILE - 4, TILE - 4);
           ctx.setLineDash([]);
+        }
+        if (oMode.kind === "author_hold" && s.hoverTx >= 0) {
+          const worldX = s.hoverTx * TILE + TILE / 2;
+          const worldY = s.hoverTy * TILE + TILE / 2;
+          const holdIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
+          const geometry = getProjectedActionGeometry(
+            pos,
+            liveOrdersDraft,
+            holdIndex,
+            TILE,
+            { x: worldX, y: worldY },
+          );
+          ctx.beginPath();
+          ctx.moveTo(geometry.origin.x, geometry.origin.y);
+          ctx.lineTo(
+            geometry.origin.x + Math.cos(geometry.angle) * TILE * 3,
+            geometry.origin.y + Math.sin(geometry.angle) * TILE * 3,
+          );
+          ctx.strokeStyle = "rgba(232,140,48,0.85)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      // Squad order-plan overlays — detailed while PAUSED; selected subtle while live
+      {
+        const pausedNow = battleTimeRef.current.mode === "PAUSED";
+        for (const t of s.towers) {
+          const plan = planBookRef.current.get(t.id);
+          if (!plan || plan.orders.length === 0) continue;
+          if (!pausedNow && t.id !== s.selectedId) continue;
+          if (!pausedNow && plan.state === "DONE") continue;
+          const pos = towerPos(t);
+          const strong = pausedNow && t.id === s.selectedId;
+          const subdued = pausedNow && t.id !== s.selectedId;
+          const subtle = !pausedNow && t.id === s.selectedId;
+          const moves = planMoveWaypoints(plan);
+          let prevX = pos.x;
+          let prevY = pos.y;
+          let moveNum = 0;
+          for (const order of plan.orders) {
+            if (order.type === "MOVE") {
+              moveNum += 1;
+              const dx = order.tx * TILE + TILE / 2;
+              const dy = order.ty * TILE + TILE / 2;
+              ctx.beginPath();
+              ctx.moveTo(prevX, prevY);
+              ctx.lineTo(dx, dy);
+              ctx.strokeStyle = strong
+                ? "rgba(125,220,90,0.9)"
+                : subtle
+                  ? "rgba(110,220,255,0.35)"
+                  : "rgba(125,220,90,0.35)";
+              ctx.setLineDash(subtle || subdued ? [4, 4] : []);
+              ctx.lineWidth = strong ? 2 : 1.25;
+              ctx.stroke();
+              ctx.setLineDash([]);
+              const mark = strong ? 5 : 3;
+              ctx.fillStyle = strong ? "rgba(125,220,90,0.95)" : "rgba(125,220,90,0.45)";
+              ctx.fillRect(dx - mark, dy - mark, mark * 2, mark * 2);
+              ctx.fillStyle = strong ? "#0a0c08" : "rgba(10,12,8,0.7)";
+              ctx.font = "bold 8px monospace";
+              ctx.textAlign = "center";
+              ctx.fillText(String(moveNum), dx, dy + 3);
+              prevX = dx;
+              prevY = dy;
+            } else if (order.type === "RELOAD" && pausedNow) {
+              ctx.fillStyle = strong ? "rgba(240,180,0,0.95)" : "rgba(240,180,0,0.5)";
+              ctx.font = "bold 8px monospace";
+              ctx.textAlign = "left";
+              ctx.fillText("RLD", prevX + 6, prevY - 8);
+            } else if (order.type === "HOLD_ANGLE") {
+              const len = TILE * (strong ? 2.6 : 2);
+              ctx.beginPath();
+              ctx.moveTo(prevX, prevY);
+              ctx.lineTo(prevX + Math.cos(order.angle) * len, prevY + Math.sin(order.angle) * len);
+              ctx.strokeStyle = strong ? "rgba(232,140,48,0.85)" : "rgba(232,140,48,0.4)";
+              ctx.lineWidth = strong ? 2 : 1.25;
+              ctx.stroke();
+            }
+          }
+          if (pausedNow && moves.length === 0 && plan.orders.some((o) => o.type === "RELOAD")) {
+            ctx.fillStyle = strong ? "rgba(240,180,0,0.95)" : "rgba(240,180,0,0.5)";
+            ctx.font = "bold 8px monospace";
+            ctx.fillText("RLD", pos.x - 8, pos.y - TILE / 2 - 6);
+          }
+          const sum = planSummary(plan);
+          if (sum && pausedNow) {
+            ctx.fillStyle = strong ? "rgba(200,220,180,0.95)" : "rgba(160,180,140,0.55)";
+            ctx.font = "7px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(sum, pos.x, pos.y - TILE / 2 - 14);
+          }
+        }
+        if (!pausedNow) {
+          const selLive = s.towers.find((t) => t.id === s.selectedId);
+          if (selLive?.move?.dest) {
+            const pos = towerPos(selLive);
+            const dest = selLive.move.dest;
+            const dx = dest.tx * TILE + TILE / 2;
+            const dy = dest.ty * TILE + TILE / 2;
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            ctx.lineTo(dx, dy);
+            ctx.strokeStyle = "rgba(110,220,255,0.35)";
+            ctx.setLineDash([3, 5]);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
         }
       }
 
@@ -2231,9 +2505,12 @@ export default function TarkovTD() {
     };
 
     const frame = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
+      const wallDt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      tick(dt);
+      const scale = resolveEffectiveBattleTimeScale(battleTimeRef.current);
+      const steps = simulationStepsFromWallDt(wallDt, scale);
+      // PAUSED (scale 0): skip tick entirely so fire/spawn cannot advance on a zero-dt frame.
+      for (const step of steps) tick(step);
       render();
       raf = requestAnimationFrame(frame);
     };
@@ -2257,9 +2534,136 @@ export default function TarkovTD() {
 
   const recruitCost = () => Math.round(RECRUIT_BASE * Math.pow(1.4, gs.current.towers.length));
 
+  const applyOperatorMoveToTile = (sel: Tower, tx: number, ty: number) => {
+    const s = gs.current;
+    const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), tx, ty);
+    if (!dest) {
+      pushLog("NO ROUTE");
+      return;
+    }
+    const paused = battleTimeRef.current.mode === "PAUSED";
+    const decision = resolveLeftClickMovePlan(planBookRef.current.get(sel.id), dest.tx, dest.ty, paused);
+    if (decision.kind === "refuse") {
+      pushLog(decision.reason);
+      openOrdersForOperator(sel.id, planBookRef.current.get(sel.id) ?? createEmptyPlan());
+      return;
+    }
+    setPlan(planBookRef.current, sel.id, decision.plan);
+    setOrdersDraft(decision.plan);
+    setOrdersOpenFor(sel.id);
+    if (decision.executeNow) {
+      const r = beginPlanExecution(sel, decision.plan, { map: mapRef.current, towers: s.towers });
+      setPlan(planBookRef.current, sel.id, r.plan);
+      setOrdersDraft(r.plan);
+      if (!r.ok && r.reason) pushLog(r.reason);
+    }
+    setOrdersMode({ kind: "idle" });
+  };
+
+  const onActionWheelPick = (id: WheelActionId) => {
+    const wheel = actionWheel;
+    setActionWheel(null);
+    if (!wheel || id === "CANCEL") {
+      rerender();
+      return;
+    }
+    const s = gs.current;
+    const ctx = { map: mapRef.current, towers: s.towers };
+
+    if (wheel.kind === "operator") {
+      const sel = s.towers.find((t) => t.id === wheel.operatorId);
+      if (!sel) {
+        rerender();
+        return;
+      }
+      if (id === "MOVE") {
+        applyOperatorMoveToTile(sel, wheel.tx, wheel.ty);
+        rerender();
+        return;
+      }
+      if (id === "RELOAD") {
+        const wasReloading = sel.reloadLeft > 0;
+        const r = dispatchOperatorCommand(sel, { type: "RELOAD" }, ctx);
+        if (!r.ok) pushLog(r.reason);
+        else {
+          if (battleTimeRef.current.mode === "PAUSED") {
+            noteReloadAuthoredInPause(pauseReloadSessionRef.current, sel.id, wasReloading);
+          }
+          if (r.message) pushLog(r.message);
+        }
+        rerender();
+        return;
+      }
+      if (id === "HOLD_ANGLE") {
+        const pos = towerPos(sel);
+        const angle = Math.atan2(wheel.worldY - pos.y + 4, wheel.worldX - pos.x);
+        const r = dispatchOperatorCommand(
+          sel,
+          { type: "HOLD_ANGLE", angle, point: { x: wheel.worldX, y: wheel.worldY } },
+          ctx,
+        );
+        if (!r.ok) pushLog(r.reason);
+        else pushLog("HOLD ANGLE SET");
+        rerender();
+        return;
+      }
+      if (id === "ORDERS") {
+        const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), wheel.tx, wheel.ty);
+        if (!dest) {
+          pushLog("NO ROUTE");
+          openOrdersForOperator(sel.id, planBookRef.current.get(sel.id) ?? createEmptyPlan());
+          rerender();
+          return;
+        }
+        const resolved = resolveOrdersSeedFromRightClick(planBookRef.current.get(sel.id), dest);
+        if (resolved.seeded) {
+          setPlan(planBookRef.current, sel.id, resolved.plan);
+        } else if (resolved.preserved) {
+          pushLog("ORDERS OPEN — PLAN PRESERVED");
+        }
+        openOrdersForOperator(sel.id, resolved.plan);
+        rerender();
+        return;
+      }
+    }
+
+    if (wheel.kind === "tile") {
+      if (id === "BARRICADE") {
+        s.place = "barricade";
+        s.selectedId = null;
+        s.hoverTx = wheel.tx;
+        s.hoverTy = wheel.ty;
+        s.hoverEdge = wheel.edge;
+        pushLog("BARRICADE — click edge to place");
+        rerender();
+        return;
+      }
+      if (id === "WIRE") {
+        s.place = "wire";
+        s.selectedId = null;
+        s.hoverTx = wheel.tx;
+        s.hoverTy = wheel.ty;
+        pushLog("WIRE — click road to place");
+        rerender();
+        return;
+      }
+      if (id === "HIRE") {
+        s.place = "operator";
+        s.selectedId = null;
+        s.hoverTx = wheel.tx;
+        s.hoverTy = wheel.ty;
+        pushLog(`HIRE — click tile (${recruitCost()}₽)`);
+        rerender();
+        return;
+      }
+    }
+    rerender();
+  };
+
   const onClick = (ev: React.MouseEvent<HTMLCanvasElement>) => {
     const s = gs.current;
     const [tx, ty] = toTile(ev);
+    setActionWheel(null);
 
     const bag = s.drops.find((d) => d.tx === tx && d.ty === ty);
     if (bag) {
@@ -2310,21 +2714,85 @@ export default function TarkovTD() {
       s.selectedId = existing.id === s.selectedId ? null : existing.id;
       s.selectedObstacle = null;
       s.place = null;
+      setOrdersMode({ kind: "idle" });
       rerender();
       return;
     }
 
-    // HOLD_ANGLE placement: click on battlefield to set fixed aim direction
-    if (holdAnglePending != null) {
-      const sel = s.towers.find((t) => t.id === holdAnglePending);
+    // Orders editor authoring: MOVE destination / HOLD direction
+    const oMode = ordersEditorModeRef.current;
+    if (oMode.kind === "author_hold" && ordersOpenFor != null) {
+      const sel = s.towers.find((t) => t.id === ordersOpenFor);
       if (sel) {
         const world = toWorld(ev);
-        const pos = towerPos(sel);
-        sel.holdAngle = Math.atan2(world.y - pos.y + 4, world.x - pos.x);
-        sel.holdAnglePoint = { x: world.x, y: world.y };
-        sel.targetMode = "HOLD_ANGLE";
+        const liveOrdersDraft = ordersDraftRef.current;
+        const holdIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
+        const geometry = getProjectedActionGeometry(
+          towerPos(sel),
+          liveOrdersDraft,
+          holdIndex,
+          TILE,
+          world,
+        );
+        const order = {
+          type: "HOLD_ANGLE" as const,
+          angle: geometry.angle,
+          point: geometry.point,
+        };
+        let draft = liveOrdersDraft;
+        if (oMode.editIndex != null) {
+          const r = replaceOrderAt(draft, oMode.editIndex, order);
+          if (!r.ok) pushLog(r.reason);
+          else draft = r.plan!;
+        } else {
+          const r = appendOrder(draft, order);
+          if (!r.ok) pushLog(r.reason);
+          else draft = r.plan!;
+        }
+        setOrdersDraft(draft);
+        setPlan(planBookRef.current, ordersOpenFor, draft);
+        setOrdersMode({ kind: "idle" });
       }
-      setHoldAnglePending(null);
+      rerender();
+      return;
+    }
+    if (oMode.kind === "author_move" && ordersOpenFor != null) {
+      const sel = s.towers.find((t) => t.id === ordersOpenFor);
+      if (sel) {
+        const liveOrdersDraft = ordersDraftRef.current;
+        const moveIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
+        const origin = getProjectedOperatorPositionBeforeOrder(
+          towerPos(sel),
+          liveOrdersDraft,
+          moveIndex,
+          TILE,
+        );
+        const fromNode = {
+          tx: Math.floor(origin.x / TILE),
+          ty: Math.floor(origin.y / TILE),
+          surface: sel.surface ?? ("GROUND" as const),
+        };
+        const dest = resolveMoveDestination(mapRef.current, fromNode, tx, ty);
+        if (!dest) {
+          pushLog("NO ROUTE");
+          rerender();
+          return;
+        }
+        const order = { type: "MOVE" as const, tx: dest.tx, ty: dest.ty };
+        let draft = liveOrdersDraft;
+        if (oMode.editIndex != null) {
+          const r = replaceOrderAt(draft, oMode.editIndex, order);
+          if (!r.ok) pushLog(r.reason);
+          else draft = r.plan!;
+        } else {
+          const r = appendOrder(draft, order);
+          if (!r.ok) pushLog(r.reason);
+          else draft = r.plan!;
+        }
+        setOrdersDraft(draft);
+        setPlan(planBookRef.current, ordersOpenFor, draft);
+        setOrdersMode({ kind: "idle" });
+      }
       rerender();
       return;
     }
@@ -2347,6 +2815,7 @@ export default function TarkovTD() {
     if (edgeBag && !s.place) {
       s.selectedObstacle = edgeBag.id === s.selectedObstacle ? null : edgeBag.id;
       s.selectedId = null;
+      closeOrdersUi();
       rerender();
       return;
     }
@@ -2354,6 +2823,7 @@ export default function TarkovTD() {
     if (wirePick && !s.place) {
       s.selectedObstacle = wirePick.id === s.selectedObstacle ? null : wirePick.id;
       s.selectedId = null;
+      closeOrdersUi();
       rerender();
       return;
     }
@@ -2387,21 +2857,17 @@ export default function TarkovTD() {
     }
 
     const sel = s.towers.find((t) => t.id === s.selectedId);
+    // LEFT-CLICK always means MOVE when an operator is selected (no MOVE mode required).
     if (sel && !s.place) {
-      const result = issueOperatorMove(mapRef.current, s.towers, sel, tx, ty);
-      if (!result.ok) {
-        pushLog(result.reason);
-        rerender();
-        return;
-      }
-      if (!result.alreadyThere) rerender();
+      applyOperatorMoveToTile(sel, tx, ty);
+      rerender();
       return;
     }
 
     s.selectedObstacle = null;
 
-
     s.selectedId = null;
+    closeOrdersUi();
     rerender();
   };
 
@@ -2454,22 +2920,65 @@ export default function TarkovTD() {
     const onKey = (e: KeyboardEvent) => {
       const s = gs.current;
       if (e.key === "Escape") {
+        if (actionWheel) {
+          setActionWheel(null);
+          rerender();
+          return;
+        }
+        if (ordersEditorModeRef.current.kind !== "idle") {
+          setOrdersMode({ kind: "idle" });
+          rerender();
+          return;
+        }
         s.place = null;
         s.selectedId = null;
+        closeOrdersUi();
         rerender();
       }
       if (e.code === "Space") {
         e.preventDefault();
-        startWave();
+        const s = gs.current;
+        if (s.phase === "prep") {
+          startWave();
+          return;
+        }
+        if (s.phase === "combat" && battleTimeRef.current.controlsEnabled) {
+          const prev = battleTimeRef.current.mode;
+          battleTimeRef.current = toggleBattleTimePause(battleTimeRef.current);
+          if (battleTimeRef.current.mode === "PAUSED" && prev !== "PAUSED") {
+            pauseReloadSessionRef.current = beginPauseReloadSession(pauseReloadSessionRef.current);
+          }
+          if (prev === "PAUSED" && battleTimeRef.current.mode !== "PAUSED") {
+            startAllPlanned(planBookRef.current, s.towers, mapRef.current);
+            setOrdersMode({ kind: "idle" });
+          }
+          syncBattleTimeUi();
+          rerender();
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rerender, startWave]);
+  }, [actionWheel, closeOrdersUi, rerender, setOrdersMode, startWave, syncBattleTimeUi]);
 
   const s = gs.current;
   const selected = s.towers.find((t) => t.id === s.selectedId) ?? null;
   const selBarricade = s.obstacles.find((o) => o.id === s.selectedObstacle) ?? null;
+
+  useEffect(() => {
+    const id = selected?.id ?? null;
+    setActionWheel(null);
+    if (id == null) {
+      setOrdersOpenFor(null);
+      setOrdersMode({ kind: "idle" });
+      return;
+    }
+    const plan = planBookRef.current.get(id) ?? createEmptyPlan();
+    setOrdersDraft(plan);
+    setOrdersOpenFor(id);
+    setOrdersMode({ kind: "idle" });
+  }, [selected?.id, setOrdersMode]);
+
   const nextWaveName = useMemo(
     () => effectiveWave(mapRef.current.def, s.wave + 1).name,
     [s.wave],
@@ -2552,31 +3061,16 @@ export default function TarkovTD() {
 
   const doExtract = () => {
     if (s.phase !== "prep") return pushLog("Extract only between waves.");
-    // living operators walk out with everything they carry
-    const carried: Item[] = [];
-    for (const t of s.towers) {
-      if (t.operatorId) continue;
-      const wid = weaponItemId(t.weapon);
-      if (wid && t.weapon !== "toz") carried.push(makeItem(wid, newUid())!);
-      for (const a of t.attachments) {
-        const aid = attachItemId(a);
-        if (aid) carried.push(makeItem(aid, newUid())!);
-      }
-      if (t.armor) {
-        const aid = armorItemId(t.armor);
-        if (aid) carried.push(makeItem(aid, newUid())!);
-      }
-    }
+    // Persistent kit (PMC / crew) is retained via writeback — never mint into haul.
+    // Only mid-raid hired operators contribute recovered equipped gear.
+    const carried = recoveredLootFromSurvivingTowers(s.towers, newUid);
     s.recovered = carried;
     s.backpack = s.backpack.flatMap((item) => expandPackedWeapon(item, newUid));
-    const value = [...s.backpack, ...carried].reduce(
-      (a, i) => a + (i.kind === "valuable" ? saleValueOf(i) : 0),
-      0,
-    );
+    const haul = buildExtractHaul(s.backpack, carried);
+    const value = haul.reduce((a, i) => a + (i.kind === "valuable" ? saleValueOf(i) : 0), 0);
     s.payout = value;
     setSellValuableUids(new Set());
     setLeaveUids(new Set());
-    const haul = [...s.backpack, ...carried];
     const items: { itemId: string; count: number }[] = [];
     const counts = new Map<string, number>();
     for (const it of haul) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
@@ -2584,7 +3078,7 @@ export default function TarkovTD() {
     noteQuestTestEvent({ type: "EXTRACT", mapId, items });
     // Extract count for quest trackers is applied in toHideout via applyRaidQuestProgress.
     s.phase = "extracted";
-    pushLog(`Extracted with ${s.backpack.length + carried.length} item(s). Decide what to keep.`);
+    pushLog(`Extracted with ${haul.length} item(s). Decide what to keep.`);
     rerender();
   };
 
@@ -2612,7 +3106,7 @@ export default function TarkovTD() {
   };
 
   const inRaid = s.phase !== "hideout";
-  const extractHaul = [...s.backpack, ...s.recovered];
+  const extractHaul = buildExtractHaul(s.backpack, s.recovered);
   const extractValuables = extractHaul.filter((i) => i.kind === "valuable");
   const extractGear = extractHaul.filter((i) => i.kind !== "valuable");
   const extractPreview = settleHaul(stash, extractHaul, sellValuableUids, stashSlots, leaveUids, saleValueOf);
@@ -2680,6 +3174,30 @@ export default function TarkovTD() {
               <Stat label="HEALTH" value={`${s.lives}/${START_LIVES}`} tone={s.lives < 7 ? "bad" : "good"} />
               <Stat label="WAVE" value={`${s.wave}`} />
               <Stat label="KILLS" value={`${s.killed}`} />
+              {inRaid && battleTimeRef.current.controlsEnabled && (
+                <div className="flex flex-col items-end gap-0.5">
+                  {battleTimeMode === "PAUSED" && (
+                    <span className="font-mono text-[9px] tracking-wide text-primary">
+                      PAUSED · ISSUE ORDERS
+                    </span>
+                  )}
+                  <div className="flex items-center gap-0.5 border-2 border-border bg-secondary/40 px-1 py-0.5">
+                  {BATTLE_TIME_MODE_ORDER.map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      title={battleTimeModeTitle(mode)}
+                      className={`pixel-btn min-w-[1.75rem] px-1.5 py-0.5 text-[10px] ${
+                        battleTimeMode === mode ? "pixel-btn-primary" : "text-muted-foreground"
+                      }`}
+                      onClick={() => applyBattleTimeMode(mode)}
+                    >
+                      {battleTimeModeLabel(mode)}
+                    </button>
+                  ))}
+                  </div>
+                </div>
+              )}
               <DevToolsMenu enabled={DEV_TOOLS_ENABLED} onSelect={onDevTool} />
             </div>
           </header>
@@ -2732,6 +3250,74 @@ export default function TarkovTD() {
                     gs.current.hoverEdge = null;
                   }}
                   onClick={onClick}
+                  onContextMenu={(ev) => {
+                    ev.preventDefault();
+                    const s = gs.current;
+                    closeActionWheel();
+                    if (s.place) {
+                      s.place = null;
+                      rerender();
+                      return;
+                    }
+                    if (ordersEditorModeRef.current.kind !== "idle") {
+                      setOrdersMode({ kind: "idle" });
+                      rerender();
+                      return;
+                    }
+                    const [tx, ty] = toTile(ev);
+                    const world = toWorld(ev);
+                    const edge = edgeFromCursor(world.x, world.y, tx, ty, TILE);
+                    const sel = s.towers.find((t) => t.id === s.selectedId);
+                    if (sel) {
+                      setActionWheel({
+                        kind: "operator",
+                        clientX: ev.clientX,
+                        clientY: ev.clientY,
+                        worldX: world.x,
+                        worldY: world.y,
+                        tx,
+                        ty,
+                        edge,
+                        operatorId: sel.id,
+                        actions: listOperatorWheelActions(),
+                      });
+                      rerender();
+                      return;
+                    }
+                    const barricadeOk = tileAllowsAnyBarricadeEdge((e) =>
+                      barricadePlaceableAt(mapRef.current, s, tx, ty, e),
+                    );
+                    const wireOk = canPlaceWire(
+                      tx,
+                      ty,
+                      (x, y) => isRoad(mapRef.current, x, y),
+                      s.obstacles,
+                    );
+                    const hireOk = operatorPlaceableFor(mapRef.current, s, tx, ty);
+                    const actions = listTileWheelActions({
+                      barricade: barricadeOk,
+                      wire: wireOk,
+                      hire: hireOk,
+                    });
+                    if (actions.length === 0) {
+                      pushLog("NO ACTIONS HERE");
+                      rerender();
+                      return;
+                    }
+                    setActionWheel({
+                      kind: "tile",
+                      clientX: ev.clientX,
+                      clientY: ev.clientY,
+                      worldX: world.x,
+                      worldY: world.y,
+                      tx,
+                      ty,
+                      edge,
+                      operatorId: null,
+                      actions,
+                    });
+                    rerender();
+                  }}
                   onDragOver={(ev) => ev.preventDefault()}
                   onDrop={canvasDrop}
                   className="block w-full cursor-crosshair"
@@ -2917,12 +3503,7 @@ export default function TarkovTD() {
                   {scavTab === "quests" && (
                     <PlayerQuestsPanel
                       catalog={QUEST_SPECS}
-                      unlockCtx={{
-                        claimedQuestIds: meta.claimed,
-                        playerLevel: meta.pmc.level,
-                        radioState: (meta.crew.radio ?? freshRadioProgression()).radioState,
-                        uniqueContacts: meta.crew.radio?.uniqueContacts,
-                      }}
+                      unlockCtx={unlockContextFromMeta(meta)}
                       questProgress={meta.quests}
                       filter={questFilter}
                       onFilter={setQuestFilter}
@@ -3500,53 +4081,85 @@ export default function TarkovTD() {
             </div>
 
             {inRaid && (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => {
-                    gs.current.place = gs.current.place === "operator" ? null : "operator";
-                    gs.current.selectedId = null;
-                    rerender();
-                  }}
-                  className={`pixel-btn ${s.place === "operator" ? "pixel-btn-primary" : ""}`}
-                >
-                  HIRE OPERATOR {recruitCost()}₽
-                </button>
-                <button
-                  onClick={() => {
-                    gs.current.place = gs.current.place === "barricade" ? null : "barricade";
-                    gs.current.selectedId = null;
-                    rerender();
-                  }}
-                  className={`pixel-btn ${s.place === "barricade" ? "pixel-btn-primary" : ""}`}
-                >
-                  BARRICADE {BARRICADE_COST}₽
-                </button>
-                <button
-                  onClick={() => {
-                    gs.current.place = gs.current.place === "wire" ? null : "wire";
-                    gs.current.selectedId = null;
-                    rerender();
-                  }}
-                  className={`pixel-btn ${s.place === "wire" ? "pixel-btn-primary" : ""}`}
-                >
-                  BARBED WIRE {WIRE_COST}₽
-                </button>
-                <button onClick={startWave} disabled={s.phase !== "prep"} className="pixel-btn disabled:opacity-40">
-                  START WAVE {s.wave + 1} [SPACE]
-                </button>
-                <button onClick={doExtract} disabled={s.phase !== "prep"} className="pixel-btn disabled:opacity-40">
-                  EXTRACT
-                </button>
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  Click an operator to select · click a free tile to move him · drag gear onto him to equip
-                </span>
+              <div className="mt-3 space-y-2">
+                <div className="pixel-card">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-display text-[10px] text-primary">
+                      BACKPACK {s.backpack.length}/{backpackSlots()}
+                      {s.backpack.length >= backpackSlots() ? " FULL" : ""}
+                    </div>
+                    {s.backpack.length >= backpackSlots() && (
+                      <span className="font-mono text-[10px] text-destructive">FULL</span>
+                    )}
+                  </div>
+                  {DEV_TOOLS_ENABLED && (
+                    <div className="mt-2 grid grid-cols-2 gap-1 sm:grid-cols-4">
+                      <button
+                        type="button"
+                        className="pixel-btn pixel-btn-primary w-full"
+                        onClick={() => setDevPickerOpen((open) => !open)}
+                      >
+                        DEV ADD
+                      </button>
+                      <button type="button" className="pixel-btn w-full" onClick={clearDevBackpack}>
+                        DEV CLEAR
+                      </button>
+                    </div>
+                  )}
+                  {DEV_TOOLS_ENABLED && devPickerOpen && (
+                    <DevItemPicker onPick={addDevBackpackItem} onClose={() => setDevPickerOpen(false)} />
+                  )}
+                  <div className="mt-2 grid grid-cols-5 gap-1 sm:grid-cols-5">
+                    {Array.from({ length: backpackSlots() }).map((_, i) => {
+                      const item = s.backpack[i];
+                      if (!item)
+                        return (
+                          <div
+                            key={`empty-${i}`}
+                            className="h-[46px] border border-dashed border-border/60 bg-background/40"
+                          />
+                        );
+                      return (
+                        <BackpackCell
+                          key={item.uid}
+                          item={item}
+                          onDragStart={() => {
+                            dragUid.current = item.uid;
+                          }}
+                          onClick={() => {
+                            if (s.selectedId) equipOnTower(item.uid, s.selectedId);
+                            else pushLog("Select an operator first, or drag the item onto him.");
+                          }}
+                          onContext={() => scrapInRaid(item.uid)}
+                        />
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 font-mono text-[9px] text-muted-foreground">
+                    Extract moves gear to stash. Tap to equip · hold/R-click scrap for raid funds.
+                  </p>
+                </div>
+                <p className="font-mono text-[10px] text-muted-foreground">
+                  {raidInteractionHint({
+                    paused: battleTimeMode === "PAUSED",
+                    ordersAuthoring: ordersEditorMode.kind !== "idle",
+                    ...(ordersEditorMode.kind === "author_move"
+                      ? { authorKind: "move" as const }
+                      : ordersEditorMode.kind === "author_hold"
+                        ? { authorKind: "hold" as const }
+                        : ordersEditorMode.kind === "pick_add"
+                          ? { authorKind: "pick" as const }
+                          : {}),
+                    placeMode: s.place,
+                  })}
+                </p>
               </div>
             )}
           </div>
 
           {s.phase !== "hideout" && (
           <aside className="pixel-scrollbar flex flex-col gap-3 lg:max-h-[calc(100dvh-var(--td-chrome,13rem))] lg:overflow-y-auto lg:pr-1 td-side">
-            <div className="pixel-card">
+            <div className="pixel-card" data-testid="raid-control">
               <div className="font-display text-[10px] text-primary">RAID CONTROL</div>
               <p className="mt-2 font-mono text-[11px] text-muted-foreground">
                 {s.phase === "prep"
@@ -3557,14 +4170,31 @@ export default function TarkovTD() {
                       ? "Choose your find."
                       : "Raid over."}
               </p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  data-testid="raid-start"
+                  onClick={startWave}
+                  disabled={s.phase !== "prep"}
+                  className="pixel-btn pixel-btn-primary px-2 py-1 text-[10px] disabled:opacity-40"
+                >
+                  START
+                </button>
+                <button
+                  type="button"
+                  data-testid="raid-extract"
+                  onClick={doExtract}
+                  disabled={s.phase !== "prep"}
+                  className="pixel-btn px-2 py-1 text-[10px] disabled:opacity-40"
+                >
+                  EXTRACT
+                </button>
+              </div>
             </div>
 
-            <div className="pixel-card">
-              <div className="font-display text-[10px] text-primary">
-                {selected ? getRaidOperatorTitle(selected, meta) : "NO OPERATOR SELECTED"}
-              </div>
-              {selected ? (
-                <div className="mt-2 space-y-2 font-mono text-[11px]">
+            {selected ? (
+              <>
+                <div className="pixel-card" data-testid="operator-summary">
                   {(() => {
                     const st = towerStats(selected, undefined, mapRef.current);
                     const selPos = towerPos(selected);
@@ -3581,168 +4211,355 @@ export default function TarkovTD() {
                         { x: selPos.x, y: selPos.y, surface: selected.surface ?? "GROUND" },
                         { x: lock.x, y: lock.y, surface: lock.surface ?? "GROUND" },
                       );
-                    const status = combatStatus(
-                      selected.reloadLeft,
-                      selected.engageTargetId != null && !losBlocked,
-                      selected.targetMode === "MANUAL" && selected.manualTargetId == null,
-                      isOperatorMoving(selected),
-                    );
+                    const activity = operatorActivityLabel({
+                      moving: isOperatorMoving(selected),
+                      reloadLeft: selected.reloadLeft,
+                      holding: isHoldAimActive(selected),
+                      engaging: selected.engageTargetId != null && !losBlocked,
+                    });
                     const mag = st.magSize;
+                    const sum = planSummary(planBookRef.current.get(selected.id));
                     return (
-                      <>
-                  <div className="flex justify-between text-foreground">
-                    <span>{st.weapon.name}</span>
-                    <span className="text-primary">{status}</span>
-                  </div>
-                  {selected.pmc && (
-                    <StatRow
-                      label="LEVEL"
-                      value={`${selected.level ?? 1} (${selected.xp ?? 0}/${xpForLevel(selected.level ?? 1)} XP)`}
-                    />
-                  )}
-                  <StatRow label="HP" value={`${Math.max(0, Math.round(selected.hp))}/${selected.maxHp}`} />
-                  <StatRow label="AMMO" value={`${selected.ammo} / ${mag}`} />
-                  {selected.reloadLeft > 0 && st.reloadType === "MAGAZINE" && (
-                    <div>
-                      <StatRow label="RELOAD" value={`${Math.ceil(selected.reloadLeft / 100) / 10}s`} />
-                      <div className="mt-1 h-1 border border-border bg-transparent">
-                        <div
-                          className="h-full bg-primary"
-                          style={{ width: `${Math.round(reloadProgress(selected.reloadLeft, st.reloadMs) * 100)}%` }}
+                      <div className="space-y-2 font-mono text-[11px]">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="font-display text-[10px] text-primary">
+                            {getRaidOperatorTitle(selected, meta)}
+                          </div>
+                          <span className="shrink-0 text-[9px] text-primary">{activity}</span>
+                        </div>
+                        <div className="flex justify-between text-foreground">
+                          <span>
+                            {st.weapon.name}
+                            {selected.pmc ? ` · LV ${selected.level ?? 1}` : ""}
+                          </span>
+                        </div>
+                        <StatRow
+                          label="HP"
+                          value={`${Math.max(0, Math.round(selected.hp))}/${selected.maxHp}`}
                         />
-                      </div>
-                    </div>
-                  )}
-                  {selected.reloadLeft > 0 && st.reloadType === "PER_ROUND" && (
-                    <StatRow
-                      label="LOADING"
-                      value={`SHELL ${Math.min(mag, selected.ammo + 1)} / ${mag}`}
-                    />
-                  )}
-                  <StatRow
-                    label="TARGET"
-                    value={
-                      selected.targetMode === "MANUAL" && selected.manualTargetId == null
-                        ? "SELECT TARGET"
-                        : selected.engageTargetId != null
-                          ? `#${selected.engageTargetId}`
-                          : "NONE"
-                    }
-                  />
-                  {losBlocked && <StatRow label="LOS" value="BLOCKED" />}
-                  <StatRow label="DMG" value={st.damage.toFixed(1)} />
-                  <StatRow label="RANGE" value={st.range.toFixed(0)} />
-                  <StatRow label="ACC" value={`${Math.round(st.accuracy * 100)}%`} />
-                  <StatRow label="CONE" value={`±${(getShotDispersion(st.accuracy) * 180 / Math.PI).toFixed(1)}°`} />
-                  <StatRow label="FIRE" value={`${(60000 / st.cooldown).toFixed(0)} RPM`} />
-                  <StatRow
-                    label="CYCLE"
-                    value={
-                      st.reloadType === "PER_ROUND"
-                        ? `${(st.reloadMs / 1000).toFixed(1)}s / SHELL`
-                        : `${(st.reloadMs / 1000).toFixed(1)}s MAG`
-                    }
-                  />
-                  {selected.armor ? (
-                    <>
-                      <StatRow
-                        label="ARMOR"
-                        value={`${ARMORS[selected.armor]?.name ?? "ARMOR"} · ${Math.round((ARMORS[selected.armor]?.reduction ?? 0) * 100)}%`}
-                      />
-                      <StatRow
-                        label="DURABILITY"
-                        value={`${Math.round(selected.armorHp ?? 0)}/${ARMORS[selected.armor]?.durability ?? 0}`}
-                      />
-                      <button type="button" className="pixel-btn w-full" onClick={() => stripArmor(selected.id)}>
-                        DETACH ARMOR
-                      </button>
-                    </>
-                  ) : (
-                    <StatRow label="ARMOR" value="NONE" />
-                  )}
-                  <StatRow
-                    label="MOVE"
-                    value={`${(towerMoveSpeedPx(selected, metaRef.current) / TILE).toFixed(2)} T/S`}
-                  />
-                  <StatRow
-                    label="LOAD"
-                    value={(
-                      getEquippedWeight(selected) +
-                      scavVisualMods(selected.weapon, selected.scavMods).weightAdd
-                    ).toFixed(1)}
-                  />
-                  <StatRow
-                    label="COVER"
-                    value={
-                      bestCoverAt(coverList(mapRef.current, s), selected.tx, selected.ty) >= 0.7
-                        ? "HARD SIDE (-70%)"
-                        : bestCoverAt(coverList(mapRef.current, s), selected.tx, selected.ty) >= 0.4
-                          ? "HALF SIDE (-40%)"
-                          : "EXPOSED"
-                    }
-                  />
-                  <div className="pt-1">
-                    <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">TARGETING</div>
-                    <div className="flex flex-wrap gap-1">
-                      {TARGET_MODES.map((mode) => (
+                        <StatRow label="AMMO" value={`${selected.ammo} / ${mag}`} />
+                        {selected.armor ? (
+                          <div className="text-[10px] text-muted-foreground">
+                            {ARMORS[selected.armor]?.name ?? "ARMOR"} ·{" "}
+                            {Math.round((ARMORS[selected.armor]?.reduction ?? 0) * 100)}% ·{" "}
+                            {Math.round(selected.armorHp ?? 0)}/
+                            {ARMORS[selected.armor]?.durability ?? 0}
+                          </div>
+                        ) : null}
+                        {sum ? <div className="text-[9px] text-primary">{sum}</div> : null}
                         <button
-                          key={mode}
                           type="button"
-                          className={`pixel-btn px-1 py-0 text-[9px] ${
-                            selected.targetMode === mode ? "text-primary" : "text-muted-foreground"
-                          }`}
-                          onClick={() => {
-                            selected.targetMode = mode;
-                            if (mode !== "MANUAL") selected.manualTargetId = null;
-                            if (mode !== "HOLD_ANGLE") {
-                              selected.holdAngle = null;
-                              selected.holdAnglePoint = null;
-                            }
-                            if (mode === "HOLD_ANGLE") {
-                              setHoldAnglePending(selected.id);
-                            }
-                            rerender();
-                          }}
+                          className="pixel-btn w-full px-1 py-0 text-[9px] text-muted-foreground"
+                          onClick={() => setOperatorDetailsOpen((open) => !open)}
                         >
-                          {mode}
+                          {operatorDetailsOpen ? "▾ DETAILS" : "▸ DETAILS"}
                         </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="pt-1">
-                    <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">ATTACHMENTS</div>
-                    {mountRowsForWeapon(selected.weapon, selected.attachments).map((row) => (
-                      <div key={row.mount} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
-                        <span className="text-muted-foreground">{row.label}</span>
-                        <span className="flex items-center gap-1 text-foreground">
-                          {row.attachmentId ? (ATTACHMENTS[row.attachmentId]?.name ?? row.attachmentId) : "EMPTY"}
-                          {row.attachmentId && (
-                            <button
-                              type="button"
-                              className="pixel-btn px-1 py-0 text-[8px]"
-                              onClick={() => detachFromTower(selected.id, row.attachmentId!)}
-                            >
-                              DETACH
-                            </button>
-                          )}
-                        </span>
+                        {operatorDetailsOpen ? (
+                          <div className="space-y-2 border-t border-border/60 pt-2" data-testid="operator-details">
+                            {selected.pmc && (
+                              <StatRow
+                                label="LEVEL"
+                                value={`${selected.level ?? 1} (${selected.xp ?? 0}/${xpForLevel(selected.level ?? 1)} XP)`}
+                              />
+                            )}
+                            {selected.reloadLeft > 0 && st.reloadType === "MAGAZINE" && (
+                              <div>
+                                <StatRow
+                                  label="RELOAD"
+                                  value={`${Math.ceil(selected.reloadLeft / 100) / 10}s`}
+                                />
+                                <div className="mt-1 h-1 border border-border bg-transparent">
+                                  <div
+                                    className="h-full bg-primary"
+                                    style={{
+                                      width: `${Math.round(reloadProgress(selected.reloadLeft, st.reloadMs) * 100)}%`,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                            {selected.reloadLeft > 0 && st.reloadType === "PER_ROUND" && (
+                              <StatRow
+                                label="LOADING"
+                                value={`SHELL ${Math.min(mag, selected.ammo + 1)} / ${mag}`}
+                              />
+                            )}
+                            <StatRow
+                              label="TARGET"
+                              value={
+                                selected.targetMode === "MANUAL" && selected.manualTargetId == null
+                                  ? "SELECT TARGET"
+                                  : selected.engageTargetId != null
+                                    ? `#${selected.engageTargetId}`
+                                    : "NONE"
+                              }
+                            />
+                            {losBlocked && <StatRow label="LOS" value="BLOCKED" />}
+                            <StatRow label="DMG" value={st.damage.toFixed(1)} />
+                            <StatRow label="RANGE" value={st.range.toFixed(0)} />
+                            <StatRow label="ACC" value={`${Math.round(st.accuracy * 100)}%`} />
+                            <StatRow
+                              label="CONE"
+                              value={`±${((getShotDispersion(st.accuracy) * 180) / Math.PI).toFixed(1)}°`}
+                            />
+                            <StatRow label="FIRE" value={`${(60000 / st.cooldown).toFixed(0)} RPM`} />
+                            <StatRow
+                              label="CYCLE"
+                              value={
+                                st.reloadType === "PER_ROUND"
+                                  ? `${(st.reloadMs / 1000).toFixed(1)}s / SHELL`
+                                  : `${(st.reloadMs / 1000).toFixed(1)}s MAG`
+                              }
+                            />
+                            {selected.armor ? (
+                              <>
+                                <StatRow
+                                  label="ARMOR"
+                                  value={`${ARMORS[selected.armor]?.name ?? "ARMOR"} · ${Math.round((ARMORS[selected.armor]?.reduction ?? 0) * 100)}%`}
+                                />
+                                <StatRow
+                                  label="DURABILITY"
+                                  value={`${Math.round(selected.armorHp ?? 0)}/${ARMORS[selected.armor]?.durability ?? 0}`}
+                                />
+                                <button
+                                  type="button"
+                                  className="pixel-btn w-full"
+                                  onClick={() => stripArmor(selected.id)}
+                                >
+                                  DETACH ARMOR
+                                </button>
+                              </>
+                            ) : (
+                              <StatRow label="ARMOR" value="NONE" />
+                            )}
+                            <StatRow
+                              label="MOVE"
+                              value={`${(towerMoveSpeedPx(selected, metaRef.current) / TILE).toFixed(2)} T/S`}
+                            />
+                            <StatRow
+                              label="LOAD"
+                              value={(
+                                getEquippedWeight(selected) +
+                                scavVisualMods(selected.weapon, selected.scavMods).weightAdd
+                              ).toFixed(1)}
+                            />
+                            <StatRow
+                              label="COVER"
+                              value={
+                                bestCoverAt(coverList(mapRef.current, s), selected.tx, selected.ty) >= 0.7
+                                  ? "HARD SIDE (-70%)"
+                                  : bestCoverAt(coverList(mapRef.current, s), selected.tx, selected.ty) >= 0.4
+                                    ? "HALF SIDE (-40%)"
+                                    : "EXPOSED"
+                              }
+                            />
+                            <div className="pt-1">
+                              <div className="mb-1 text-[9px] tracking-wide text-muted-foreground">
+                                ATTACHMENTS
+                              </div>
+                              {mountRowsForWeapon(selected.weapon, selected.attachments).map((row) => (
+                                <div
+                                  key={row.mount}
+                                  className="flex items-center justify-between gap-2 border-b border-border/60 pb-1"
+                                >
+                                  <span className="text-muted-foreground">{row.label}</span>
+                                  <span className="flex items-center gap-1 text-foreground">
+                                    {row.attachmentId
+                                      ? (ATTACHMENTS[row.attachmentId]?.name ?? row.attachmentId)
+                                      : "EMPTY"}
+                                    {row.attachmentId && (
+                                      <button
+                                        type="button"
+                                        className="pixel-btn px-1 py-0 text-[8px]"
+                                        onClick={() => detachFromTower(selected.id, row.attachmentId!)}
+                                      >
+                                        DETACH
+                                      </button>
+                                    )}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            {selected.pmc ? (
+                              <p className="text-[10px] text-destructive">
+                                If they die the run ends for good — level, scars and kit are wiped.
+                              </p>
+                            ) : (
+                              <button onClick={doDismiss} className="pixel-btn w-full">
+                                DISMISS (KEEP GEAR)
+                              </button>
+                            )}
+                          </div>
+                        ) : null}
                       </div>
-                    ))}
-                  </div>
-                  {selected.pmc ? (
-                    <p className="text-[10px] text-destructive">
-                      If they die the run ends for good — level, scars and kit are wiped.
-                    </p>
-                  ) : (
-                    <button onClick={doDismiss} className="pixel-btn w-full">
-                      DISMISS (KEEP GEAR)
-                    </button>
-                  )}
-                      </>
                     );
                   })()}
                 </div>
-              ) : selBarricade ? (
+
+                <div className="pixel-card">
+                  <div className="mb-1 flex items-center justify-between gap-2 font-mono text-[9px] tracking-wide text-muted-foreground">
+                    <span className="font-display text-[10px] text-primary">TARGETING</span>
+                    {isHoldAimActive(selected) ? (
+                      <span className="text-primary">HOLD ACTIVE</span>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {AUTO_TARGET_MODES.map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        title={isHoldAimActive(selected) ? `Exit HOLD → ${mode}` : mode}
+                        className={`pixel-btn px-1 py-0 text-[9px] ${
+                          !isHoldAimActive(selected) && selected.targetMode === mode
+                            ? "text-primary"
+                            : "text-muted-foreground"
+                        }`}
+                        onClick={() => {
+                          dispatchOperatorCommand(
+                            selected,
+                            { type: "SET_TARGETING", mode },
+                            { map: mapRef.current, towers: gs.current.towers },
+                          );
+                          setOrdersMode({ kind: "idle" });
+                          rerender();
+                        }}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className={`pixel-btn px-1 py-0 text-[9px] ${
+                        selected.targetMode === "MANUAL" && !isHoldAimActive(selected)
+                          ? "text-primary"
+                          : "text-muted-foreground"
+                      }`}
+                      onClick={() => {
+                        dispatchOperatorCommand(
+                          selected,
+                          { type: "SET_TARGETING", mode: "MANUAL" },
+                          { map: mapRef.current, towers: gs.current.towers },
+                        );
+                        setOrdersMode({ kind: "idle" });
+                        rerender();
+                      }}
+                    >
+                      MANUAL
+                    </button>
+                    {isHoldAimActive(selected) && (
+                      <button
+                        type="button"
+                        className="pixel-btn px-1 py-0 text-[9px] text-primary"
+                        onClick={() => {
+                          dispatchOperatorCommand(
+                            selected,
+                            { type: "CLEAR_HOLD_ANGLE" },
+                            { map: mapRef.current, towers: gs.current.towers },
+                          );
+                          rerender();
+                        }}
+                      >
+                        CLEAR HOLD
+                      </button>
+                    )}
+                  </div>
+                  {isHoldAimActive(selected) && (
+                    <p className="mt-1 font-mono text-[8px] text-muted-foreground">
+                      Aim locked · AUTO resume: {selected.autoTargetMode ?? "FIRST"}
+                    </p>
+                  )}
+                </div>
+
+                <div className="pixel-card" data-testid="orders-sidebar">
+                  <OrdersPanel
+                    variant="sidebar"
+                    operatorName={getRaidOperatorDisplayName(selected, meta)}
+                    plan={
+                      ordersEditorMode.kind === "idle"
+                        ? (planBookRef.current.get(selected.id) ?? ordersDraft)
+                        : ordersDraft
+                    }
+                    editorMode={ordersEditorMode}
+                    onRequestAddMenu={() => setOrdersMode({ kind: "pick_add" })}
+                    onCancelAddMenu={() => setOrdersMode({ kind: "idle" })}
+                    onAddPick={(type) => {
+                      const oid = ordersOpenFor ?? selected.id;
+                      if (type === "RELOAD") {
+                        const r = appendOrder(ordersDraft, { type: "RELOAD" });
+                        if (!r.ok) pushLog(r.reason);
+                        else {
+                          setOrdersDraft(r.plan!);
+                          setPlan(planBookRef.current, oid, r.plan!);
+                        }
+                        setOrdersMode({ kind: "idle" });
+                        rerender();
+                        return;
+                      }
+                      if (type === "MOVE") {
+                        setOrdersMode({ kind: "author_move", editIndex: null });
+                        rerender();
+                        return;
+                      }
+                      setOrdersMode({ kind: "author_hold", editIndex: null });
+                      rerender();
+                    }}
+                    onEdit={(index) => {
+                      const order = ordersDraft.orders[index];
+                      if (!order || order.type === "RELOAD") return;
+                      if (order.type === "MOVE") setOrdersMode({ kind: "author_move", editIndex: index });
+                      else setOrdersMode({ kind: "author_hold", editIndex: index });
+                      rerender();
+                    }}
+                    onRemove={(index) => {
+                      const oid = ordersOpenFor ?? selected.id;
+                      const r = removeOrderAt(ordersDraft, index);
+                      if (!r.ok) {
+                        pushLog(r.reason);
+                        rerender();
+                        return;
+                      }
+                      setOrdersDraft(r.plan!);
+                      setPlan(planBookRef.current, oid, r.plan!);
+                      rerender();
+                    }}
+                    onClearAll={() => {
+                      const oid = ordersOpenFor ?? selected.id;
+                      const plan = planBookRef.current.get(oid);
+                      if (plan?.state === "EXECUTING") {
+                        const next = clearFutureOrders(plan);
+                        setOrdersDraft(next);
+                        setPlan(planBookRef.current, oid, next);
+                      } else {
+                        clearPlan(planBookRef.current, oid);
+                        setOrdersDraft(createEmptyPlan());
+                      }
+                      setOrdersMode({ kind: "idle" });
+                      rerender();
+                    }}
+                    onDone={() => {
+                      const oid = ordersOpenFor ?? selected.id;
+                      const paused = battleTimeRef.current.mode === "PAUSED";
+                      setPlan(planBookRef.current, oid, ordersDraft);
+                      let result = ordersDraft;
+                      if (!paused && ordersDraft.orders.length > 0 && ordersDraft.state !== "EXECUTING") {
+                        const r = beginPlanExecution(selected, ordersDraft, {
+                          map: mapRef.current,
+                          towers: gs.current.towers,
+                        });
+                        setPlan(planBookRef.current, oid, r.plan);
+                        result = r.plan;
+                        if (!r.ok && r.reason) pushLog(r.reason);
+                      }
+                      setOrdersDraft(result);
+                      setOrdersMode({ kind: "idle" });
+                      rerender();
+                    }}
+                  />
+                </div>
+              </>
+            ) : selBarricade ? (
+              <div className="pixel-card">
+                <div className="font-display text-[10px] text-primary">NO OPERATOR SELECTED</div>
                 <div className="mt-2 space-y-2 font-mono text-[11px]">
                   <div className="text-foreground">
                     {selBarricade.kind === "wire"
@@ -3776,75 +4593,23 @@ export default function TarkovTD() {
                         : `REPAIR ${repairCost(selBarricade.kind)}₽`}
                   </button>
                 </div>
-              ) : (
+              </div>
+            ) : (
+              <div className="pixel-card">
+                <div className="font-display text-[10px] text-primary">NO OPERATOR SELECTED</div>
                 <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-                  Your operator deploys with a sidearm. Hired guns start with a sawed-off —
-                  loot better weapons, mods and armor, then drag them on.
+                  Your operator deploys with a sidearm. Hired guns start with a sawed-off — loot better
+                  weapons, mods and armor, then drag them on.
                 </p>
-              )}
-            </div>
-
-
-            <div className="pixel-card">
-              <div className="flex items-center justify-between gap-2">
-                <div className="font-display text-[10px] text-primary">
-                  BACKPACK {s.backpack.length}/{backpackSlots()}
-                  {s.backpack.length >= backpackSlots() ? " FULL" : ""}
-                </div>
-                {s.backpack.length >= backpackSlots() && (
-                  <span className="font-mono text-[10px] text-destructive">FULL</span>
-                )}
               </div>
-              {DEV_TOOLS_ENABLED && (
-                <div className="mt-2 grid grid-cols-2 gap-1">
-                  <button
-                    type="button"
-                    className="pixel-btn pixel-btn-primary w-full"
-                    onClick={() => setDevPickerOpen((open) => !open)}
-                  >
-                    DEV ADD
-                  </button>
-                  <button type="button" className="pixel-btn w-full" onClick={clearDevBackpack}>
-                    DEV CLEAR
-                  </button>
-                </div>
-              )}
-              {DEV_TOOLS_ENABLED && devPickerOpen && (
-                <DevItemPicker onPick={addDevBackpackItem} onClose={() => setDevPickerOpen(false)} />
-              )}
-              <div className="mt-2 grid grid-cols-2 gap-1">
-                {Array.from({ length: backpackSlots() }).map((_, i) => {
-                  const item = s.backpack[i];
-                  if (!item)
-                    return <div key={`empty-${i}`} className="h-[46px] border border-dashed border-border/60 bg-background/40" />;
-                  return (
-                    <BackpackCell
-                      key={item.uid}
-                      item={item}
-                      onDragStart={() => {
-                        dragUid.current = item.uid;
-                      }}
-                      onClick={() => {
-                        if (s.selectedId) equipOnTower(item.uid, s.selectedId);
-                        else pushLog("Select an operator first, or drag the item onto him.");
-                      }}
-                      onContext={() => scrapInRaid(item.uid)}
-                    />
-                  );
-                })}
-              </div>
-              <p className="mt-2 font-mono text-[10px] text-muted-foreground">
-                Extract to move this gear to the stash. Valuables can be kept or sold after extract.
-                Tap an item to equip it, hold (or right-click) to scrap it on site for raid funds at a
-                much better rate.
-              </p>
-            </div>
+            )}
 
             <div className="pixel-card">
               <div className="font-display text-[10px] text-primary">FIELD NOTES</div>
               <div className="mt-2 space-y-1 font-mono text-[10px] text-muted-foreground">
                 <div>Hired guns are identical — the weapon makes the difference.</div>
                 <div>Crates only crack open during a wave — hold one for {CRATE_TIME}s.</div>
+                <div>R-CLICK battlefield for contextual actions · L-CLICK MOVE · SPACE pause.</div>
                 <div>Barricades give hard cover; barbed wire on the road cripples runners.</div>
                 <div>KIA operators drop their weapon and mods on the ground — click the bag.</div>
                 <div>Cover blocks fire only from its own side. Stand beside it.</div>
@@ -3865,6 +4630,15 @@ export default function TarkovTD() {
           )}
         </div>
       </div>
+      {actionWheel && (
+        <ActionWheel
+          clientX={actionWheel.clientX}
+          clientY={actionWheel.clientY}
+          actions={actionWheel.actions}
+          onPick={onActionWheelPick}
+          onCancel={closeActionWheel}
+        />
+      )}
       {DEV_TOOLS_ENABLED && balanceLabOpen && (
         <BalanceLab enabled={DEV_TOOLS_ENABLED} onClose={() => setLabs("none")} onApplied={onBalanceApplied} />
       )}
@@ -3887,13 +4661,21 @@ export default function TarkovTD() {
           enabled={DEV_TOOLS_ENABLED}
           inRaid={s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted"}
           onClose={() => setLabs("none")}
-          onApplied={() => rerender()}
+          onApplied={(overrides) => {
+            syncDevForcedQuestProgression(metaRef.current, overrides.forcedCompleted);
+            saveMeta(metaRef.current);
+            rerender();
+          }}
           unlockContext={{
-            claimedQuestIds: metaRef.current.claimed,
+            claimedQuestIds: effectiveClaimedQuestIds(
+              metaRef.current.claimed,
+              getQuestLabOverrides().forcedCompleted,
+            ),
             playerLevel: metaRef.current.pmc.level,
             radioState: (metaRef.current.crew.radio ?? freshRadioProgression()).radioState,
             uniqueContacts: metaRef.current.crew.radio?.uniqueContacts,
           }}
+          canonicalClaimedIds={metaRef.current.claimed}
           onTestQuest={(questId) => {
             const inRaidNow = s.phase !== "hideout" && s.phase !== "dead" && s.phase !== "extracted";
             const r = requestTestQuest(DEV_TOOLS_ENABLED, inRaidNow, questId);

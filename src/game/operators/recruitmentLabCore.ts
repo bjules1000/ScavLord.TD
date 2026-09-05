@@ -384,9 +384,11 @@ export function progressionFactsFromMeta(
 ): RecruitmentProgressionFacts {
   const radio = meta.crew?.radio ?? freshRadioProgression();
   const cap = capabilityFromRadio(radio, overrides);
+  const { effectiveClaimedQuestIds } = require("../dev/questForceComplete") as typeof import("../dev/questForceComplete");
+  const { getQuestLabOverrides } = require("../dev/questLab") as typeof import("../dev/questLab");
   return {
     quests: meta.quests,
-    claimedQuestIds: meta.claimed,
+    claimedQuestIds: effectiveClaimedQuestIds(meta.claimed, getQuestLabOverrides().forcedCompleted),
     radioState: cap.radioState,
     effectiveQuality: cap.quality.effective,
   };

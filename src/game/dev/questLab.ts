@@ -27,11 +27,17 @@ import {
   type QuestValidation,
 } from "../quests";
 import { DEV_TOOLS_ENABLED } from "./tools";
+import { collectPrerequisiteIds } from "./questForceComplete";
 
 export const QUEST_LAB_STORAGE_KEY = "scavlord.dev.questEditor.v1";
 
 export type QuestLabOverrides = {
   quests: Record<string, QuestSpec>;
+  /**
+   * DEV-only: quest ids treated as COMPLETED for progression gates.
+   * Not written into Meta.claimed and does not grant economy rewards.
+   */
+  forcedCompleted: Record<string, true>;
 };
 
 export type StorageLike = {
@@ -43,12 +49,13 @@ export type StorageLike = {
 export type QuestLabView = "quests" | "validation";
 
 export function emptyQuestLabOverrides(): QuestLabOverrides {
-  return { quests: {} };
+  return { quests: {}, forcedCompleted: {} };
 }
 
 function cloneOverrides(src: QuestLabOverrides): QuestLabOverrides {
   return {
     quests: Object.fromEntries(Object.entries(src.quests).map(([id, spec]) => [id, cloneQuestSpec(spec)])),
+    forcedCompleted: { ...(src.forcedCompleted ?? {}) },
   };
 }
 
@@ -73,7 +80,13 @@ export function pruneQuestLabOverrides(src: QuestLabOverrides): QuestLabOverride
     if (spec.devCreated) next.devCreated = true;
     quests[next.id] = next;
   }
-  return { quests };
+  const forcedCompleted: Record<string, true> = {};
+  if (src.forcedCompleted && typeof src.forcedCompleted === "object") {
+    for (const [id, on] of Object.entries(src.forcedCompleted)) {
+      if (on && typeof id === "string" && id.trim()) forcedCompleted[id] = true;
+    }
+  }
+  return { quests, forcedCompleted };
 }
 
 export function canonicalQuest(id: string): QuestSpec | undefined {
@@ -218,11 +231,38 @@ export function duplicateDevQuest(
 export function resetQuestItem(src: QuestLabOverrides, id: string): QuestLabOverrides {
   const next = cloneOverrides(src);
   delete next.quests[id];
+  delete next.forcedCompleted[id];
+  return pruneQuestLabOverrides(next);
+}
+
+export function setQuestForcedCompleted(
+  src: QuestLabOverrides,
+  id: string,
+  forced: boolean,
+): QuestLabOverrides {
+  const next = cloneOverrides(src);
+  if (forced) next.forcedCompleted[id] = true;
+  else delete next.forcedCompleted[id];
+  return pruneQuestLabOverrides(next);
+}
+
+/** Force-complete selected quest + transitive prerequisites (DEV convenience). */
+export function forceCompleteQuestWithPrerequisites(
+  src: QuestLabOverrides,
+  questId: string,
+  catalog: readonly QuestSpec[],
+): QuestLabOverrides {
+  let next = cloneOverrides(src);
+  for (const pre of collectPrerequisiteIds(questId, catalog)) {
+    next.forcedCompleted[pre] = true;
+  }
+  next.forcedCompleted[questId] = true;
   return pruneQuestLabOverrides(next);
 }
 
 export function modifiedQuestCount(overrides: QuestLabOverrides): number {
-  return Object.keys(pruneQuestLabOverrides(overrides).quests).length;
+  const clean = pruneQuestLabOverrides(overrides);
+  return Object.keys(clean.quests).length + Object.keys(clean.forcedCompleted).length;
 }
 
 export function questLabOverridesEqual(a: QuestLabOverrides, b: QuestLabOverrides): boolean {
@@ -353,6 +393,10 @@ export function parseStoredQuestLab(raw: string | null): QuestLabOverrides {
     const parsed = JSON.parse(raw) as Partial<QuestLabOverrides>;
     return pruneQuestLabOverrides({
       quests: parsed.quests && typeof parsed.quests === "object" ? parsed.quests : {},
+      forcedCompleted:
+        parsed.forcedCompleted && typeof parsed.forcedCompleted === "object"
+          ? (parsed.forcedCompleted as Record<string, true>)
+          : {},
     });
   } catch {
     return emptyQuestLabOverrides();
