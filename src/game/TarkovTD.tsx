@@ -175,7 +175,7 @@ import {
   settleRemovedEnemies,
   type KillBook,
 } from "./combat";
-import { settleHaul } from "./extract";
+import { buildExtractHaul, recoveredLootFromSurvivingTowers, settleHaul } from "./extract";
 import {
   AUTO_TARGET_MODES,
   hitTestEnemy,
@@ -899,7 +899,7 @@ export default function TarkovTD() {
       const m = metaRef.current;
       let next = [...stash];
       if (keepBackpack) {
-        const haul = [...s.backpack, ...s.recovered];
+        const haul = buildExtractHaul(s.backpack, s.recovered);
         const settled = settleHaul(stash, haul, sellValuableUids, stashSlots, leaveUids, saleValueOf);
         if (!settled.ok) {
           pushLog(
@@ -3046,31 +3046,16 @@ export default function TarkovTD() {
 
   const doExtract = () => {
     if (s.phase !== "prep") return pushLog("Extract only between waves.");
-    // living operators walk out with everything they carry
-    const carried: Item[] = [];
-    for (const t of s.towers) {
-      if (t.operatorId) continue;
-      const wid = weaponItemId(t.weapon);
-      if (wid && t.weapon !== "toz") carried.push(makeItem(wid, newUid())!);
-      for (const a of t.attachments) {
-        const aid = attachItemId(a);
-        if (aid) carried.push(makeItem(aid, newUid())!);
-      }
-      if (t.armor) {
-        const aid = armorItemId(t.armor);
-        if (aid) carried.push(makeItem(aid, newUid())!);
-      }
-    }
+    // Persistent kit (PMC / crew) is retained via writeback — never mint into haul.
+    // Only mid-raid hired operators contribute recovered equipped gear.
+    const carried = recoveredLootFromSurvivingTowers(s.towers, newUid);
     s.recovered = carried;
     s.backpack = s.backpack.flatMap((item) => expandPackedWeapon(item, newUid));
-    const value = [...s.backpack, ...carried].reduce(
-      (a, i) => a + (i.kind === "valuable" ? saleValueOf(i) : 0),
-      0,
-    );
+    const haul = buildExtractHaul(s.backpack, carried);
+    const value = haul.reduce((a, i) => a + (i.kind === "valuable" ? saleValueOf(i) : 0), 0);
     s.payout = value;
     setSellValuableUids(new Set());
     setLeaveUids(new Set());
-    const haul = [...s.backpack, ...carried];
     const items: { itemId: string; count: number }[] = [];
     const counts = new Map<string, number>();
     for (const it of haul) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
@@ -3078,7 +3063,7 @@ export default function TarkovTD() {
     noteQuestTestEvent({ type: "EXTRACT", mapId, items });
     // Extract count for quest trackers is applied in toHideout via applyRaidQuestProgress.
     s.phase = "extracted";
-    pushLog(`Extracted with ${s.backpack.length + carried.length} item(s). Decide what to keep.`);
+    pushLog(`Extracted with ${haul.length} item(s). Decide what to keep.`);
     rerender();
   };
 
@@ -3106,7 +3091,7 @@ export default function TarkovTD() {
   };
 
   const inRaid = s.phase !== "hideout";
-  const extractHaul = [...s.backpack, ...s.recovered];
+  const extractHaul = buildExtractHaul(s.backpack, s.recovered);
   const extractValuables = extractHaul.filter((i) => i.kind === "valuable");
   const extractGear = extractHaul.filter((i) => i.kind !== "valuable");
   const extractPreview = settleHaul(stash, extractHaul, sellValuableUids, stashSlots, leaveUids, saleValueOf);
