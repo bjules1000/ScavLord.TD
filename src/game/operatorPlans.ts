@@ -131,8 +131,27 @@ export function canAppendOrder(
   return validatePlanOrders([...orders, next]);
 }
 
+/**
+ * Active buffer = CURRENT + UPCOMING (completed slots do not consume the max-3 budget).
+ */
+export function activeOrders(plan: OperatorPlan): OperatorOrder[] {
+  if (plan.state === "EXECUTING") {
+    return plan.orders.slice(plan.currentIndex);
+  }
+  return [...plan.orders];
+}
+
+export function activeOrderCount(plan: OperatorPlan): number {
+  return activeOrders(plan).length;
+}
+
+/** Append against the active command buffer (max 3 current+upcoming). */
+export function canAppendToPlan(plan: OperatorPlan, next: OperatorOrder): PlanValidation {
+  return canAppendOrder(activeOrders(plan), next);
+}
+
 export function appendOrder(plan: OperatorPlan, order: OperatorOrder): PlanValidation & { plan?: OperatorPlan } {
-  const check = canAppendOrder(plan.orders, order);
+  const check = canAppendToPlan(plan, order);
   if (!check.ok) return check;
   const next = clonePlan(plan);
   next.orders.push(order);
@@ -142,28 +161,31 @@ export function appendOrder(plan: OperatorPlan, order: OperatorOrder): PlanValid
     next.awaiting = null;
     delete next.failReason;
   }
+  // EXECUTING: leave currentIndex / awaiting untouched — do not redispatch.
   return { ok: true, plan: next };
 }
 
-export function removeOrderAt(plan: OperatorPlan, index: number): OperatorPlan {
+export function removeOrderAt(
+  plan: OperatorPlan,
+  index: number,
+): PlanValidation & { plan?: OperatorPlan } {
+  if (index < 0 || index >= plan.orders.length) return { ok: false, reason: "NO COMMAND" };
+  if (plan.state === "EXECUTING") {
+    if (index <= plan.currentIndex) {
+      return { ok: false, reason: "CANNOT REMOVE CURRENT OR COMPLETED" };
+    }
+  }
   const next = clonePlan(plan);
-  if (index < 0 || index >= next.orders.length) return next;
   next.orders.splice(index, 1);
   if (next.state === "PLANNED") {
     next.currentIndex = 0;
-  } else if (next.state === "EXECUTING") {
-    if (index < next.currentIndex) next.currentIndex = Math.max(0, next.currentIndex - 1);
-    else if (index === next.currentIndex) {
-      // Removed current — stop waiting; caller may restart from new current
-      next.awaiting = null;
-    }
   }
   if (next.orders.length === 0) {
     next.state = "DONE";
     next.currentIndex = 0;
     next.awaiting = null;
   }
-  return next;
+  return { ok: true, plan: next };
 }
 
 export function replaceOrderAt(
@@ -172,9 +194,19 @@ export function replaceOrderAt(
   order: OperatorOrder,
 ): PlanValidation & { plan?: OperatorPlan } {
   if (index < 0 || index >= plan.orders.length) return { ok: false, reason: "NO COMMAND" };
+  if (plan.state === "EXECUTING" && index <= plan.currentIndex) {
+    return { ok: false, reason: "CANNOT EDIT CURRENT OR COMPLETED" };
+  }
   const orders = plan.orders.map((o, i) => (i === index ? order : o));
   const check = validatePlanOrders(orders);
   if (!check.ok) return check;
+  // Active buffer still within max when EXECUTING
+  if (plan.state === "EXECUTING") {
+    const activeLen = orders.length - plan.currentIndex;
+    if (activeLen > MAX_OPERATOR_ORDERS) {
+      return { ok: false, reason: `MAX ${MAX_OPERATOR_ORDERS} COMMANDS` };
+    }
+  }
   const next = clonePlan(plan);
   next.orders = orders;
   return { ok: true, plan: next };
@@ -192,7 +224,7 @@ export function clearFutureOrders(plan: OperatorPlan): OperatorPlan {
   // Keep completed prefix; drop current + upcoming (caller clears runtime future intents)
   next.orders = next.orders.slice(0, next.currentIndex);
   next.awaiting = null;
-  next.state = next.orders.length ? "DONE" : "DONE";
+  next.state = "DONE";
   return next;
 }
 
@@ -333,12 +365,51 @@ export function advancePlan(
 ): { plan: OperatorPlan; ok: boolean; reason?: string } {
   const next = clonePlan(plan);
   next.awaiting = null;
-  next.currentIndex += 1;
+  // Compact completed current order out of the active buffer so max-3 applies to
+  // CURRENT + UPCOMING only (not historical completed slots).
+  if (next.currentIndex < next.orders.length) {
+    next.orders.splice(next.currentIndex, 1);
+  }
   if (next.currentIndex >= next.orders.length) {
     next.state = "DONE";
+    next.currentIndex = 0;
     return { plan: next, ok: true };
   }
   return dispatchCurrentOrder(tower, next, ctx);
+}
+
+/**
+ * Planned action origin: where the operator will be when `orderIndex` begins.
+ * Walks prior orders — MOVE updates tile center; RELOAD/HOLD leave position unchanged.
+ * Authoring / preview only — does not simulate movement.
+ * M10 THROW should reuse this for throw-from geometry.
+ */
+export function getProjectedOperatorPositionBeforeOrder(
+  currentPos: { x: number; y: number },
+  plan: OperatorPlan,
+  orderIndex: number,
+  tileSize: number,
+): { x: number; y: number } {
+  let x = currentPos.x;
+  let y = currentPos.y;
+  const end = Math.max(0, Math.min(orderIndex, plan.orders.length));
+  for (let i = 0; i < end; i++) {
+    const o = plan.orders[i]!;
+    if (o.type === "MOVE") {
+      x = o.tx * tileSize + tileSize / 2;
+      y = o.ty * tileSize + tileSize / 2;
+    }
+  }
+  return { x, y };
+}
+
+/** Convenience: projected origin for a new append (after all existing orders). */
+export function getProjectedOperatorPositionForAppend(
+  currentPos: { x: number; y: number },
+  plan: OperatorPlan,
+  tileSize: number,
+): { x: number; y: number } {
+  return getProjectedOperatorPositionBeforeOrder(currentPos, plan, plan.orders.length, tileSize);
 }
 
 /** After stepOperatorMove: if awaiting MOVE and no longer moving, advance. */

@@ -6,7 +6,8 @@
 import type { OperatorOrder, OperatorPlan } from "./operatorPlans";
 import {
   MAX_OPERATOR_ORDERS,
-  canAppendOrder,
+  activeOrderCount,
+  canAppendToPlan,
   orderLabel,
   orderRowStatus,
   orderShort,
@@ -48,9 +49,11 @@ export function OrdersPanel({
   onDone,
   onClose,
 }: OrdersPanelProps) {
-  const atCap = plan.orders.length >= MAX_OPERATOR_ORDERS;
+  const activeCount = activeOrderCount(plan);
+  const atCap = activeCount >= MAX_OPERATOR_ORDERS;
   const holdLast = plan.orders[plan.orders.length - 1]?.type === "HOLD_ANGLE";
-  const canAdd = !atCap && !holdLast && plan.state !== "EXECUTING";
+  // Future commands remain editable while EXECUTING — only active-buffer limits apply.
+  const canAdd = !atCap && !holdLast;
   const showAddMenu = editorMode.kind === "pick_add";
   const shell =
     variant === "overlay"
@@ -88,6 +91,7 @@ export function OrdersPanel({
           const status = orderRowStatus(plan, i);
           const mark =
             status === "done" ? "✓" : status === "current" ? ">" : status === "upcoming" ? "·" : "";
+          const rowEditable = status === "upcoming" || status === "planned";
           return (
             <li
               key={`${i}-${order.type}`}
@@ -104,7 +108,7 @@ export function OrdersPanel({
                 {String(i + 1).padStart(2, "0")}
               </span>
               <span className="min-w-0 flex-1 truncate">{formatOrderRow(order)}</span>
-              {plan.state !== "EXECUTING" && order.type !== "RELOAD" && (
+              {rowEditable && order.type !== "RELOAD" && (
                 <button
                   type="button"
                   className="pixel-btn px-1 py-0 text-[8px]"
@@ -114,7 +118,7 @@ export function OrdersPanel({
                   EDIT
                 </button>
               )}
-              {plan.state !== "EXECUTING" && (
+              {rowEditable && (
                 <button
                   type="button"
                   className="pixel-btn px-1 py-0 text-[8px]"
@@ -134,10 +138,10 @@ export function OrdersPanel({
           {(["MOVE", "RELOAD", "HOLD_ANGLE"] as const).map((type) => {
             const probe =
               type === "MOVE"
-                ? canAppendOrder(plan.orders, { type: "MOVE", tx: 0, ty: 0 })
+                ? canAppendToPlan(plan, { type: "MOVE", tx: 0, ty: 0 })
                 : type === "RELOAD"
-                  ? canAppendOrder(plan.orders, { type: "RELOAD" })
-                  : canAppendOrder(plan.orders, {
+                  ? canAppendToPlan(plan, { type: "RELOAD" })
+                  : canAppendToPlan(plan, {
                       type: "HOLD_ANGLE",
                       angle: 0,
                       point: { x: 0, y: 0 },
@@ -165,12 +169,10 @@ export function OrdersPanel({
             disabled={!canAdd}
             title={
               atCap
-                ? `MAX ${MAX_OPERATOR_ORDERS} COMMANDS`
+                ? `MAX ${MAX_OPERATOR_ORDERS} ACTIVE COMMANDS`
                 : holdLast
                   ? "HOLD ANGLE MUST BE LAST"
-                  : plan.state === "EXECUTING"
-                    ? "PLAN EXECUTING"
-                    : "ADD COMMAND"
+                  : "ADD COMMAND"
             }
             className="pixel-btn px-1.5 py-0.5 text-[9px] disabled:opacity-40"
             onClick={onRequestAddMenu}

@@ -67,6 +67,7 @@ import {
   clearFutureOrders,
   clearPlan,
   createEmptyPlan,
+  getProjectedOperatorPositionBeforeOrder,
   onMoveStepComplete,
   onReloadTickComplete,
   planMoveWaypoints,
@@ -2321,8 +2322,20 @@ export default function TarkovTD() {
         }
         const oMode = ordersEditorModeRef.current;
         if (oMode.kind === "author_move" && !s.place && s.hoverTx >= 0) {
-          const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), s.hoverTx, s.hoverTy);
-          const path = dest ? findOperatorPath(mapRef.current, logicalNode(sel), dest) : null;
+          const moveIndex = oMode.editIndex ?? ordersDraft.orders.length;
+          const origin = getProjectedOperatorPositionBeforeOrder(
+            pos,
+            ordersDraft,
+            moveIndex,
+            TILE,
+          );
+          const fromNode = {
+            tx: Math.floor(origin.x / TILE),
+            ty: Math.floor(origin.y / TILE),
+            surface: sel.surface ?? ("GROUND" as const),
+          };
+          const dest = resolveMoveDestination(mapRef.current, fromNode, s.hoverTx, s.hoverTy);
+          const path = dest ? findOperatorPath(mapRef.current, fromNode, dest) : null;
           const ok = !!dest && !!path;
           ctx.strokeStyle = ok ? "rgba(125,220,90,0.8)" : "rgba(255,70,50,0.55)";
           ctx.setLineDash([4, 4]);
@@ -2332,10 +2345,17 @@ export default function TarkovTD() {
         if (oMode.kind === "author_hold" && s.hoverTx >= 0) {
           const worldX = s.hoverTx * TILE + TILE / 2;
           const worldY = s.hoverTy * TILE + TILE / 2;
-          const ang = Math.atan2(worldY - pos.y + 4, worldX - pos.x);
+          const holdIndex = oMode.editIndex ?? ordersDraft.orders.length;
+          const origin = getProjectedOperatorPositionBeforeOrder(
+            pos,
+            ordersDraft,
+            holdIndex,
+            TILE,
+          );
+          const ang = Math.atan2(worldY - origin.y + 4, worldX - origin.x);
           ctx.beginPath();
-          ctx.moveTo(pos.x, pos.y);
-          ctx.lineTo(pos.x + Math.cos(ang) * TILE * 3, pos.y + Math.sin(ang) * TILE * 3);
+          ctx.moveTo(origin.x, origin.y);
+          ctx.lineTo(origin.x + Math.cos(ang) * TILE * 3, origin.y + Math.sin(ang) * TILE * 3);
           ctx.strokeStyle = "rgba(232,140,48,0.85)";
           ctx.lineWidth = 2;
           ctx.stroke();
@@ -2696,8 +2716,14 @@ export default function TarkovTD() {
       const sel = s.towers.find((t) => t.id === ordersOpenFor);
       if (sel) {
         const world = toWorld(ev);
-        const pos = towerPos(sel);
-        const angle = Math.atan2(world.y - pos.y + 4, world.x - pos.x);
+        const holdIndex = oMode.editIndex ?? ordersDraft.orders.length;
+        const origin = getProjectedOperatorPositionBeforeOrder(
+          towerPos(sel),
+          ordersDraft,
+          holdIndex,
+          TILE,
+        );
+        const angle = Math.atan2(world.y - origin.y + 4, world.x - origin.x);
         const order = { type: "HOLD_ANGLE" as const, angle, point: { x: world.x, y: world.y } };
         let draft = ordersDraft;
         if (oMode.editIndex != null) {
@@ -2719,7 +2745,19 @@ export default function TarkovTD() {
     if (oMode.kind === "author_move" && ordersOpenFor != null) {
       const sel = s.towers.find((t) => t.id === ordersOpenFor);
       if (sel) {
-        const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), tx, ty);
+        const moveIndex = oMode.editIndex ?? ordersDraft.orders.length;
+        const origin = getProjectedOperatorPositionBeforeOrder(
+          towerPos(sel),
+          ordersDraft,
+          moveIndex,
+          TILE,
+        );
+        const fromNode = {
+          tx: Math.floor(origin.x / TILE),
+          ty: Math.floor(origin.y / TILE),
+          surface: sel.surface ?? ("GROUND" as const),
+        };
+        const dest = resolveMoveDestination(mapRef.current, fromNode, tx, ty);
         if (!dest) {
           pushLog("NO ROUTE");
           rerender();
@@ -4474,9 +4512,14 @@ export default function TarkovTD() {
                     }}
                     onRemove={(index) => {
                       const oid = ordersOpenFor ?? selected.id;
-                      const next = removeOrderAt(ordersDraft, index);
-                      setOrdersDraft(next);
-                      setPlan(planBookRef.current, oid, next);
+                      const r = removeOrderAt(ordersDraft, index);
+                      if (!r.ok) {
+                        pushLog(r.reason);
+                        rerender();
+                        return;
+                      }
+                      setOrdersDraft(r.plan!);
+                      setPlan(planBookRef.current, oid, r.plan!);
                       rerender();
                     }}
                     onClearAll={() => {

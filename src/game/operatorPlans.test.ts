@@ -4,11 +4,14 @@ import { isOperatorMoving, stepOperatorMove } from "./movement";
 import { dispatchOperatorCommand } from "./operatorCommands";
 import {
   MAX_OPERATOR_ORDERS,
+  activeOrderCount,
   appendOrder,
   beginPlanExecution,
   canAppendOrder,
+  canAppendToPlan,
   clearFutureOrders,
   createEmptyPlan,
+  getProjectedOperatorPositionBeforeOrder,
   onMoveStepComplete,
   onReloadTickComplete,
   orderRowStatus,
@@ -20,6 +23,7 @@ import {
   type OperatorPlan,
   type OperatorPlanBook,
 } from "./operatorPlans";
+import { TILE } from "./data";
 import type { Tower } from "./types";
 import { weaponRuntimeFields, tickReload, magSizeOf, reloadMsOf, reloadTypeOf } from "./weapons";
 
@@ -151,7 +155,9 @@ describe("operatorPlans authoring helpers", () => {
     const c = appendOrder(plan, { type: "HOLD_ANGLE", angle: 1, point: { x: 0, y: 0 } });
     plan = c.plan!;
     expect(plan.orders.length).toBe(3);
-    plan = removeOrderAt(plan, 1);
+    const removed = removeOrderAt(plan, 1);
+    expect(removed.ok).toBe(true);
+    plan = removed.plan!;
     expect(plan.orders.map((o) => o.type)).toEqual(["MOVE", "HOLD_ANGLE"]);
     const ed = replaceOrderAt(plan, 0, { type: "MOVE", tx: 9, ty: 8 });
     expect(ed.ok).toBe(true);
@@ -337,5 +343,357 @@ describe("operatorPlans dispatch still uses command boundary", () => {
       { map, towers: [t] },
     );
     expect(t.holdAngle).toBeCloseTo(2);
+  });
+});
+
+describe("live plan extension while EXECUTING", () => {
+  const map = buildMap(MAP_BY_ID["woods"]!);
+
+  it("executing MOVE still allows + ADD COMMAND", () => {
+    const t = op({ id: 1, tx: 1, ty: 8 });
+    let plan = beginPlanExecution(
+      t,
+      {
+        orders: [{ type: "MOVE", tx: 3, ty: 8 }],
+        currentIndex: 0,
+        state: "PLANNED",
+        awaiting: null,
+      },
+      { map, towers: [t] },
+    ).plan;
+    expect(plan.state).toBe("EXECUTING");
+    expect(plan.awaiting).toBe("MOVE");
+    const destTx = t.move?.dest?.tx;
+    const pathLen = t.move?.path?.length ?? 0;
+    const add = appendOrder(plan, { type: "RELOAD" });
+    expect(add.ok).toBe(true);
+    plan = add.plan!;
+    expect(plan.awaiting).toBe("MOVE");
+    expect(plan.currentIndex).toBe(0);
+    expect(t.move?.dest?.tx).toBe(destTx);
+    expect(t.move?.path?.length ?? 0).toBe(pathLen);
+    expect(plan.orders.map((o) => o.type)).toEqual(["MOVE", "RELOAD"]);
+  });
+
+  it("adding HOLD does not restart MOVE", () => {
+    const t = op({ id: 1, tx: 1, ty: 8 });
+    let plan = beginPlanExecution(
+      t,
+      {
+        orders: [{ type: "MOVE", tx: 3, ty: 8 }],
+        currentIndex: 0,
+        state: "PLANNED",
+        awaiting: null,
+      },
+      { map, towers: [t] },
+    ).plan;
+    const pathBefore = [...(t.move?.path ?? [])];
+    plan = appendOrder(plan, {
+      type: "HOLD_ANGLE",
+      angle: 0.5,
+      point: { x: 100, y: 100 },
+    }).plan!;
+    expect(plan.awaiting).toBe("MOVE");
+    expect(t.move?.path).toEqual(pathBefore);
+  });
+
+  it("future command can be removed while MOVE executes", () => {
+    const t = op({ id: 1, tx: 1, ty: 8 });
+    let plan = beginPlanExecution(
+      t,
+      {
+        orders: [
+          { type: "MOVE", tx: 3, ty: 8 },
+          { type: "RELOAD" },
+          { type: "HOLD_ANGLE", angle: 1, point: { x: 0, y: 0 } },
+        ],
+        currentIndex: 0,
+        state: "PLANNED",
+        awaiting: null,
+      },
+      { map, towers: [t] },
+    ).plan;
+    const pathLen = t.move?.path?.length ?? 0;
+    const rem = removeOrderAt(plan, 1);
+    expect(rem.ok).toBe(true);
+    plan = rem.plan!;
+    expect(plan.orders.map((o) => o.type)).toEqual(["MOVE", "HOLD_ANGLE"]);
+    expect(plan.awaiting).toBe("MOVE");
+    expect(t.move?.path?.length ?? 0).toBe(pathLen);
+  });
+
+  it("current executing command is protected from ORDERS edit/remove", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "MOVE", tx: 3, ty: 8 },
+        { type: "RELOAD" },
+      ],
+      currentIndex: 0,
+      state: "EXECUTING",
+      awaiting: "MOVE",
+    };
+    expect(removeOrderAt(plan, 0).ok).toBe(false);
+    expect(
+      replaceOrderAt(plan, 0, { type: "MOVE", tx: 9, ty: 8 }).ok,
+    ).toBe(false);
+    expect(removeOrderAt(plan, 1).ok).toBe(true);
+  });
+
+  it("CLEAR future commands does not rewind current gameplay", () => {
+    const t = op({ id: 1, tx: 1, ty: 8 });
+    let plan = beginPlanExecution(
+      t,
+      {
+        orders: [
+          { type: "MOVE", tx: 3, ty: 8 },
+          { type: "RELOAD" },
+        ],
+        currentIndex: 0,
+        state: "PLANNED",
+        awaiting: null,
+      },
+      { map, towers: [t] },
+    ).plan;
+    expect(isOperatorMoving(t)).toBe(true);
+    const cleared = clearFutureOrders(plan);
+    expect(cleared.state).toBe("DONE");
+    expect(cleared.orders).toEqual([]);
+    expect(isOperatorMoving(t)).toBe(true);
+  });
+
+  it("completed commands do not permanently consume the 3-command active buffer", () => {
+    const t = op({ id: 1, tx: 1, ty: 8, ammo: 1 });
+    let plan = beginPlanExecution(
+      t,
+      {
+        orders: [
+          { type: "MOVE", tx: 2, ty: 8 },
+          { type: "RELOAD" },
+        ],
+        currentIndex: 0,
+        state: "PLANNED",
+        awaiting: null,
+      },
+      { map, towers: [t] },
+    ).plan;
+    for (let i = 0; i < 300 && isOperatorMoving(t); i++) {
+      const was = isOperatorMoving(t);
+      stepOperatorMove(t, 0.05, map, 500);
+      const step = onMoveStepComplete(t, plan, { map, towers: [t] }, was);
+      plan = step.plan;
+      if (step.advanced) break;
+    }
+    expect(plan.awaiting).toBe("RELOAD");
+    // MOVE compacted out — active buffer has room
+    expect(activeOrderCount(plan)).toBe(1);
+    expect(canAppendToPlan(plan, { type: "HOLD_ANGLE", angle: 0, point: { x: 0, y: 0 } }).ok).toBe(
+      true,
+    );
+    plan = appendOrder(plan, { type: "HOLD_ANGLE", angle: 0.2, point: { x: 1, y: 1 } }).plan!;
+    expect(plan.orders.map((o) => o.type)).toEqual(["RELOAD", "HOLD_ANGLE"]);
+    expect(plan.awaiting).toBe("RELOAD");
+  });
+
+  it("maximum 3 current/upcoming commands remains enforced", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "MOVE", tx: 1, ty: 8 },
+        { type: "RELOAD" },
+        { type: "HOLD_ANGLE", angle: 0, point: { x: 0, y: 0 } },
+      ],
+      currentIndex: 0,
+      state: "EXECUTING",
+      awaiting: "MOVE",
+    };
+    expect(canAppendToPlan(plan, { type: "MOVE", tx: 2, ty: 8 }).ok).toBe(false);
+  });
+
+  it("multiple operators can independently append during execution", () => {
+    const a = op({ id: 1, tx: 1, ty: 8 });
+    const b = op({ id: 2, tx: 1, ty: 10 });
+    let pa = beginPlanExecution(
+      a,
+      {
+        orders: [{ type: "MOVE", tx: 3, ty: 8 }],
+        currentIndex: 0,
+        state: "PLANNED",
+        awaiting: null,
+      },
+      { map, towers: [a, b] },
+    ).plan;
+    let pb = beginPlanExecution(
+      b,
+      {
+        orders: [{ type: "MOVE", tx: 3, ty: 10 }],
+        currentIndex: 0,
+        state: "PLANNED",
+        awaiting: null,
+      },
+      { map, towers: [a, b] },
+    ).plan;
+    pa = appendOrder(pa, { type: "RELOAD" }).plan!;
+    pb = appendOrder(pb, {
+      type: "HOLD_ANGLE",
+      angle: -0.5,
+      point: { x: 0, y: 0 },
+    }).plan!;
+    expect(pa.orders.map((o) => o.type)).toEqual(["MOVE", "RELOAD"]);
+    expect(pb.orders.map((o) => o.type)).toEqual(["MOVE", "HOLD_ANGLE"]);
+    expect(pa.awaiting).toBe("MOVE");
+    expect(pb.awaiting).toBe("MOVE");
+  });
+});
+
+describe("projected operator position before order", () => {
+  const TILE_SZ = TILE;
+
+  it("HOLD after MOVE uses MOVE destination as origin", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "MOVE", tx: 8, ty: 4 },
+        { type: "HOLD_ANGLE", angle: 0, point: { x: 0, y: 0 } },
+      ],
+      currentIndex: 0,
+      state: "PLANNED",
+      awaiting: null,
+    };
+    const origin = getProjectedOperatorPositionBeforeOrder(
+      { x: 3.5 * TILE_SZ, y: 8.5 * TILE_SZ },
+      plan,
+      1,
+      TILE_SZ,
+    );
+    expect(origin.x).toBeCloseTo(8.5 * TILE_SZ);
+    expect(origin.y).toBeCloseTo(4.5 * TILE_SZ);
+  });
+
+  it("HOLD after MOVE→MOVE uses second destination", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "MOVE", tx: 5, ty: 8 },
+        { type: "MOVE", tx: 9, ty: 3 },
+        { type: "HOLD_ANGLE", angle: 0, point: { x: 0, y: 0 } },
+      ],
+      currentIndex: 0,
+      state: "PLANNED",
+      awaiting: null,
+    };
+    const origin = getProjectedOperatorPositionBeforeOrder(
+      { x: 1 * TILE_SZ, y: 1 * TILE_SZ },
+      plan,
+      2,
+      TILE_SZ,
+    );
+    expect(origin.x).toBeCloseTo(9.5 * TILE_SZ);
+    expect(origin.y).toBeCloseTo(3.5 * TILE_SZ);
+  });
+
+  it("HOLD after RELOAD→MOVE uses MOVE destination", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "RELOAD" },
+        { type: "MOVE", tx: 4, ty: 6 },
+        { type: "HOLD_ANGLE", angle: 0, point: { x: 0, y: 0 } },
+      ],
+      currentIndex: 0,
+      state: "PLANNED",
+      awaiting: null,
+    };
+    const cur = { x: 2.5 * TILE_SZ, y: 8.5 * TILE_SZ };
+    const origin = getProjectedOperatorPositionBeforeOrder(cur, plan, 2, TILE_SZ);
+    expect(origin.x).toBeCloseTo(4.5 * TILE_SZ);
+    expect(origin.y).toBeCloseTo(6.5 * TILE_SZ);
+  });
+
+  it("HOLD with no previous MOVE uses current operator position", () => {
+    const plan: OperatorPlan = {
+      orders: [{ type: "HOLD_ANGLE", angle: 0, point: { x: 0, y: 0 } }],
+      currentIndex: 0,
+      state: "PLANNED",
+      awaiting: null,
+    };
+    const cur = { x: 100, y: 200 };
+    expect(getProjectedOperatorPositionBeforeOrder(cur, plan, 0, TILE_SZ)).toEqual(cur);
+  });
+
+  it("executing MOVE + appended HOLD uses final MOVE destination, not interpolated pos", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "MOVE", tx: 8, ty: 4 },
+        { type: "HOLD_ANGLE", angle: 1, point: { x: 0, y: 0 } },
+      ],
+      currentIndex: 0,
+      state: "EXECUTING",
+      awaiting: "MOVE",
+    };
+    // Physical halfway — still project HOLD from A
+    const halfway = { x: 5 * TILE_SZ, y: 6 * TILE_SZ };
+    const origin = getProjectedOperatorPositionBeforeOrder(halfway, plan, 1, TILE_SZ);
+    expect(origin.x).toBeCloseTo(8.5 * TILE_SZ);
+    expect(origin.y).toBeCloseTo(4.5 * TILE_SZ);
+  });
+
+  it("executing MOVE + appended MOVE + HOLD uses final planned destination", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "MOVE", tx: 5, ty: 8 },
+        { type: "MOVE", tx: 9, ty: 2 },
+        { type: "HOLD_ANGLE", angle: 0, point: { x: 0, y: 0 } },
+      ],
+      currentIndex: 0,
+      state: "EXECUTING",
+      awaiting: "MOVE",
+    };
+    const origin = getProjectedOperatorPositionBeforeOrder(
+      { x: 1 * TILE_SZ, y: 8 * TILE_SZ },
+      plan,
+      2,
+      TILE_SZ,
+    );
+    expect(origin.x).toBeCloseTo(9.5 * TILE_SZ);
+    expect(origin.y).toBeCloseTo(2.5 * TILE_SZ);
+  });
+
+  it("editing earlier MOVE updates downstream HOLD preview origin without changing angle", () => {
+    const holdAngle = Math.PI; // EAST-ish stored angle preserved
+    let plan: OperatorPlan = {
+      orders: [
+        { type: "MOVE", tx: 5, ty: 8 },
+        { type: "HOLD_ANGLE", angle: holdAngle, point: { x: 200, y: 100 } },
+      ],
+      currentIndex: 0,
+      state: "PLANNED",
+      awaiting: null,
+    };
+    const before = getProjectedOperatorPositionBeforeOrder(
+      { x: 0, y: 0 },
+      plan,
+      1,
+      TILE_SZ,
+    );
+    expect(before.x).toBeCloseTo(5.5 * TILE_SZ);
+    const replaced = replaceOrderAt(plan, 0, { type: "MOVE", tx: 9, ty: 3 });
+    expect(replaced.ok).toBe(true);
+    plan = replaced.plan!;
+    expect((plan.orders[1] as { angle: number }).angle).toBe(holdAngle);
+    const after = getProjectedOperatorPositionBeforeOrder({ x: 0, y: 0 }, plan, 1, TILE_SZ);
+    expect(after.x).toBeCloseTo(9.5 * TILE_SZ);
+    expect(after.y).toBeCloseTo(3.5 * TILE_SZ);
+  });
+
+  it("projected-position helper ignores non-positional commands", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "RELOAD" },
+        { type: "HOLD_ANGLE", angle: 0, point: { x: 0, y: 0 } },
+        { type: "MOVE", tx: 7, ty: 7 },
+      ],
+      currentIndex: 0,
+      state: "PLANNED",
+      awaiting: null,
+    };
+    const cur = { x: 44, y: 88 };
+    // Before MOVE at index 2: RELOAD+HOLD do not move projection
+    expect(getProjectedOperatorPositionBeforeOrder(cur, plan, 2, TILE_SZ)).toEqual(cur);
   });
 });
