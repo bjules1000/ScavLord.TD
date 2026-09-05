@@ -632,6 +632,10 @@ export const ITEMS: ItemDef[] = [
   // meds
 
   { id: "g_frag", kind: "throwable", name: "FRAG GRENADE", rarity: "rare", value: 180, desc: "Thrown fragmentation grenade. 0.8s fuse, heavy area damage.", price: 650 },
+  { id: "g_smoke", kind: "throwable", name: "SMOKE GRENADE", rarity: "common", value: 110, desc: "Creates an 8-second smoke cloud that blocks sight.", price: 400 },
+  { id: "g_impact", kind: "throwable", name: "IMPACT GRENADE", rarity: "epic", value: 260, desc: "Short-range grenade that detonates on arrival.", price: 950 },
+  { id: "g_flash", kind: "throwable", name: "FLASH GRENADE", rarity: "rare", value: 150, desc: "Blinds enemies, preventing attacks for 3.5 seconds.", price: 520 },
+  { id: "g_stun", kind: "throwable", name: "STUN GRENADE", rarity: "rare", value: 170, desc: "Stops enemies for 2.25 seconds and deals light damage.", price: 580 },
 
   { id: "m_ifak", kind: "meds", name: "POCKET KIT", rarity: "common", value: 80, heal: 45, desc: "Heals an operator for 45 HP.", price: 260 },
   { id: "m_salewa", kind: "meds", name: "TRAUMA BAG", rarity: "common", value: 140, heal: 90, desc: "Heals an operator for 90 HP.", price: 420 },

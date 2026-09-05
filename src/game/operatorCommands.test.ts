@@ -26,16 +26,17 @@ function op(partial: Partial<Tower> & Pick<Tower, "tx" | "ty">): Tower {
 describe("operatorCommands", () => {
   const map = buildMap(MAP_BY_ID["woods"]!);
 
-  it("THROW_FRAG crosses the command boundary exactly once", () => {
+  it("THROW_GRENADE crosses the command boundary exactly once", () => {
     const t = op({ tx: 1, ty: 8 });
     const calls: Array<{ id: number; point: { x: number; y: number } }> = [];
     const r = dispatchOperatorCommand(
       t,
-      { type: "THROW_FRAG", point: { x: 120, y: 80 } },
+      { type: "THROW_GRENADE", grenade: "frag", point: { x: 120, y: 80 } },
       {
         map,
         towers: [t],
-        throwFrag: (tower, point) => {
+        throwGrenade: (tower, grenade, point) => {
+          expect(grenade).toBe("frag");
           calls.push({ id: tower.id, point });
           return { ok: true };
         },
@@ -45,10 +46,10 @@ describe("operatorCommands", () => {
     expect(calls).toEqual([{ id: t.id, point: { x: 120, y: 80 } }]);
   });
 
-  it("THROW_FRAG fails safely when no inventory handler is available", () => {
+  it("THROW_GRENADE fails safely when no inventory handler is available", () => {
     const t = op({ tx: 1, ty: 8 });
     expect(
-      dispatchOperatorCommand(t, { type: "THROW_FRAG", point: { x: 120, y: 80 } }, { map, towers: [t] }),
+      dispatchOperatorCommand(t, { type: "THROW_GRENADE", grenade: "frag", point: { x: 120, y: 80 } }, { map, towers: [t] }),
     ).toEqual({ ok: false, reason: "NO FRAG GRENADE" });
   });
 

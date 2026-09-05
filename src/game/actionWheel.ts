@@ -6,7 +6,7 @@
 import type { BarricadeEdge } from "./defenses";
 import type { OperatorPlan } from "./operatorPlans";
 
-export type OperatorWheelActionId = "MOVE" | "ORDERS" | "THROW_FRAG" | "HOLD_ANGLE" | "RELOAD" | "CANCEL";
+export type OperatorWheelActionId = "MOVE" | "ORDERS" | "THROW_FRAG" | "THROW_SMOKE" | "THROW_IMPACT" | "THROW_FLASH" | "THROW_STUN" | "HOLD_ANGLE" | "RELOAD" | "CANCEL";
 export type TileWheelActionId = "BARRICADE" | "WIRE" | "HIRE" | "CANCEL";
 export type WheelActionId = OperatorWheelActionId | TileWheelActionId;
 
@@ -20,6 +20,10 @@ export const OPERATOR_WHEEL_ACTIONS: readonly WheelActionDef[] = [
   { id: "MOVE", label: "MOVE" },
   { id: "ORDERS", label: "ORDERS" },
   { id: "THROW_FRAG", label: "FRAG" },
+  { id: "THROW_SMOKE", label: "SMOKE" },
+  { id: "THROW_IMPACT", label: "IMPACT" },
+  { id: "THROW_FLASH", label: "FLASH" },
+  { id: "THROW_STUN", label: "STUN" },
   { id: "HOLD_ANGLE", label: "HOLD" },
   { id: "RELOAD", label: "RELOAD" },
   { id: "CANCEL", label: "CANCEL" },
