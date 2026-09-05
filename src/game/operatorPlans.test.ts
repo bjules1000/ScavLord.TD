@@ -12,6 +12,7 @@ import {
   clearFutureOrders,
   createEmptyPlan,
   getProjectedOperatorPositionBeforeOrder,
+  getProjectedActionGeometry,
   onMoveStepComplete,
   onReloadTickComplete,
   orderRowStatus,
@@ -695,5 +696,51 @@ describe("projected operator position before order", () => {
     const cur = { x: 44, y: 88 };
     // Before MOVE at index 2: RELOAD+HOLD do not move projection
     expect(getProjectedOperatorPositionBeforeOrder(cur, plan, 2, TILE_SZ)).toEqual(cur);
+  });
+
+  it("authors HOLD geometry around the preceding MOVE destination", () => {
+    const plan: OperatorPlan = {
+      orders: [{ type: "MOVE", tx: 8, ty: 4 }],
+      currentIndex: 0,
+      state: "PLANNED",
+      awaiting: null,
+    };
+    const destination = { x: 8.5 * TILE_SZ, y: 4.5 * TILE_SZ };
+    const target = { x: destination.x + 100, y: destination.y - 4 };
+    const geometry = getProjectedActionGeometry(
+      { x: 2.5 * TILE_SZ, y: 9.5 * TILE_SZ },
+      plan,
+      plan.orders.length,
+      TILE_SZ,
+      target,
+    );
+
+    expect(geometry.origin).toEqual(destination);
+    expect(geometry.angle).toBeCloseTo(0);
+    expect(geometry.point).toEqual(target);
+  });
+
+  it("provides destination-relative origin and target for future thrown actions", () => {
+    const plan: OperatorPlan = {
+      orders: [
+        { type: "MOVE", tx: 5, ty: 6 },
+        { type: "RELOAD" },
+        { type: "MOVE", tx: 10, ty: 3 },
+      ],
+      currentIndex: 0,
+      state: "PLANNED",
+      awaiting: null,
+    };
+    const target = { x: 420, y: 240 };
+    const geometry = getProjectedActionGeometry(
+      { x: 20, y: 20 },
+      plan,
+      plan.orders.length,
+      TILE_SZ,
+      target,
+    );
+
+    expect(geometry.origin).toEqual({ x: 10.5 * TILE_SZ, y: 3.5 * TILE_SZ });
+    expect(geometry.point).toEqual(target);
   });
 });

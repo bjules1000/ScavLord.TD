@@ -412,6 +412,25 @@ export function getProjectedOperatorPositionForAppend(
   return getProjectedOperatorPositionBeforeOrder(currentPos, plan, plan.orders.length, tileSize);
 }
 
+/**
+ * Geometry for an aimed action authored after earlier plan orders.
+ * HOLD uses `angle`; future grenade/throw commands can share `origin` and `point`.
+ */
+export function getProjectedActionGeometry(
+  currentPos: { x: number; y: number },
+  plan: OperatorPlan,
+  orderIndex: number,
+  tileSize: number,
+  point: { x: number; y: number },
+): { origin: { x: number; y: number }; point: { x: number; y: number }; angle: number } {
+  const origin = getProjectedOperatorPositionBeforeOrder(currentPos, plan, orderIndex, tileSize);
+  return {
+    origin,
+    point: { ...point },
+    angle: Math.atan2(point.y - origin.y + 4, point.x - origin.x),
+  };
+}
+
 /** After stepOperatorMove: if awaiting MOVE and no longer moving, advance. */
 export function onMoveStepComplete(
   tower: Tower,

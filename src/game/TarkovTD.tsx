@@ -67,6 +67,7 @@ import {
   clearFutureOrders,
   clearPlan,
   createEmptyPlan,
+  getProjectedActionGeometry,
   getProjectedOperatorPositionBeforeOrder,
   onMoveStepComplete,
   onReloadTickComplete,
@@ -714,6 +715,10 @@ export default function TarkovTD() {
   const [swapUid, setSwapUid] = useState<number | null>(null);
   const [ordersOpenFor, setOrdersOpenFor] = useState<number | null>(null);
   const [ordersDraft, setOrdersDraft] = useState<OperatorPlan>(() => createEmptyPlan());
+  // The RAF renderer is intentionally long-lived, so it must read the current draft
+  // through a ref instead of the React state captured when the loop was installed.
+  const ordersDraftRef = useRef<OperatorPlan>(ordersDraft);
+  ordersDraftRef.current = ordersDraft;
   const [ordersEditorMode, setOrdersEditorMode] = useState<OrdersEditorMode>({ kind: "idle" });
   const ordersEditorModeRef = useRef<OrdersEditorMode>({ kind: "idle" });
   const [operatorDetailsOpen, setOperatorDetailsOpen] = useState(false);
@@ -2321,11 +2326,12 @@ export default function TarkovTD() {
           ctx.lineWidth = 1;
         }
         const oMode = ordersEditorModeRef.current;
+        const liveOrdersDraft = ordersDraftRef.current;
         if (oMode.kind === "author_move" && !s.place && s.hoverTx >= 0) {
-          const moveIndex = oMode.editIndex ?? ordersDraft.orders.length;
+          const moveIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
           const origin = getProjectedOperatorPositionBeforeOrder(
             pos,
-            ordersDraft,
+            liveOrdersDraft,
             moveIndex,
             TILE,
           );
@@ -2345,17 +2351,20 @@ export default function TarkovTD() {
         if (oMode.kind === "author_hold" && s.hoverTx >= 0) {
           const worldX = s.hoverTx * TILE + TILE / 2;
           const worldY = s.hoverTy * TILE + TILE / 2;
-          const holdIndex = oMode.editIndex ?? ordersDraft.orders.length;
-          const origin = getProjectedOperatorPositionBeforeOrder(
+          const holdIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
+          const geometry = getProjectedActionGeometry(
             pos,
-            ordersDraft,
+            liveOrdersDraft,
             holdIndex,
             TILE,
+            { x: worldX, y: worldY },
           );
-          const ang = Math.atan2(worldY - origin.y + 4, worldX - origin.x);
           ctx.beginPath();
-          ctx.moveTo(origin.x, origin.y);
-          ctx.lineTo(origin.x + Math.cos(ang) * TILE * 3, origin.y + Math.sin(ang) * TILE * 3);
+          ctx.moveTo(geometry.origin.x, geometry.origin.y);
+          ctx.lineTo(
+            geometry.origin.x + Math.cos(geometry.angle) * TILE * 3,
+            geometry.origin.y + Math.sin(geometry.angle) * TILE * 3,
+          );
           ctx.strokeStyle = "rgba(232,140,48,0.85)";
           ctx.lineWidth = 2;
           ctx.stroke();
@@ -2716,16 +2725,21 @@ export default function TarkovTD() {
       const sel = s.towers.find((t) => t.id === ordersOpenFor);
       if (sel) {
         const world = toWorld(ev);
-        const holdIndex = oMode.editIndex ?? ordersDraft.orders.length;
-        const origin = getProjectedOperatorPositionBeforeOrder(
+        const liveOrdersDraft = ordersDraftRef.current;
+        const holdIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
+        const geometry = getProjectedActionGeometry(
           towerPos(sel),
-          ordersDraft,
+          liveOrdersDraft,
           holdIndex,
           TILE,
+          world,
         );
-        const angle = Math.atan2(world.y - origin.y + 4, world.x - origin.x);
-        const order = { type: "HOLD_ANGLE" as const, angle, point: { x: world.x, y: world.y } };
-        let draft = ordersDraft;
+        const order = {
+          type: "HOLD_ANGLE" as const,
+          angle: geometry.angle,
+          point: geometry.point,
+        };
+        let draft = liveOrdersDraft;
         if (oMode.editIndex != null) {
           const r = replaceOrderAt(draft, oMode.editIndex, order);
           if (!r.ok) pushLog(r.reason);
@@ -2745,10 +2759,11 @@ export default function TarkovTD() {
     if (oMode.kind === "author_move" && ordersOpenFor != null) {
       const sel = s.towers.find((t) => t.id === ordersOpenFor);
       if (sel) {
-        const moveIndex = oMode.editIndex ?? ordersDraft.orders.length;
+        const liveOrdersDraft = ordersDraftRef.current;
+        const moveIndex = oMode.editIndex ?? liveOrdersDraft.orders.length;
         const origin = getProjectedOperatorPositionBeforeOrder(
           towerPos(sel),
-          ordersDraft,
+          liveOrdersDraft,
           moveIndex,
           TILE,
         );
@@ -2764,7 +2779,7 @@ export default function TarkovTD() {
           return;
         }
         const order = { type: "MOVE" as const, tx: dest.tx, ty: dest.ty };
-        let draft = ordersDraft;
+        let draft = liveOrdersDraft;
         if (oMode.editIndex != null) {
           const r = replaceOrderAt(draft, oMode.editIndex, order);
           if (!r.ok) pushLog(r.reason);
