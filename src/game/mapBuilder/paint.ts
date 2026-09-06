@@ -10,6 +10,7 @@ import type {
   EditorCheckpoint,
   EditorCover,
   EditorCrate,
+  EditorSentry,
   EditorEdgeObject,
   EditorGate,
   EditorMapDoc,
@@ -62,6 +63,12 @@ export function placeCrate(doc: EditorMapDoc, tx: number, ty: number): EditorMap
   if (!canPlaceOccupant(doc, tx, ty)) return doc;
   const next: EditorCrate = { id: nextObjectId(doc, "crate"), tx, ty };
   return { ...doc, crates: [...doc.crates, next] };
+}
+
+export function placeSentry(doc: EditorMapDoc, tx: number, ty: number, kind: EditorSentry["kind"]): EditorMapDoc {
+  if (!canPlaceOccupant(doc, tx, ty)) return doc;
+  const next: EditorSentry = { id: nextObjectId(doc, "sentry"), kind, tx, ty, facing: Math.PI };
+  return { ...doc, sentries: [...doc.sentries, next] };
 }
 
 export function placeCheckpoint(
@@ -145,6 +152,7 @@ export function removeObject(doc: EditorMapDoc, id: string): EditorMapDoc {
     props: doc.props.filter((p) => p.id !== id),
     cover: doc.cover.filter((p) => p.id !== id),
     crates: doc.crates.filter((p) => p.id !== id),
+    sentries: doc.sentries.filter((p) => p.id !== id),
     checkpoints: doc.checkpoints.filter((p) => p.id !== id),
     edges: doc.edges.filter((p) => p.id !== id),
     zones: doc.zones.filter((p) => p.id !== id),
@@ -160,6 +168,7 @@ export function eraseOccupants(doc: EditorMapDoc, tiles: Array<[number, number]>
     props: doc.props.filter((p) => !keys.has(`${p.tx},${p.ty}`)),
     cover: doc.cover.filter((p) => !keys.has(`${p.tx},${p.ty}`)),
     crates: doc.crates.filter((p) => !keys.has(`${p.tx},${p.ty}`)),
+    sentries: doc.sentries.filter((p) => !keys.has(`${p.tx},${p.ty}`)),
     checkpoints: doc.checkpoints.filter((p) => !keys.has(`${p.tx},${p.ty}`)),
     edges: doc.edges.filter((p) => !keys.has(`${p.tx},${p.ty}`)),
     gates: doc.gates.filter((p) => !keys.has(`${p.tx},${p.ty}`)),

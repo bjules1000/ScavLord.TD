@@ -55,8 +55,16 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
   for (const p of doc.props) checkTile(`Prop ${p.type}`, p.tx, p.ty);
   for (const p of doc.cover) checkTile(`Cover ${p.type}`, p.tx, p.ty);
   for (const p of doc.crates) checkTile("Crate", p.tx, p.ty);
+  for (const p of doc.sentries) checkTile(`Sentry ${p.kind}`, p.tx, p.ty);
   for (const p of doc.checkpoints) checkTile(`Checkpoint ${p.type}`, p.tx, p.ty);
   for (const p of doc.edges) checkTile(`Edge ${p.type}`, p.tx, p.ty);
+
+  const sentryCells = new Set<string>();
+  for (const sentry of doc.sentries) {
+    const key = `${sentry.tx},${sentry.ty}`;
+    if (sentryCells.has(key)) errors.push(issue("error", "SENTRY", `Duplicate sentry at (${sentry.tx}, ${sentry.ty}).`));
+    sentryCells.add(key);
+  }
 
   const wallKeys = new Set<string>();
   for (const wall of doc.collisionWalls) {

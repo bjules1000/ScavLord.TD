@@ -194,7 +194,7 @@ describe("loot sources", () => {
     expect(sources.some((s) => s.id === "shop")).toBe(true);
     expect(sources.every((s) => s.implemented)).toBe(true);
     const groups = lootSourceGroups();
-    expect(groups.map((g) => g.label)).toEqual(["PINE CUT", "GRAIN GATE", "THE WORKS", "SHOP"]);
+    expect(groups.map((g) => g.label)).toEqual(["PINE CUT", "PINE CUT V2", "GRAIN GATE", "THE WORKS", "SHOP"]);
     expect(groups.find((g) => g.mapId === "kolkhoz")?.children.map((c) => c.type)).toEqual(["reward"]);
   });
 

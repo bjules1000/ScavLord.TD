@@ -1,6 +1,7 @@
 import { COLS, ROWS, TILE } from "./data";
 import { mapLaneDefs } from "./lanes";
 import { WOODS_MAP } from "./maps/woods";
+import { WOODS_V2_MAP } from "./maps/woodsV2";
 
 export type PropType =
   | "crate"
@@ -39,6 +40,9 @@ export interface WaveMods {
 export interface MapDef {
   id: string;
   name: string;
+  /** Playable tile dimensions. Legacy maps default to the canonical 20x13 grid. */
+  width?: number;
+  height?: number;
   threat: 1 | 2 | 3;
   threatLabel: string;
   desc: string;
@@ -79,6 +83,8 @@ export interface MapDef {
   checkpoint: CheckpointPart[];
   cover: Array<[number, number, CoverType]>;
   crates: Array<[number, number]>;
+  /** Hostile defenders already occupying the map when the raid begins. */
+  sentries?: Array<{ kind: import("./types").EnemyKind; tx: number; ty: number; facing?: number }>;
   palette: Palette;
 }
 
@@ -91,6 +97,8 @@ export interface GameLane {
 
 export interface GameMap {
   def: MapDef;
+  width: number;
+  height: number;
   lanes: GameLane[];
   /** MAIN / first lane, kept for spawn-tile search and older call sites. */
   PIX: Array<[number, number]>;
@@ -133,6 +141,7 @@ const FACTORY_PAL: Palette = {
 
 export const MAP_DEFS: MapDef[] = [
   WOODS_MAP,
+  WOODS_V2_MAP,
   {
     id: "kolkhoz",
     name: "GRAIN GATE",
@@ -390,7 +399,7 @@ export function extractMarkerCenter(pix: Array<[number, number]>, tile = TILE): 
   return [last[0] + dx * tile, last[1] + dy * tile];
 }
 
-function stampRoad(BLOCKED: boolean[][], PIX: Array<[number, number]>) {
+function stampRoad(BLOCKED: boolean[][], PIX: Array<[number, number]>, width: number, height: number) {
   for (let i = 0; i < PIX.length - 1; i++) {
     const [ax, ay] = PIX[i]!;
     const [bx, by] = PIX[i + 1]!;
@@ -402,32 +411,34 @@ function stampRoad(BLOCKED: boolean[][], PIX: Array<[number, number]>) {
         for (let oy = -1; oy <= 1; oy++) {
           const tx = Math.floor((x + ox * 10) / TILE);
           const ty = Math.floor((y + oy * 10) / TILE);
-          if (tx >= 0 && ty >= 0 && tx < COLS && ty < ROWS) BLOCKED[ty]![tx] = true;
+          if (tx >= 0 && ty >= 0 && tx < width && ty < height) BLOCKED[ty]![tx] = true;
         }
     }
   }
 }
 
 export function buildMap(def: MapDef): GameMap {
+  const width = def.width ?? COLS;
+  const height = def.height ?? ROWS;
   const lanes = mapLaneDefs(def).map((lane) => ({ id: lane.id, ...geometryFromPath(lane.path) }));
   const primary = lanes[0] ?? { id: "MAIN", ...geometryFromPath(def.path) };
-  const BLOCKED: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
-  for (const lane of lanes) stampRoad(BLOCKED, lane.PIX);
-  const WATER: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const BLOCKED: boolean[][] = Array.from({ length: height }, () => Array(width).fill(false));
+  for (const lane of lanes) stampRoad(BLOCKED, lane.PIX, width, height);
+  const WATER: boolean[][] = Array.from({ length: height }, () => Array(width).fill(false));
   for (const [x, y] of def.water ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) WATER[y]![x] = true;
+    if (x >= 0 && y >= 0 && x < width && y < height) WATER[y]![x] = true;
   }
-  const MOUNTAIN: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const MOUNTAIN: boolean[][] = Array.from({ length: height }, () => Array(width).fill(false));
   for (const [x, y] of def.mountain ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) MOUNTAIN[y]![x] = true;
+    if (x >= 0 && y >= 0 && x < width && y < height) MOUNTAIN[y]![x] = true;
   }
-  const HIGH_GROUND: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const HIGH_GROUND: boolean[][] = Array.from({ length: height }, () => Array(width).fill(false));
   for (const [x, y] of def.highGround ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) HIGH_GROUND[y]![x] = true;
+    if (x >= 0 && y >= 0 && x < width && y < height) HIGH_GROUND[y]![x] = true;
   }
-  const BRIDGE: boolean[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+  const BRIDGE: boolean[][] = Array.from({ length: height }, () => Array(width).fill(false));
   for (const b of def.bridges ?? []) {
-    if (b.tx >= 0 && b.ty >= 0 && b.tx < COLS && b.ty < ROWS) BRIDGE[b.ty]![b.tx] = true;
+    if (b.tx >= 0 && b.ty >= 0 && b.tx < width && b.ty < height) BRIDGE[b.ty]![b.tx] = true;
   }
   const occupied = (tx: number, ty: number) => !!BLOCKED[ty]?.[tx] || !!WATER[ty]?.[tx] || !!MOUNTAIN[ty]?.[tx];
   const PROPS = def.props.filter((p) => !occupied(p.tx, p.ty));
@@ -444,6 +455,8 @@ export function buildMap(def: MapDef): GameMap {
     );
   return {
     def,
+    width,
+    height,
     lanes: lanes.length ? lanes : [primary],
     PIX: primary.PIX,
     SEG_LEN: primary.SEG_LEN,
@@ -471,22 +484,22 @@ export function pathPoint(map: GameMap, seg: number, t: number, lane = 0): [numb
 }
 
 export function isRoad(map: GameMap, tx: number, ty: number) {
-  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false;
   return !!map.BLOCKED[ty]![tx];
 }
 
 export function isWater(map: GameMap, tx: number, ty: number) {
-  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false;
   return !!map.WATER[ty]![tx];
 }
 
 export function isMountain(map: GameMap, tx: number, ty: number) {
-  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false;
   return !!map.MOUNTAIN[ty]![tx];
 }
 
 export function isHighGround(map: GameMap, tx: number, ty: number) {
-  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false;
   return !!map.HIGH_GROUND[ty]![tx];
 }
 
@@ -496,7 +509,7 @@ export function isHighGround(map: GameMap, tx: number, ty: number) {
  * Does not describe HIGH bridge-deck placement — use `canPlaceOperator`.
  */
 export function isBuildable(map: GameMap, tx: number, ty: number) {
-  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false;
   if (map.BLOCKED[ty]![tx]) return false;
   if (map.WATER[ty]![tx]) return false;
   if (map.MOUNTAIN[ty]![tx]) return false;

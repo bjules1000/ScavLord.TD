@@ -33,8 +33,8 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     ...createBlankMap({
       displayName: def.name,
       id: `draft-${def.id}`,
-      width: COLS,
-      height: ROWS,
+      width: def.width ?? COLS,
+      height: def.height ?? ROWS,
     }),
     sourceMapId: def.id,
     displayName: def.name,
@@ -47,20 +47,22 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     waveMods: def.waveMods ? { ...def.waveMods } : null,
     sector: def.sector,
     geo: { ...def.geo },
-    lanes: mapLaneDefs(def).map((l) => peelLaneFromWaypoints(l.id, l.path, COLS, ROWS)),
+    lanes: mapLaneDefs(def).map((l) => peelLaneFromWaypoints(l.id, l.path, def.width ?? COLS, def.height ?? ROWS)),
   };
-  const terrain = emptyTerrain(COLS, ROWS);
+  const width = def.width ?? COLS;
+  const height = def.height ?? ROWS;
+  const terrain = emptyTerrain(width, height);
   for (const [x, y] of def.highGround ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) terrain[y]![x] = "HIGH_GROUND";
+    if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "HIGH_GROUND";
   }
   for (const [x, y] of def.mountain ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) terrain[y]![x] = "MOUNTAIN";
+    if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "MOUNTAIN";
   }
   for (const lane of mapLaneDefs(def)) {
-    for (const [x, y] of onMapCells(pathCells(lane.path), COLS, ROWS)) terrain[y]![x] = "ROAD";
+    for (const [x, y] of onMapCells(pathCells(lane.path), width, height)) terrain[y]![x] = "ROAD";
   }
   for (const [x, y] of def.water ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) terrain[y]![x] = "WATER";
+    if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "WATER";
   }
   doc.terrain = terrain;
   doc.props = def.props.map((p, i) => ({
@@ -76,6 +78,7 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     ty,
   }));
   doc.crates = def.crates.map(([tx, ty], i) => ({ id: `crate-${i + 1}`, tx, ty }));
+  doc.sentries = (def.sentries ?? []).map((s, i) => ({ id: `sentry-${i + 1}`, ...s, facing: s.facing ?? Math.PI }));
   doc.checkpoints = def.checkpoint.map((c, i) => ({
     id: `cp-${i + 1}`,
     type: c.type,
@@ -121,12 +124,6 @@ export interface IntegrationNote {
  */
 export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
   const notes: IntegrationNote[] = [];
-  if (doc.width !== COLS || doc.height !== ROWS) {
-    notes.push({
-      code: "SIZE",
-      message: `Export is ${doc.width}×${doc.height}; production grid is ${COLS}×${ROWS}.`,
-    });
-  }
   if (doc.lanes.length > 1) {
     notes.push({
       code: "LANES",
@@ -175,6 +172,8 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
   const def: MapDef = {
     id: doc.sourceMapId ?? doc.id.replace(/^(draft|import)-/, ""),
     name: doc.displayName,
+    width: doc.width,
+    height: doc.height,
     threat: doc.threat,
     threatLabel: doc.threatLabel,
     desc: doc.desc,
@@ -196,6 +195,9 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx)
       .map((c) => [c.tx, c.ty] as [number, number]),
     palette: { ...doc.palette },
+    sentries: [...doc.sentries]
+      .sort((a, b) => a.ty - b.ty || a.tx - b.tx || String(a.kind).localeCompare(String(b.kind)))
+      .map(({ kind, tx, ty, facing }) => ({ kind, tx, ty, facing })),
   };
   if (doc.waveMods) def.waveMods = { ...doc.waveMods };
   if (doc.lanes.length > 1) {

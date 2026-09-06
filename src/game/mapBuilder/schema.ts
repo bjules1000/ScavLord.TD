@@ -1,4 +1,5 @@
 import type { CheckpointPart, CoverType, Palette, PropType, WaveMods } from "../map";
+import type { EnemyKind } from "../types";
 
 /** Dev-only authoring schema. Gameplay saves use `kolkhoz-meta-v5`. */
 export const MAP_BUILDER_SCHEMA_VERSION = 1;
@@ -66,6 +67,14 @@ export interface EditorCrate {
   id: string;
   tx: number;
   ty: number;
+}
+
+export interface EditorSentry {
+  id: string;
+  kind: EnemyKind;
+  tx: number;
+  ty: number;
+  facing: number;
 }
 
 export interface EditorCheckpoint {
@@ -150,6 +159,7 @@ export interface EditorMapDoc {
   props: EditorProp[];
   cover: EditorCover[];
   crates: EditorCrate[];
+  sentries: EditorSentry[];
   checkpoints: EditorCheckpoint[];
   edges: EditorEdgeObject[];
   gates: EditorGate[];

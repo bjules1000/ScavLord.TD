@@ -10,7 +10,7 @@
  * are never slopes.
  */
 import { getEquippedWeight, type EquippedKit } from "./armor";
-import { COLS, ROWS, TILE } from "./data";
+import { TILE } from "./data";
 import { isMountain, isRoad, isWater, type GameMap } from "./map";
 import { isMovementBlockedAcrossEdge } from "./mapBuilder/walls";
 import {
@@ -80,8 +80,8 @@ export function operatorMoveSpeedPx(kit: EquippedKit = {}): number {
 
 export function raidWalls(map: GameMap) {
   return {
-    width: COLS,
-    height: ROWS,
+    width: map.width,
+    height: map.height,
     collisionWalls: map.def.collisionWalls ?? [],
   };
 }
@@ -96,7 +96,7 @@ export function isRaidMovementBlockedAcrossEdge(map: GameMap, from: [number, num
  * A suspended bridge leaves the base cell independently walkable.
  */
 export function canWalkLow(map: GameMap, tx: number, ty: number): boolean {
-  if (!inMapBounds(tx, ty)) return false;
+  if (!inMapBounds(tx, ty, map.width, map.height)) return false;
   if (isMountain(map, tx, ty) || isWater(map, tx, ty)) return false;
   if (elevatedSurfaceAt(map, tx, ty) === "HIGH_GROUND") return false;
   if (tileHasFurniture(map, tx, ty)) return false;
@@ -106,7 +106,7 @@ export function canWalkLow(map: GameMap, tx: number, ty: number): boolean {
 
 /** HIGH walk: HIGH_GROUND terrain or a suspended-bridge deck. */
 export function canWalkHigh(map: GameMap, tx: number, ty: number): boolean {
-  if (!inMapBounds(tx, ty)) return false;
+  if (!inMapBounds(tx, ty, map.width, map.height)) return false;
   if (isMountain(map, tx, ty)) return false;
   if (!elevatedSurfaceAt(map, tx, ty)) return false;
   if (tileHasFurniture(map, tx, ty)) return false;

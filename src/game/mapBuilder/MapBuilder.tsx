@@ -67,6 +67,7 @@ import {
 import type { EditorMapDoc, TerrainKind } from "./schema";
 import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
+import { listAllEnemyKinds } from "../dev/waveLabCore";
 import { lockDoc } from "./document";
 import { bridgeAt, hasBridge, inferBridgeOrientation, toggleBridgeOrientation } from "./bridges";
 import {
@@ -178,6 +179,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       | "prop"
       | "cover"
       | "crate"
+      | "sentry"
       | "checkpoint"
       | "spawn"
       | "end"
@@ -195,6 +197,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       invalid = tool.id === "edge" ? false : !canPlaceOccupant(doc, hover.tx, hover.ty);
       if (tool.id === "cover") ghostItem = "cover";
       else if (tool.id === "crate") ghostItem = "crate";
+      else if (tool.id === "sentry") ghostItem = "sentry";
       else if (tool.id === "checkpoint") ghostItem = "checkpoint";
       else ghostItem = "prop";
     }
@@ -259,6 +262,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             ghostProp: tool.id === "prop" ? tool.type : null,
             ghostCover: tool.id === "cover" ? tool.type : null,
             ghostCheckpoint: tool.id === "checkpoint" ? tool.type : null,
+            ghostSentry: tool.id === "sentry" ? String(tool.kind) : null,
             ...(pathPreview ? { pathPreview } : {}),
             ...(edge ? { edge } : {}),
             ...(portPreview ? { portPreview } : {}),
@@ -674,6 +678,14 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
                 ERASE PROP
               </Chip>
+            </Section>
+            <Section title="HOSTILE SENTRIES">
+              {listAllEnemyKinds().map((kind) => (
+                <Chip key={kind} active={tool.id === "sentry" && tool.kind === kind} onClick={() => setTool({ id: "sentry", kind })}>
+                  {kind === "sniperScav" ? "SNIPER SCAV" : kind.toUpperCase()}
+                </Chip>
+              ))}
+              <div className="w-full text-muted-foreground">Placed defenders begin on the map and hold their position while normal waves still use authored lanes.</div>
             </Section>
             <Section title="COLLISION / BARRIERS">
               <Chip active={isMovementWallMode(tool)} onClick={() => setTool(selectCollisionWallTool())}>

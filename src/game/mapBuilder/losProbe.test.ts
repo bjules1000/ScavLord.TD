@@ -463,6 +463,7 @@ describe("LOS probe tool state", () => {
         "props",
         "cover",
         "crates",
+        "sentries",
         "checkpoints",
         "edges",
         "gates",

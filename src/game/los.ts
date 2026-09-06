@@ -9,7 +9,7 @@
  *   SOLID authored walls
  * Decorative props do not block. Range is not applied here.
  */
-import { COLS, ROWS, TILE } from "./data";
+import { TILE } from "./data";
 import { isMountain, type GameMap } from "./map";
 import type { TileEdge } from "./mapBuilder/schema";
 import { isSightBlockedAcrossEdge, sharedCanonicalWall } from "./mapBuilder/walls";
@@ -57,8 +57,8 @@ export function tileCenterWorld(tx: number, ty: number, tile = TILE): WorldPos {
 
 export function raidSightWalls(map: GameMap) {
   return {
-    width: COLS,
-    height: ROWS,
+    width: map.width,
+    height: map.height,
     collisionWalls: map.def.collisionWalls ?? [],
   };
 }
@@ -131,7 +131,7 @@ export function crossedTileEdges(
   let tMaxY = tToNextGrid(y0, y1, gy, stepY, tile);
 
   const out: GridEdgeCross[] = [];
-  const maxSteps = COLS + ROWS + 8;
+  const maxSteps = Math.abs(gx1 - gx) + Math.abs(gy1 - gy) + 8;
   let steps = 0;
 
   const push = (from: [number, number], to: [number, number], t: number, edge: TileEdge) => {

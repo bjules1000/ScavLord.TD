@@ -35,6 +35,7 @@ export interface ExportedMap {
   props: Array<{ type: PropType; tx: number; ty: number }>;
   cover: Array<{ type: EditorMapDoc["cover"][number]["type"]; tx: number; ty: number }>;
   crates: Array<{ tx: number; ty: number }>;
+  sentries: Array<{ kind: EditorMapDoc["sentries"][number]["kind"]; tx: number; ty: number; facing: number }>;
   checkpoints: Array<{ type: EditorMapDoc["checkpoints"][number]["type"]; tx: number; ty: number }>;
   edges: Array<{ type: EditorMapDoc["edges"][number]["type"]; tx: number; ty: number; edge: EditorMapDoc["edges"][number]["edge"] }>;
   gates: Array<{ id: EditorMapDoc["gates"][number]["id"]; laneId: string; tx: number; ty: number; edge: EditorMapDoc["gates"][number]["edge"] }>;
@@ -85,6 +86,9 @@ export function toExport(doc: EditorMapDoc): ExportedMap {
     crates: [...doc.crates]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx)
       .map((c) => ({ tx: c.tx, ty: c.ty })),
+    sentries: [...doc.sentries]
+      .sort((a, b) => a.ty - b.ty || a.tx - b.tx || String(a.kind).localeCompare(String(b.kind)))
+      .map((s) => ({ kind: s.kind, tx: s.tx, ty: s.ty, facing: s.facing })),
     checkpoints: [...doc.checkpoints]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.type.localeCompare(b.type))
       .map((c) => ({ type: c.type, tx: c.tx, ty: c.ty })),
@@ -202,6 +206,7 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
     props: payload.props.map((p, i) => ({ id: `prop-${i + 1}`, type: p.type, tx: p.tx, ty: p.ty })),
     cover: payload.cover.map((c, i) => ({ id: `cover-${i + 1}`, type: c.type, tx: c.tx, ty: c.ty })),
     crates: payload.crates.map((c, i) => ({ id: `crate-${i + 1}`, tx: c.tx, ty: c.ty })),
+    sentries: (payload.sentries ?? []).map((s, i) => ({ id: `sentry-${i + 1}`, kind: s.kind, tx: s.tx, ty: s.ty, facing: Number(s.facing) || 0 })),
     checkpoints: payload.checkpoints.map((c, i) => ({
       id: `cp-${i + 1}`,
       type: c.type,

@@ -144,6 +144,8 @@ export interface Enemy {
   t: number;
   x: number;
   y: number;
+  /** Authored map defender: fights normally but never advances along a wave lane. */
+  sentry?: boolean;
   /** Authored lane traffic stays GROUND even under a suspended bridge. */
   surface?: SurfaceLevel;
   /** Live wire currently occupying this enemy; null when off wire. */

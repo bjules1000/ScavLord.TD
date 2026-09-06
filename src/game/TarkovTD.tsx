@@ -94,6 +94,7 @@ import {
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
+import { authoredSentryEnemies, sentryMovementMultiplier } from "./mapSentries";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -363,10 +364,6 @@ import {
 import { clearRaidBackpack, devAddToBackpack } from "./dev/inventory";
 import DevItemPicker from "./dev/DevItemPicker";
 
-const PLAYABLE_W = COLS * TILE;
-const PLAYABLE_H = ROWS * TILE;
-const W = PLAYABLE_W + BOARD_GUTTER * 2;
-const H = PLAYABLE_H + BOARD_GUTTER * 2;
 const START_ROUBLES = 500;
 const START_LIVES = 20;
 const BASE_BACKPACK_SLOTS = 5;
@@ -605,8 +602,8 @@ const attachItemId = (attId: string) =>
 function pmcSpawnTile(map: GameMap, s: GameState) {
   const [sx, sy] = map.PIX[0]!;
   let best: { tx: number; ty: number; score: number } | null = null;
-  for (let ty = 0; ty < ROWS; ty++) {
-    for (let tx = 0; tx < COLS; tx++) {
+  for (let ty = 0; ty < map.height; ty++) {
+    for (let tx = 0; tx < map.width; tx++) {
       if (!operatorPlaceableFor(map, s, tx, ty)) continue;
       const d = Math.hypot(tx * TILE + TILE / 2 - sx, ty * TILE + TILE / 2 - sy);
       const score = bestCoverAt(map.COVER, tx, ty) * 400 - d;
@@ -714,6 +711,9 @@ export default function TarkovTD() {
   const [recruitmentLabOpen, setRecruitmentLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
+  const selectedMapDef = MAP_BY_ID[mapId] ?? MAP_DEFS[1]!;
+  const W = (selectedMapDef.width ?? COLS) * TILE + BOARD_GUTTER * 2;
+  const H = (selectedMapDef.height ?? ROWS) * TILE + BOARD_GUTTER * 2;
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
@@ -894,6 +894,7 @@ export default function TarkovTD() {
     crewDeploy.forEach((op, i) => {
       spawnPersistentOperatorTower(s, mapRef.current, op, tiles[i + 1] ?? tiles[0]!, debuffs.pmcHp);
     });
+    s.enemies.push(...authoredSentryEnemies(mapRef.current, () => s.nextId++, debuffs.enemyHp));
     gs.current = s;
     setChoices([]);
     setPendingLoot(null);
@@ -1634,7 +1635,7 @@ export default function TarkovTD() {
           if (br.state !== "REACTION" || br.reactionLeftMs <= 0) br.state = "ADVANCING";
         }
 
-        const moveMult = (grenadeAffected.stunLeft ?? 0) > 0 ? 0 : movementSpeedMult(behavior, br);
+        const moveMult = sentryMovementMultiplier(e) * ((grenadeAffected.stunLeft ?? 0) > 0 ? 0 : movementSpeedMult(behavior, br));
         const route = laneRoute(mapRef.current, e.lane);
         const sp =
           def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? WIRE_SPEED_MULT : 1) * moveMult;
@@ -2613,7 +2614,7 @@ export default function TarkovTD() {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [addToBackpack, pushLog, rerender]);
+  }, [H, W, addToBackpack, pushLog, rerender]);
 
   /* ---------------- input ---------------- */
   const toWorld = (ev: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }) => {

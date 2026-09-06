@@ -98,6 +98,7 @@ export function createBlankMap(input: {
     props: [],
     cover: [],
     crates: [],
+    sentries: [],
     checkpoints: [],
     edges: [],
     gates: [],
@@ -116,6 +117,7 @@ export function nextObjectId(doc: EditorMapDoc, prefix: string): string {
     ...doc.props.map((p) => p.id),
     ...doc.cover.map((p) => p.id),
     ...doc.crates.map((p) => p.id),
+    ...doc.sentries.map((p) => p.id),
     ...doc.checkpoints.map((p) => p.id),
     ...doc.edges.map((p) => p.id),
     ...doc.zones.map((p) => p.id),
@@ -129,6 +131,7 @@ export function occupantAt(doc: EditorMapDoc, tx: number, ty: number): string | 
   if (doc.props.some((p) => p.tx === tx && p.ty === ty)) return "prop";
   if (doc.cover.some((p) => p.tx === tx && p.ty === ty)) return "cover";
   if (doc.crates.some((p) => p.tx === tx && p.ty === ty)) return "crate";
+  if (doc.sentries.some((p) => p.tx === tx && p.ty === ty)) return "sentry";
   if (doc.checkpoints.some((p) => p.tx === tx && p.ty === ty)) return "checkpoint";
   return null;
 }
@@ -162,5 +165,6 @@ export function normalizeEditorDoc(doc: EditorMapDoc): EditorMapDoc {
       kind: w.kind === "SOLID" ? "SOLID" : "MOVEMENT",
     })),
     bridges: Array.isArray(doc.bridges) ? doc.bridges : [],
+    sentries: Array.isArray(doc.sentries) ? doc.sentries : [],
   };
 }

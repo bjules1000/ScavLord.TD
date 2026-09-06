@@ -37,12 +37,12 @@ export function entitySurface(entity: { surface?: SurfaceLevel }): SurfaceLevel 
   return entity.surface ?? "GROUND";
 }
 
-export function inMapBounds(tx: number, ty: number): boolean {
-  return tx >= 0 && ty >= 0 && tx < COLS && ty < ROWS;
+export function inMapBounds(tx: number, ty: number, width = COLS, height = ROWS): boolean {
+  return tx >= 0 && ty >= 0 && tx < width && ty < height;
 }
 
 export function hasSuspendedBridge(map: GameMap, tx: number, ty: number): boolean {
-  if (!inMapBounds(tx, ty)) return false;
+  if (!inMapBounds(tx, ty, map.width, map.height)) return false;
   return !!map.BRIDGE[ty]![tx];
 }
 
@@ -51,7 +51,7 @@ export function hasSuspendedBridge(map: GameMap, tx: number, ty: number): boolea
  * into a different base kind.
  */
 export function baseTerrainAt(map: GameMap, tx: number, ty: number): BaseTerrainKind | null {
-  if (!inMapBounds(tx, ty)) return null;
+  if (!inMapBounds(tx, ty, map.width, map.height)) return null;
   if (isMountain(map, tx, ty)) return "MOUNTAIN";
   if (isWater(map, tx, ty)) return "WATER";
   if (isRoad(map, tx, ty)) return "ROAD";
@@ -63,14 +63,14 @@ export function baseTerrainAt(map: GameMap, tx: number, ty: number): BaseTerrain
  * A bridge deck wins over HIGH_GROUND on the same cell.
  */
 export function elevatedSurfaceAt(map: GameMap, tx: number, ty: number): ElevatedSurfaceKind | null {
-  if (!inMapBounds(tx, ty)) return null;
+  if (!inMapBounds(tx, ty, map.width, map.height)) return null;
   if (hasSuspendedBridge(map, tx, ty)) return "SUSPENDED_BRIDGE";
   if (isHighGround(map, tx, ty) && !isMountain(map, tx, ty)) return "HIGH_GROUND";
   return null;
 }
 
 export function tileHasFurniture(map: GameMap, tx: number, ty: number): boolean {
-  if (!inMapBounds(tx, ty)) return false;
+  if (!inMapBounds(tx, ty, map.width, map.height)) return false;
   if (map.PROPS.some((p) => p.tx === tx && p.ty === ty)) return true;
   if (map.CRATES.some((p) => p.tx === tx && p.ty === ty)) return true;
   if (map.COVER.some((c) => c.tx === tx && c.ty === ty)) return true;
@@ -87,7 +87,7 @@ export function canOccupyLowSurface(map: GameMap, tx: number, ty: number): boole
  * ROAD or WATER under a structurally authored bridge does not veto the deck.
  */
 export function canOccupyHighSurface(map: GameMap, tx: number, ty: number): boolean {
-  if (!inMapBounds(tx, ty)) return false;
+  if (!inMapBounds(tx, ty, map.width, map.height)) return false;
   if (isMountain(map, tx, ty)) return false;
   if (!elevatedSurfaceAt(map, tx, ty)) return false;
   if (tileHasFurniture(map, tx, ty)) return false;
