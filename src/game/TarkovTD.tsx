@@ -94,8 +94,17 @@ import {
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
-import { authoredSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
+import { raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { selectDeploymentTiles } from "./mapDeployment";
+import {
+  createEnemyTacticalRuntime,
+  nearbyCoverOffset,
+  squadAlertTargetId,
+  tacticalForwardMultiplier,
+  tacticalLanePosition,
+  tickEnemyTactics,
+  triggerEnemyTacticalReaction,
+} from "./enemyTactics";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -883,7 +892,7 @@ export default function TarkovTD() {
     crewDeploy.forEach((op, i) => {
       spawnPersistentOperatorTower(s, mapRef.current, op, tiles[i + 1] ?? tiles[0]!, debuffs.pmcHp);
     });
-    s.enemies.push(...authoredSentryEnemies(mapRef.current, () => s.nextId++, debuffs.enemyHp));
+    s.enemies.push(...raidStartingSentryEnemies(mapRef.current, () => s.nextId++, debuffs.enemyHp));
     gs.current = s;
     setChoices([]);
     setPendingLoot(null);
@@ -1480,6 +1489,7 @@ export default function TarkovTD() {
       if (dealt > 0 && def.behavior) {
         if (!e.behaviorRuntime) e.behaviorRuntime = freshBehaviorRuntime();
         applyDamageReaction(def.behavior, e.behaviorRuntime);
+        triggerEnemyTacticalReaction(e.tacticalRuntime);
       }
       return dealt;
     };
@@ -1548,6 +1558,8 @@ export default function TarkovTD() {
         // HP is snapshotted here. Later Wave Lab HP APPLY does not rewrite live hp/maxHp.
         const hp = spawnedEnemyHp(def.hp, s.wave, mapRef.current.def.hpMult, mods.enemyHp);
 
+        const waveSpawnIndex = s.enemies.filter((enemy) => !enemy.sentry).length;
+        const tacticalRuntime = createEnemyTacticalRuntime(waveSpawnIndex, mapRef.current.def.tacticalLaneWidth ?? 0);
         s.enemies.push({
           id: s.nextId++,
           kind: ev.kind,
@@ -1570,6 +1582,7 @@ export default function TarkovTD() {
           counted: false,
           lastHitZoneId: null,
           behaviorRuntime: freshBehaviorRuntime(),
+          ...(tacticalRuntime ? { tacticalRuntime } : {}),
         });
       }
 
@@ -1611,6 +1624,20 @@ export default function TarkovTD() {
           }
         }
 
+        if (!tgt) {
+          const sharedTargetId = squadAlertTargetId(s.enemies, e);
+          const sharedTarget = sharedTargetId == null ? null : s.towers.find((tower) => tower.id === sharedTargetId) ?? null;
+          if (sharedTarget) {
+            const pos = towerPos(sharedTarget);
+            tgt = sharedTarget;
+            hasLos = hasLineOfSight(
+              mapNow,
+              { x: e.x, y: e.y, surface: e.surface ?? "GROUND" },
+              { x: pos.x, y: pos.y, surface: sharedTarget.surface ?? "GROUND" },
+            );
+          }
+        }
+
         if ((grenadeAffected.flashLeft ?? 0) > 0) tgt = null;
         if (tgt) {
           br.targetTowerId = tgt.id;
@@ -1624,8 +1651,16 @@ export default function TarkovTD() {
           if (br.state !== "REACTION" || br.reactionLeftMs <= 0) br.state = "ADVANCING";
         }
 
-        const moveMult = sentryMovementMultiplier(e) * ((grenadeAffected.stunLeft ?? 0) > 0 ? 0 : movementSpeedMult(behavior, br));
         const route = laneRoute(mapRef.current, e.lane);
+        const [decisionX, decisionY] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
+        if (e.tacticalRuntime) {
+          const coverOffset = tgt
+            ? nearbyCoverOffset(mapNow, route, e.seg, decisionX, decisionY, e.tacticalRuntime.laneHalfWidth)
+            : null;
+          tickEnemyTactics(e.tacticalRuntime, e.kind, br.state === "ENGAGED" || !!tgt, dt * 1000, coverOffset);
+        }
+        const behaviorMoveMult = tacticalForwardMultiplier(e.tacticalRuntime, e.kind, movementSpeedMult(behavior, br));
+        const moveMult = sentryMovementMultiplier(e) * ((grenadeAffected.stunLeft ?? 0) > 0 ? 0 : behaviorMoveMult);
         const sp =
           def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? WIRE_SPEED_MULT : 1) * moveMult;
         let move = sp * dt;
@@ -1658,7 +1693,8 @@ export default function TarkovTD() {
           }
           continue;
         }
-        const [x, y] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
+        const [baseX, baseY] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
+        const [x, y] = tacticalLanePosition(mapNow, route, e.seg, baseX, baseY, e.tacticalRuntime);
         syncEnemyToLanePosition(e, x, y);
 
         const etx = Math.floor(e.x / TILE);
@@ -1975,6 +2011,7 @@ export default function TarkovTD() {
               if (def.behavior) {
                 if (!e.behaviorRuntime) e.behaviorRuntime = freshBehaviorRuntime();
                 applyDamageReaction(def.behavior, e.behaviorRuntime);
+                triggerEnemyTacticalReaction(e.tacticalRuntime);
               }
               spawnParticles(e.x, e.y, "#c94b3a", p.pellet ? 2 : 4, p.pellet ? 36 : 55);
               if (DEV_TOOLS_ENABLED && hit.hitZoneId === "head") {

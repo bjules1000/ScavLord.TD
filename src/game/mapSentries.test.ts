@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { MAP_BY_ID, buildMap } from "./map";
-import { authoredSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
+import { authoredSentryEnemies, raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { authoredDeploymentTiles, selectDeploymentTiles } from "./mapDeployment";
 import { applyAuthor } from "./mapBuilder/author";
 import { fromProductionMap } from "./mapBuilder/adapters";
@@ -26,6 +26,8 @@ describe("Pine Cut V2 conquest prototype", () => {
     expect(v2.crates).toHaveLength(4);
     expect(v2.collisionWalls).toHaveLength(172);
     expect(v2.sentries).toHaveLength(28);
+    expect(v2.activateSentries).toBe(false);
+    expect(v2.tacticalLaneWidth).toBe(1.35);
     expect(v2.sentries).toContainEqual(expect.objectContaining({ kind: "sniperScav", tx: 28, ty: 13 }));
     expect(v2.sentries).toContainEqual(expect.objectContaining({ kind: "boss", tx: 14, ty: 17 }));
   });
@@ -52,6 +54,12 @@ describe("Pine Cut V2 conquest prototype", () => {
     for (const sentry of sentries) syncEnemyToLanePosition(sentry, map.PIX[0]![0], map.PIX[0]![1]);
     expect(sentries.map(({ x, y }) => `${x},${y}`)).toEqual(authoredPositions);
     expect(new Set(authoredPositions).size).toBe(28);
+  });
+
+  it("keeps sentries authored but disables the mandatory clear phase in tactical-defense mode", () => {
+    const map = buildMap(MAP_BY_ID["woods-v2"]!);
+    expect(map.def.sentries).toHaveLength(28);
+    expect(raidStartingSentryEnemies(map, () => 1)).toEqual([]);
   });
 
   it("Map Builder places, exports, and imports sentries", () => {

@@ -26,6 +26,14 @@ export function authoredSentryEnemies(
   });
 }
 
+export function raidStartingSentryEnemies(
+  map: GameMap,
+  nextId: () => number,
+  enemyHpMod = 1,
+): Enemy[] {
+  return map.def.activateSentries === false ? [] : authoredSentryEnemies(map, nextId, enemyHpMod);
+}
+
 export function sentryMovementMultiplier(enemy: Pick<Enemy, "sentry">): 0 | 1 {
   return enemy.sentry ? 0 : 1;
 }

@@ -65,6 +65,8 @@ export interface MapDef {
   path: Array<[number, number]>;
   /** Authored road tiles outside lane routes. */
   road?: Array<[number, number]>;
+  /** Enables squad formations and lateral combat maneuvers around lane centerlines. Tiles per side. */
+  tacticalLaneWidth?: number;
   /** Extra/all authored lanes. When set, MAIN is also listed here and `path` matches MAIN. */
   lanes?: Array<{ id: string; path: Array<[number, number]> }>;
   /** Water tiles. Not road, not buildable. */
@@ -87,6 +89,8 @@ export interface MapDef {
   crates: Array<[number, number]>;
   /** Hostile defenders already occupying the map when the raid begins. */
   sentries?: Array<{ kind: import("./types").EnemyKind; tx: number; ty: number; facing?: number }>;
+  /** False keeps authored sentries available to the editor without making them a mandatory raid-clear phase. */
+  activateSentries?: boolean;
   palette: Palette;
 }
 
