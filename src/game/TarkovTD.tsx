@@ -1694,8 +1694,8 @@ export default function TarkovTD() {
           continue;
         }
         const [baseX, baseY] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
-        const [x, y] = tacticalLanePosition(mapNow, route, e.seg, baseX, baseY, e.tacticalRuntime);
-        syncEnemyToLanePosition(e, x, y);
+        const [x, y] = tacticalLanePosition(mapNow, route, e.seg, baseX, baseY, e.tacticalRuntime, dt * 1000);
+        syncEnemyToLanePosition(e, x, y, Math.max(TILE * 0.04, (sp + TILE * 1.15) * dt));
 
         const etx = Math.floor(e.x / TILE);
         const ety = Math.floor(e.y / TILE);

@@ -64,12 +64,26 @@ describe("wide tactical lane AI", () => {
     const seg = 23;
     const [baseX, baseY] = pathPoint(map, seg, 0.5, 0);
     const runtime = createEnemyTacticalRuntime(3, 1.35)!;
-    const [x, y] = tacticalLanePosition(map, route, seg, baseX, baseY, runtime);
+    tickEnemyTactics(runtime, "raider", false, 1000);
+    const [x, y] = tacticalLanePosition(map, route, seg, baseX, baseY, runtime, 1000);
     expect([x, y]).not.toEqual([baseX, baseY]);
     const tx = Math.floor(x / 44);
     const ty = Math.floor(y / 44);
     expect(map.MOUNTAIN[ty]?.[tx]).toBe(false);
     expect(map.WATER[ty]?.[tx]).toBe(false);
+  });
+
+  it("locks cover decisions and rate-limits hit evasion instead of bouncing each frame", () => {
+    const runtime = createEnemyTacticalRuntime(1, 1.35)!;
+    tickEnemyTactics(runtime, "raider", true, 16, 30);
+    expect(runtime.targetOffset).toBe(30);
+    tickEnemyTactics(runtime, "raider", true, 16, -30);
+    expect(runtime.targetOffset).toBe(30);
+
+    triggerEnemyTacticalReaction(runtime);
+    const evasionSide = Math.sign(runtime.targetOffset);
+    triggerEnemyTacticalReaction(runtime);
+    expect(Math.sign(runtime.targetOffset)).toBe(evasionSide);
   });
 
   it("shares a spotted operator with squad mates", () => {

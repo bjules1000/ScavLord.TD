@@ -14,6 +14,12 @@ export type EnemyTacticalRuntime = {
   targetOffset: number;
   laneHalfWidth: number;
   evadeLeftMs: number;
+  evadeCooldownMs: number;
+  decisionLeftMs: number;
+  engaged: boolean;
+  normalX: number;
+  normalY: number;
+  clearance: number;
 };
 
 const FORMATION = [-0.72, -0.24, 0.24, 0.72] as const;
@@ -28,10 +34,16 @@ export function createEnemyTacticalRuntime(spawnIndex: number, laneHalfWidthTile
     slot,
     mode: "ADVANCE",
     baseOffset,
-    offset: baseOffset,
+    offset: 0,
     targetOffset: baseOffset,
     laneHalfWidth,
     evadeLeftMs: 0,
+    evadeCooldownMs: 0,
+    decisionLeftMs: 0,
+    engaged: false,
+    normalX: 0,
+    normalY: 0,
+    clearance: 0,
   };
 }
 
@@ -57,29 +69,38 @@ export function tickEnemyTactics(
   coverOffset: number | null = null,
 ): void {
   runtime.evadeLeftMs = Math.max(0, runtime.evadeLeftMs - dtMs);
-  if (runtime.evadeLeftMs <= 0) {
+  runtime.evadeCooldownMs = Math.max(0, runtime.evadeCooldownMs - dtMs);
+  runtime.decisionLeftMs = Math.max(0, runtime.decisionLeftMs - dtMs);
+  if (runtime.evadeLeftMs <= 0 && (engaged !== runtime.engaged || runtime.decisionLeftMs <= 0)) {
     if (!engaged) {
       runtime.mode = "ADVANCE";
       runtime.targetOffset = runtime.baseOffset;
+      runtime.decisionLeftMs = 3000;
     } else if (coverOffset != null && kind !== "scav" && kind !== "boss") {
       runtime.mode = "COVER";
       runtime.targetOffset = Math.max(-runtime.laneHalfWidth, Math.min(runtime.laneHalfWidth, coverOffset));
+      runtime.decisionLeftMs = 3500;
     } else {
       runtime.mode = roleMode(kind);
       runtime.targetOffset = roleOffset(runtime, kind);
+      runtime.decisionLeftMs = 3500;
     }
   }
+  runtime.engaged = engaged;
   const maxStep = TILE * 1.15 * (dtMs / 1000);
   const delta = runtime.targetOffset - runtime.offset;
   runtime.offset += Math.sign(delta) * Math.min(Math.abs(delta), maxStep);
 }
 
 export function triggerEnemyTacticalReaction(runtime?: EnemyTacticalRuntime): void {
-  if (!runtime) return;
-  const side = runtime.offset >= 0 ? -1 : 1;
+  if (!runtime || runtime.evadeCooldownMs > 0) return;
+  const anchor = Math.abs(runtime.offset) > 1 ? runtime.offset : runtime.targetOffset || runtime.baseOffset;
+  const side = anchor >= 0 ? -1 : 1;
   runtime.mode = "EVADE";
   runtime.targetOffset = side * runtime.laneHalfWidth * 0.9;
-  runtime.evadeLeftMs = 900;
+  runtime.evadeLeftMs = 750;
+  runtime.evadeCooldownMs = 2800;
+  runtime.decisionLeftMs = 750;
 }
 
 export function tacticalForwardMultiplier(runtime: EnemyTacticalRuntime | undefined, kind: EnemyKind, base: number): number {
@@ -121,15 +142,26 @@ export function tacticalLanePosition(
   baseX: number,
   baseY: number,
   runtime?: EnemyTacticalRuntime,
+  dtMs = 16,
 ): [number, number] {
   if (!runtime) return [baseX, baseY];
-  const { nx, ny } = segmentNormal(route, seg);
+  const desired = segmentNormal(route, seg);
+  const turnBlend = Math.min(1, Math.max(0, dtMs) / 360);
+  runtime.normalX += (desired.nx - runtime.normalX) * turnBlend;
+  runtime.normalY += (desired.ny - runtime.normalY) * turnBlend;
+  const { normalX: nx, normalY: ny } = runtime;
+  let allowed = 0;
   for (const factor of [1, 0.75, 0.5, 0.25, 0] as const) {
     const x = baseX + nx * runtime.offset * factor;
     const y = baseY + ny * runtime.offset * factor;
-    if (candidateOpen(map, baseX, baseY, x, y)) return [x, y];
+    if (candidateOpen(map, baseX, baseY, x, y)) {
+      allowed = factor;
+      break;
+    }
   }
-  return [baseX, baseY];
+  if (allowed < runtime.clearance) runtime.clearance = allowed;
+  else runtime.clearance = Math.min(allowed, runtime.clearance + (dtMs / 1000) * 1.6);
+  return [baseX + nx * runtime.offset * runtime.clearance, baseY + ny * runtime.offset * runtime.clearance];
 }
 
 /** Nearby authored scenery gives combatants a meaningful lane side to move toward. */

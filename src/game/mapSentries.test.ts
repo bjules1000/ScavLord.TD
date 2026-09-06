@@ -54,6 +54,9 @@ describe("Pine Cut V2 conquest prototype", () => {
     for (const sentry of sentries) syncEnemyToLanePosition(sentry, map.PIX[0]![0], map.PIX[0]![1]);
     expect(sentries.map(({ x, y }) => `${x},${y}`)).toEqual(authoredPositions);
     expect(new Set(authoredPositions).size).toBe(28);
+    const laneEnemy = { sentry: false, x: 0, y: 0 };
+    syncEnemyToLanePosition(laneEnemy, 100, 0, 5);
+    expect(laneEnemy).toEqual({ sentry: false, x: 5, y: 0 });
   });
 
   it("keeps sentries authored but disables the mandatory clear phase in tactical-defense mode", () => {
