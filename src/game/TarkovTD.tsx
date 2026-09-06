@@ -98,6 +98,7 @@ import { raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePos
 import { selectDeploymentTiles } from "./mapDeployment";
 import {
   createEnemyTacticalRuntime,
+  isCoordinatedEnemyKind,
   nearbyCoverOffset,
   squadAlertTargetId,
   tacticalForwardMultiplier,
@@ -1559,7 +1560,14 @@ export default function TarkovTD() {
         const hp = spawnedEnemyHp(def.hp, s.wave, mapRef.current.def.hpMult, mods.enemyHp);
 
         const waveSpawnIndex = s.enemies.filter((enemy) => !enemy.sentry).length;
-        const tacticalRuntime = createEnemyTacticalRuntime(waveSpawnIndex, mapRef.current.def.tacticalLaneWidth ?? 0);
+        const coordinatedSpawnIndex = s.enemies.filter(
+          (enemy) => !enemy.sentry && isCoordinatedEnemyKind(enemy.kind),
+        ).length;
+        const tacticalRuntime = createEnemyTacticalRuntime(
+          isCoordinatedEnemyKind(ev.kind) ? coordinatedSpawnIndex : waveSpawnIndex,
+          mapRef.current.def.tacticalLaneWidth ?? 0,
+          ev.kind,
+        );
         s.enemies.push({
           id: s.nextId++,
           kind: ev.kind,

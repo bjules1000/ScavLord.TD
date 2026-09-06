@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { freshBehaviorRuntime } from "./enemyBehavior";
 import {
   createEnemyTacticalRuntime,
+  isCoordinatedEnemyKind,
   nearbyCoverOffset,
   squadAlertTargetId,
   tacticalForwardMultiplier,
@@ -19,6 +20,18 @@ describe("wide tactical lane AI", () => {
     expect(new Set(squad.map((runtime) => runtime.baseOffset)).size).toBe(4);
     expect(createEnemyTacticalRuntime(4, 1.35)!.squadId).toBe(1);
     expect(createEnemyTacticalRuntime(0, 0)).toBeUndefined();
+  });
+
+  it("spreads scavs independently without assigning squad coordination", () => {
+    const scavs = Array.from({ length: 7 }, (_, index) => createEnemyTacticalRuntime(index, 1.35, "scav")!);
+    expect(scavs.every((runtime) => runtime.squadId === null)).toBe(true);
+    expect(new Set(scavs.map((runtime) => runtime.baseOffset)).size).toBe(7);
+    expect(isCoordinatedEnemyKind("scav")).toBe(false);
+    expect(isCoordinatedEnemyKind("raider")).toBe(true);
+    const scav = scavs[0]!;
+    tickEnemyTactics(scav, "scav", true, 500, 30);
+    expect(scav.mode).toBe("ADVANCE");
+    expect(scav.targetOffset).toBe(scav.baseOffset);
   });
 
   it("changes role behavior on contact while preserving forward pressure", () => {
@@ -96,7 +109,9 @@ describe("wide tactical lane AI", () => {
     const spotter = makeEnemy(1, 0, 99);
     const mate = makeEnemy(2, 1, null);
     const outsider = makeEnemy(3, 4, null);
+    const scav = { ...makeEnemy(4, 5, null), kind: "scav" as const, tacticalRuntime: createEnemyTacticalRuntime(5, 1.35, "scav")! };
     expect(squadAlertTargetId([spotter, mate, outsider], mate)).toBe(99);
     expect(squadAlertTargetId([spotter, mate, outsider], outsider)).toBeNull();
+    expect(squadAlertTargetId([spotter, mate, scav], scav)).toBeNull();
   });
 });

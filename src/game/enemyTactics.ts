@@ -6,7 +6,8 @@ import type { Enemy, EnemyKind } from "./types";
 export type EnemyTacticalMode = "ADVANCE" | "COVER" | "FLANK" | "OVERWATCH" | "RUSH" | "EVADE";
 
 export type EnemyTacticalRuntime = {
-  squadId: number;
+  /** Null means an undisciplined individual that never shares squad state. */
+  squadId: number | null;
   slot: number;
   mode: EnemyTacticalMode;
   baseOffset: number;
@@ -23,14 +24,25 @@ export type EnemyTacticalRuntime = {
 };
 
 const FORMATION = [-0.72, -0.24, 0.24, 0.72] as const;
+const SCAV_SPREAD = [-0.9, -0.58, -0.27, 0, 0.31, 0.62, 0.88] as const;
 
-export function createEnemyTacticalRuntime(spawnIndex: number, laneHalfWidthTiles: number): EnemyTacticalRuntime | undefined {
+export function isCoordinatedEnemyKind(kind: EnemyKind): boolean {
+  return kind !== "scav";
+}
+
+export function createEnemyTacticalRuntime(
+  spawnIndex: number,
+  laneHalfWidthTiles: number,
+  kind: EnemyKind = "raider",
+): EnemyTacticalRuntime | undefined {
   if (laneHalfWidthTiles <= 0) return undefined;
-  const slot = Math.abs(spawnIndex) % FORMATION.length;
   const laneHalfWidth = laneHalfWidthTiles * TILE;
-  const baseOffset = FORMATION[slot]! * laneHalfWidth;
+  const coordinated = isCoordinatedEnemyKind(kind);
+  const slots = coordinated ? FORMATION : SCAV_SPREAD;
+  const slot = Math.abs(spawnIndex) % slots.length;
+  const baseOffset = slots[slot]! * laneHalfWidth;
   return {
-    squadId: Math.floor(Math.abs(spawnIndex) / FORMATION.length),
+    squadId: coordinated ? Math.floor(Math.abs(spawnIndex) / FORMATION.length) : null,
     slot,
     mode: "ADVANCE",
     baseOffset,
@@ -49,14 +61,14 @@ export function createEnemyTacticalRuntime(spawnIndex: number, laneHalfWidthTile
 
 function roleMode(kind: EnemyKind): EnemyTacticalMode {
   if (kind === "sniperScav") return "OVERWATCH";
-  if (kind === "scav") return "RUSH";
+  if (kind === "scav") return "ADVANCE";
   return "FLANK";
 }
 
 function roleOffset(runtime: EnemyTacticalRuntime, kind: EnemyKind): number {
-  const side = (runtime.squadId + runtime.slot) % 2 === 0 ? -1 : 1;
+  const side = ((runtime.squadId ?? runtime.slot) + runtime.slot) % 2 === 0 ? -1 : 1;
   if (kind === "sniperScav") return side * runtime.laneHalfWidth;
-  if (kind === "scav") return runtime.baseOffset * 0.25;
+  if (kind === "scav") return runtime.baseOffset;
   if (kind === "boss") return side * runtime.laneHalfWidth * 0.55;
   return side * runtime.laneHalfWidth * 0.85;
 }
