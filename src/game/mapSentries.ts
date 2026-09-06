@@ -43,17 +43,8 @@ export function syncEnemyToLanePosition(
   enemy: Pick<Enemy, "sentry" | "x" | "y">,
   x: number,
   y: number,
-  maxDistance = Number.POSITIVE_INFINITY,
 ): void {
   if (enemy.sentry) return;
-  const dx = x - enemy.x;
-  const dy = y - enemy.y;
-  const distance = Math.hypot(dx, dy);
-  if (distance > maxDistance && distance > 0) {
-    enemy.x += (dx / distance) * maxDistance;
-    enemy.y += (dy / distance) * maxDistance;
-  } else {
-    enemy.x = x;
-    enemy.y = y;
-  }
+  enemy.x = x;
+  enemy.y = y;
 }

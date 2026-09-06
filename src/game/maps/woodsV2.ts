@@ -69,7 +69,7 @@ export const WOODS_V2_MAP: MapDef = {
   name: "PINE CUT V2",
   width: 30,
   height: 20,
-  desc: "Expanded Pine Cut tactical-defense prototype. Enemy squads maneuver across a wider advance corridor.",
+  desc: "Expanded Pine Cut defense prototype with a larger battlefield and room for future sectors.",
   geo: { x: 31, y: 30 },
   sector: "SECTOR N-3",
   path: [
@@ -79,7 +79,6 @@ export const WOODS_V2_MAP: MapDef = {
     [11, 5], [11, 6], [11, 7], [12, 7], [13, 7], [14, 7], [15, 7], [15, 6], [15, 5], [15, 4],
     [15, 3], [16, 3], [17, 3], [17, 2], [17, 1], [17, 0], [17, -1],
   ],
-  tacticalLaneWidth: 1.35,
   road: terrainCells("R"),
   water: [],
   mountain: terrainCells("M"),

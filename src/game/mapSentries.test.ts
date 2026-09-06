@@ -27,7 +27,6 @@ describe("Pine Cut V2 conquest prototype", () => {
     expect(v2.collisionWalls).toHaveLength(172);
     expect(v2.sentries).toHaveLength(28);
     expect(v2.activateSentries).toBe(false);
-    expect(v2.tacticalLaneWidth).toBe(1.35);
     expect(v2.sentries).toContainEqual(expect.objectContaining({ kind: "sniperScav", tx: 28, ty: 13 }));
     expect(v2.sentries).toContainEqual(expect.objectContaining({ kind: "boss", tx: 14, ty: 17 }));
   });
@@ -54,12 +53,9 @@ describe("Pine Cut V2 conquest prototype", () => {
     for (const sentry of sentries) syncEnemyToLanePosition(sentry, map.PIX[0]![0], map.PIX[0]![1]);
     expect(sentries.map(({ x, y }) => `${x},${y}`)).toEqual(authoredPositions);
     expect(new Set(authoredPositions).size).toBe(28);
-    const laneEnemy = { sentry: false, x: 0, y: 0 };
-    syncEnemyToLanePosition(laneEnemy, 100, 0, 5);
-    expect(laneEnemy).toEqual({ sentry: false, x: 5, y: 0 });
   });
 
-  it("keeps sentries authored but disables the mandatory clear phase in tactical-defense mode", () => {
+  it("keeps sentries authored but disables the mandatory clear phase in waves-only mode", () => {
     const map = buildMap(MAP_BY_ID["woods-v2"]!);
     expect(map.def.sentries).toHaveLength(28);
     expect(raidStartingSentryEnemies(map, () => 1)).toEqual([]);

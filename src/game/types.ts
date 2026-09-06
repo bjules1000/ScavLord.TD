@@ -146,8 +146,6 @@ export interface Enemy {
   y: number;
   /** Authored map defender: fights normally but never advances along a wave lane. */
   sentry?: boolean;
-  /** Wide-lane squad movement state. Present only on maps that enable tactical lanes. */
-  tacticalRuntime?: import("./enemyTactics").EnemyTacticalRuntime;
   /** Authored lane traffic stays GROUND even under a suspended bridge. */
   surface?: SurfaceLevel;
   /** Live wire currently occupying this enemy; null when off wire. */

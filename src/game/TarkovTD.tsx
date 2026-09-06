@@ -96,14 +96,6 @@ import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
 import { raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { selectDeploymentTiles } from "./mapDeployment";
-import {
-  createEnemyTacticalRuntime,
-  isCoordinatedEnemyKind,
-  nearbyCoverOffset,
-  squadAlertTargetId,
-  tacticalLanePosition,
-  tickEnemyTactics,
-} from "./enemyTactics";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -1556,15 +1548,6 @@ export default function TarkovTD() {
         // HP is snapshotted here. Later Wave Lab HP APPLY does not rewrite live hp/maxHp.
         const hp = spawnedEnemyHp(def.hp, s.wave, mapRef.current.def.hpMult, mods.enemyHp);
 
-        const waveSpawnIndex = s.enemies.filter((enemy) => !enemy.sentry).length;
-        const coordinatedSpawnIndex = s.enemies.filter(
-          (enemy) => !enemy.sentry && isCoordinatedEnemyKind(enemy.kind),
-        ).length;
-        const tacticalRuntime = createEnemyTacticalRuntime(
-          isCoordinatedEnemyKind(ev.kind) ? coordinatedSpawnIndex : waveSpawnIndex,
-          mapRef.current.def.tacticalLaneWidth ?? 0,
-          ev.kind,
-        );
         s.enemies.push({
           id: s.nextId++,
           kind: ev.kind,
@@ -1587,7 +1570,6 @@ export default function TarkovTD() {
           counted: false,
           lastHitZoneId: null,
           behaviorRuntime: freshBehaviorRuntime(),
-          ...(tacticalRuntime ? { tacticalRuntime } : {}),
         });
       }
 
@@ -1629,20 +1611,6 @@ export default function TarkovTD() {
           }
         }
 
-        if (!tgt) {
-          const sharedTargetId = squadAlertTargetId(s.enemies, e);
-          const sharedTarget = sharedTargetId == null ? null : s.towers.find((tower) => tower.id === sharedTargetId) ?? null;
-          if (sharedTarget) {
-            const pos = towerPos(sharedTarget);
-            tgt = sharedTarget;
-            hasLos = hasLineOfSight(
-              mapNow,
-              { x: e.x, y: e.y, surface: e.surface ?? "GROUND" },
-              { x: pos.x, y: pos.y, surface: sharedTarget.surface ?? "GROUND" },
-            );
-          }
-        }
-
         if ((grenadeAffected.flashLeft ?? 0) > 0) tgt = null;
         if (tgt) {
           br.targetTowerId = tgt.id;
@@ -1656,16 +1624,8 @@ export default function TarkovTD() {
           if (br.state !== "REACTION" || br.reactionLeftMs <= 0) br.state = "ADVANCING";
         }
 
+        const moveMult = sentryMovementMultiplier(e) * ((grenadeAffected.stunLeft ?? 0) > 0 ? 0 : movementSpeedMult(behavior, br));
         const route = laneRoute(mapRef.current, e.lane);
-        const [decisionX, decisionY] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
-        if (e.tacticalRuntime) {
-          const coverOffset = tgt
-            ? nearbyCoverOffset(mapNow, route, e.seg, decisionX, decisionY, e.tacticalRuntime.laneHalfWidth)
-            : null;
-          tickEnemyTactics(e.tacticalRuntime, e.kind, br.state === "ENGAGED" || !!tgt, dt * 1000, coverOffset);
-        }
-        const behaviorMoveMult = movementSpeedMult(behavior, br);
-        const moveMult = sentryMovementMultiplier(e) * ((grenadeAffected.stunLeft ?? 0) > 0 ? 0 : behaviorMoveMult);
         const sp =
           def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? WIRE_SPEED_MULT : 1) * moveMult;
         let move = sp * dt;
@@ -1698,9 +1658,8 @@ export default function TarkovTD() {
           }
           continue;
         }
-        const [baseX, baseY] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
-        const [x, y] = tacticalLanePosition(mapNow, route, e.seg, baseX, baseY, e.tacticalRuntime, dt * 1000);
-        syncEnemyToLanePosition(e, x, y, Math.max(TILE * 0.04, (sp + TILE * 1.15) * dt));
+        const [x, y] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
+        syncEnemyToLanePosition(e, x, y);
 
         const etx = Math.floor(e.x / TILE);
         const ety = Math.floor(e.y / TILE);
