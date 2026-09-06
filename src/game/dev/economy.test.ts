@@ -93,7 +93,13 @@ describe("Economy Lab catalog", () => {
     expect(filterEconomyCatalog(catalog, "WEAPONS", "").every((e) => e.kind === "weapon")).toBe(true);
     expect(filterEconomyCatalog(catalog, "ARMOR", "").every((e) => e.kind === "armor")).toBe(true);
     expect(filterEconomyCatalog(catalog, "ATTACHMENTS", "").every((e) => e.kind === "attachment")).toBe(true);
-    expect(filterEconomyCatalog(catalog, "LOOT", "").every((e) => e.kind === "valuable" || e.kind === "meds")).toBe(true);
+    expect(filterEconomyCatalog(catalog, "THROWABLES", "").every((e) => e.kind === "throwable")).toBe(true);
+    expect(filterEconomyCatalog(catalog, "THROWABLES", "").map((e) => e.id).sort()).toEqual(
+      ITEMS.filter((e) => e.kind === "throwable").map((e) => e.id).sort(),
+    );
+    expect(filterEconomyCatalog(catalog, "MEDS", "").every((e) => e.kind === "meds")).toBe(true);
+    expect(filterEconomyCatalog(catalog, "BACKPACKS", "").every((e) => e.kind === "backpack")).toBe(true);
+    expect(filterEconomyCatalog(catalog, "VALUABLES", "").every((e) => e.kind === "valuable")).toBe(true);
     expect(filterEconomyCatalog(catalog, "ALL", "graphics").some((e) => e.id === "v_gpu")).toBe(true);
   });
 });

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { getEquippedWeight } from "../armor";
-import { ARMORS, ATTACHMENTS, ITEMS, WEAPONS, rollChoices } from "../gear";
+import { ARMORS, ATTACHMENTS, BACKPACKS, ITEMS, WEAPONS, rollChoices } from "../gear";
+import { GRENADE_DEFS } from "../grenadeDefs";
+import { grenadeDamageAt, spawnGrenade } from "../grenades";
 import { getOperatorMoveSpeed } from "../movement";
 import { equippedMagSize } from "../raidGear";
 import { weaponDef } from "../weapons";
@@ -15,6 +17,9 @@ import {
   clampLiveKit,
   effectiveArmor,
   effectiveAttachment,
+  effectiveBackpack,
+  effectiveGrenade,
+  effectiveMed,
   effectiveWeapon,
   emptyBalanceOverrides,
   filterLabCatalog,
@@ -55,7 +60,10 @@ describe("Balance Lab catalog", () => {
 
   it("canonical item catalog populates Balance Lab", () => {
     expect(catalog.some((e) => e.kind === "weapon" && e.id === "toz")).toBe(true);
-    expect(catalog.length).toBe(Object.keys(WEAPONS).length + Object.keys(ARMORS).length + Object.keys(ATTACHMENTS).length);
+    expect(catalog.length).toBe(
+      Object.keys(WEAPONS).length + Object.keys(ARMORS).length + Object.keys(ATTACHMENTS).length +
+      Object.keys(GRENADE_DEFS).length + ITEMS.filter((i) => i.kind === "meds").length + Object.keys(BACKPACKS).length,
+    );
   });
 
   it("weapons filter works", () => {
@@ -63,12 +71,18 @@ describe("Balance Lab catalog", () => {
   });
 
   it("armor filter works", () => {
-    expect(filterLabCatalog(catalog, "ARMOR", "").map((e) => e.id).sort()).toEqual(["paca", "sixb23", "slick"].sort());
+    expect(filterLabCatalog(catalog, "ARMOR", "").map((e) => e.id).sort()).toEqual(Object.keys(ARMORS).sort());
   });
 
   it("attachments filter works", () => {
     expect(filterLabCatalog(catalog, "ATTACHMENTS", "").every((e) => e.kind === "attachment")).toBe(true);
     expect(filterLabCatalog(catalog, "ATTACHMENTS", "optic").some((e) => e.id === "optic")).toBe(true);
+  });
+
+  it("grenades, meds, and backpacks have dedicated filters", () => {
+    expect(filterLabCatalog(catalog, "GRENADES", "").every((e) => e.kind === "grenade")).toBe(true);
+    expect(filterLabCatalog(catalog, "MEDS", "").every((e) => e.kind === "med")).toBe(true);
+    expect(filterLabCatalog(catalog, "BACKPACKS", "").every((e) => e.kind === "backpack")).toBe(true);
   });
 });
 
@@ -85,15 +99,32 @@ describe("Balance Lab runtime overrides", () => {
   });
 
   it("armor override changes effective armor value", () => {
-    const over = setOverrideField(emptyBalanceOverrides(), "armor", "slick", "reduction", 0.5, 0.55);
-    expect(effectiveArmor("slick", over, true)?.reduction).toBe(0.5);
-    expect(ARMORS["slick"]!.reduction).toBe(0.55);
+    const base = ARMORS["slick"]!.reductionNormal;
+    const over = setOverrideField(emptyBalanceOverrides(), "armor", "slick", "reductionNormal", 0.9, base);
+    expect(effectiveArmor("slick", over, true)?.reductionNormal).toBe(0.9);
+    expect(ARMORS["slick"]!.reductionNormal).toBe(base);
   });
 
   it("attachment override changes effective modifier", () => {
     const over = setOverrideField(emptyBalanceOverrides(), "attachment", "optic", "rangeAdd", 20, 16);
     expect(effectiveAttachment("optic", over, true)?.rangeAdd).toBe(20);
     expect(ATTACHMENTS["optic"]!.rangeAdd).toBe(16);
+  });
+
+  it("grenade overrides drive throw and damage behavior", () => {
+    let over = setOverrideField(emptyBalanceOverrides(), "grenade", "frag", "range", 40, GRENADE_DEFS.frag.range);
+    over = setOverrideField(over, "grenade", "frag", "damage", 200, GRENADE_DEFS.frag.damage);
+    applyBalanceOverrides(over, true, memStore());
+    expect(effectiveGrenade("frag")?.range).toBe(40);
+    expect(spawnGrenade(1, 2, "frag", { x: 0, y: 0 }, { x: 100, y: 0 }).targetX).toBe(40);
+    expect(grenadeDamageAt("frag", 0)).toBe(200);
+  });
+
+  it("med and backpack overrides expose their gameplay stats", () => {
+    let over = setOverrideField(emptyBalanceOverrides(), "med", "m_ifak", "heal", 75, 45);
+    over = setOverrideField(over, "backpack", "trizip", "bonus", 10, BACKPACKS.trizip.bonus);
+    expect(effectiveMed("m_ifak", over, true)?.heal).toBe(75);
+    expect(effectiveBackpack("trizip", over, true)?.bonus).toBe(10);
   });
 
   it("weight override changes equipped weight", () => {

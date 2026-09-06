@@ -442,7 +442,7 @@ describe("barricade cover vs LOS", () => {
     const paca = absorbWithArmor(incoming, "paca", ARMORS["paca"]!.durability);
     const raw = absorbWithArmor(20, "paca", ARMORS["paca"]!.durability);
     expect(paca.damage).toBeLessThan(raw.damage);
-    expect(paca.damage).toBeCloseTo(incoming * (1 - ARMORS["paca"]!.reduction));
+    expect(paca.damage).toBeCloseTo(incoming * (1 - ARMORS["paca"]!.reductionNormal));
   });
 
   it("barricades remain non-blocking for movement", () => {

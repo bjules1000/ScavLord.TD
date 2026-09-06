@@ -4,7 +4,7 @@
  */
 
 import type { OperatorOrder, OperatorPlan } from "./operatorPlans";
-import { GRENADE_DEFS, type GrenadeKind } from "./grenades";
+import { GRENADE_DEFS, grenadeDef, type GrenadeKind } from "./grenades";
 import {
   MAX_OPERATOR_ORDERS,
   activeOrderCount,
@@ -158,7 +158,7 @@ export function OrdersPanel({
                 className="pixel-btn px-1.5 py-0.5 text-[9px] disabled:opacity-40"
                 onClick={() => onAddPick(type)}
               >
-                {type === "HOLD_ANGLE" ? "HOLD ANGLE" : type in GRENADE_DEFS ? `THROW ${type.toUpperCase()}` : type}
+                {type === "HOLD_ANGLE" ? "HOLD ANGLE" : type in GRENADE_DEFS ? `THROW ${grenadeDef(type as GrenadeKind).label}` : type}
               </button>
             );
           })}

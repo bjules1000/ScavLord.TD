@@ -76,7 +76,19 @@ describe("DEV item picker catalog", () => {
 
   it("filters by category and search without a second catalog", () => {
     expect(filterDevPickerItems(defs, "WEAPONS", "").every((d) => d.kind === "weapon")).toBe(true);
-    expect(filterDevPickerItems(defs, "ARMOR", "").map((d) => d.ref)).toEqual(["paca", "sixb23", "slick"]);
+    expect(filterDevPickerItems(defs, "ARMOR", "").map((d) => d.ref)).toEqual([
+      "paper",
+      "press",
+      "paca",
+      "sixb23",
+      "sixb13",
+      "mmac",
+      "osprey",
+      "zhuk4",
+      "slick",
+      "fenix",
+      "zebralo",
+    ]);
     expect(filterDevPickerItems(defs, "ATTACHMENTS", "optic").some((d) => d.ref === "optic")).toBe(true);
     expect(
       filterDevPickerItems(defs, "LOOT", "").every(
@@ -190,8 +202,8 @@ describe("DEV-added gear uses live equipment/weight rules", () => {
     expect(armored.ok).toBe(true);
     if (!armored.ok) return;
     const kit = { weapon: swapped.weapon, attachments: swapped.attachments, armor: armored.armor ?? null };
-    expect(getEquippedWeight(kit)).toBe(4);
-    expect(getOperatorMoveSpeed(kit)).toBeCloseTo(1.68);
+    expect(getEquippedWeight(kit)).toBeCloseTo(3.5);
+    expect(getOperatorMoveSpeed(kit)).toBeCloseTo(1.72);
   });
 
   it("production gameplay reward/drop logic remains untouched", () => {

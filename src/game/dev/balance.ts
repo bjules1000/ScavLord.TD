@@ -1,6 +1,8 @@
 import {
   ARMORS,
   ATTACHMENTS,
+  BACKPACKS,
+  ITEMS,
   WEAPONS,
   type ArmorDef,
   type AttachMount,
@@ -8,7 +10,10 @@ import {
   type AttachmentDef,
   type WeaponCategory,
   type WeaponDef,
+  type BackpackDef,
+  type ItemDef,
 } from "../gear";
+import { GRENADE_DEFS, type GrenadeDef, type GrenadeKind } from "../grenadeDefs";
 import {
   canInstallAttachment,
   fittedWeaponStats,
@@ -42,7 +47,9 @@ export type WeaponOverride = Partial<
   >
 >;
 
-export type ArmorOverride = Partial<Pick<ArmorDef, "name" | "weight" | "reduction" | "durability">>;
+export type ArmorOverride = Partial<
+  Pick<ArmorDef, "name" | "weight" | "reductionNormal" | "reductionAp" | "reductionHeavy" | "durability">
+>;
 
 export type AttachmentOverride = Partial<
   Pick<
@@ -63,16 +70,23 @@ export type AttachmentOverride = Partial<
   >
 >;
 
+export type GrenadeOverride = Partial<Pick<GrenadeDef, "name" | "range" | "radius" | "fuseSeconds" | "damage" | "duration">>;
+export type MedOverride = Partial<Pick<ItemDef, "name" | "heal">>;
+export type BackpackOverride = Partial<Pick<BackpackDef, "name" | "bonus">>;
+
 export type OverrideScalar = number | string | AttachMount[] | AttachmentCompatibility;
 
 export type BalanceOverrides = {
   weapons: Record<string, WeaponOverride>;
   armors: Record<string, ArmorOverride>;
   attachments: Record<string, AttachmentOverride>;
+  grenades: Partial<Record<GrenadeKind, GrenadeOverride>>;
+  meds: Record<string, MedOverride>;
+  backpacks: Record<string, BackpackOverride>;
 };
 
-export type LabKind = "weapon" | "armor" | "attachment";
-export type LabCategory = "ALL" | "WEAPONS" | "ARMOR" | "ATTACHMENTS";
+export type LabKind = "weapon" | "armor" | "attachment" | "grenade" | "med" | "backpack";
+export type LabCategory = "ALL" | "WEAPONS" | "ARMOR" | "ATTACHMENTS" | "GRENADES" | "MEDS" | "BACKPACKS";
 
 export type LabEntry = {
   kind: LabKind;
@@ -93,7 +107,7 @@ export type StorageLike = {
 };
 
 export function emptyBalanceOverrides(): BalanceOverrides {
-  return { weapons: {}, armors: {}, attachments: {} };
+  return { weapons: {}, armors: {}, attachments: {}, grenades: {}, meds: {}, backpacks: {} };
 }
 
 function cloneOverrides(src: BalanceOverrides): BalanceOverrides {
@@ -101,6 +115,9 @@ function cloneOverrides(src: BalanceOverrides): BalanceOverrides {
     weapons: { ...Object.fromEntries(Object.entries(src.weapons).map(([k, v]) => [k, { ...v }])) },
     armors: { ...Object.fromEntries(Object.entries(src.armors).map(([k, v]) => [k, { ...v }])) },
     attachments: { ...Object.fromEntries(Object.entries(src.attachments).map(([k, v]) => [k, { ...v }])) },
+    grenades: { ...Object.fromEntries(Object.entries(src.grenades ?? {}).map(([k, v]) => [k, { ...v }])) },
+    meds: { ...Object.fromEntries(Object.entries(src.meds ?? {}).map(([k, v]) => [k, { ...v }])) },
+    backpacks: { ...Object.fromEntries(Object.entries(src.backpacks ?? {}).map(([k, v]) => [k, { ...v }])) },
   };
 }
 
@@ -117,6 +134,9 @@ export function pruneBalanceOverrides(src: BalanceOverrides): BalanceOverrides {
     weapons: pruneEmpty(src.weapons),
     armors: pruneEmpty(src.armors),
     attachments: pruneEmpty(src.attachments),
+    grenades: pruneEmpty(src.grenades ?? {}) as Partial<Record<GrenadeKind, GrenadeOverride>>,
+    meds: pruneEmpty(src.meds ?? {}),
+    backpacks: pruneEmpty(src.backpacks ?? {}),
   };
 }
 
@@ -125,6 +145,9 @@ export function balanceLabCatalog(): LabEntry[] {
     ...Object.values(WEAPONS).map((w) => ({ kind: "weapon" as const, id: w.id, name: w.name })),
     ...Object.values(ARMORS).map((a) => ({ kind: "armor" as const, id: a.id, name: a.name })),
     ...Object.values(ATTACHMENTS).map((a) => ({ kind: "attachment" as const, id: a.id, name: a.name })),
+    ...Object.values(GRENADE_DEFS).map((g) => ({ kind: "grenade" as const, id: g.kind, name: g.name })),
+    ...ITEMS.filter((i) => i.kind === "meds").map((i) => ({ kind: "med" as const, id: i.id, name: i.name })),
+    ...Object.values(BACKPACKS).map((b) => ({ kind: "backpack" as const, id: b.id, name: b.name })),
   ];
 }
 
@@ -139,6 +162,9 @@ export function filterLabCatalog(
     if (category === "WEAPONS" && e.kind !== "weapon") return false;
     if (category === "ARMOR" && e.kind !== "armor") return false;
     if (category === "ATTACHMENTS" && e.kind !== "attachment") return false;
+    if (category === "GRENADES" && e.kind !== "grenade") return false;
+    if (category === "MEDS" && e.kind !== "med") return false;
+    if (category === "BACKPACKS" && e.kind !== "backpack") return false;
     if (!q) return true;
     const display = labDisplayName(e, overrides);
     return (
@@ -177,8 +203,10 @@ export function balanceToneBorderClass(tone: BalanceTone): string {
   return "border-border";
 }
 
+const REDUCTION_FIELDS = new Set(["reduction", "reductionNormal", "reductionAp", "reductionHeavy"]);
+
 export function formatLabValue(key: string, n: number): string {
-  if (key === "reduction") return `${Math.round(n * 100)}%`;
+  if (REDUCTION_FIELDS.has(key)) return `${Math.round(n * 100)}%`;
   if (nearlyEqualNum(n, Math.round(n))) return String(Math.round(n));
   return String(Math.round(n * 1000) / 1000);
 }
@@ -195,8 +223,12 @@ export function itemOverrideRecord(
   kind: LabKind,
   id: string,
 ): Record<string, unknown> | undefined {
-  const bag =
-    kind === "weapon" ? overrides.weapons[id] : kind === "armor" ? overrides.armors[id] : overrides.attachments[id];
+  const bag = kind === "weapon" ? overrides.weapons[id]
+    : kind === "armor" ? overrides.armors[id]
+      : kind === "attachment" ? overrides.attachments[id]
+        : kind === "grenade" ? overrides.grenades[id as GrenadeKind]
+          : kind === "med" ? overrides.meds[id]
+            : overrides.backpacks[id];
   return bag as Record<string, unknown> | undefined;
 }
 
@@ -368,7 +400,9 @@ export function testFitLegal(
 export function armorLabFields(): LabField[] {
   return [
     { key: "weight", label: "Weight", step: 0.25 },
-    { key: "reduction", label: "Protection", step: 0.01 },
+    { key: "reductionNormal", label: "vs Normal", step: 0.01 },
+    { key: "reductionAp", label: "vs AP", step: 0.01 },
+    { key: "reductionHeavy", label: "vs Heavy", step: 0.01 },
     { key: "durability", label: "Durability", step: 10 },
   ];
 }
@@ -389,6 +423,25 @@ export function attachmentLabFields(def: AttachmentDef): LabField[] {
   return fields;
 }
 
+export function grenadeLabFields(def: GrenadeDef): LabField[] {
+  const fields: LabField[] = [
+    { key: "range", label: "Throw range", step: 5 },
+    { key: "radius", label: "Effect radius", step: 1 },
+    { key: "fuseSeconds", label: "Fuse seconds", step: 0.05 },
+    { key: "damage", label: "Damage", step: 1 },
+  ];
+  if (def.duration != null) fields.push({ key: "duration", label: "Effect seconds", step: 0.25 });
+  return fields;
+}
+
+export function medLabFields(): LabField[] {
+  return [{ key: "heal", label: "Healing", step: 5 }];
+}
+
+export function backpackLabFields(): LabField[] {
+  return [{ key: "bonus", label: "Bonus slots", step: 1 }];
+}
+
 export function canonicalWeapon(id: string): WeaponDef | undefined {
   return WEAPONS[id];
 }
@@ -399,6 +452,19 @@ export function canonicalArmor(id: string): ArmorDef | undefined {
 
 export function canonicalAttachment(id: string): AttachmentDef | undefined {
   return ATTACHMENTS[id];
+}
+
+export function canonicalGrenade(id: string): GrenadeDef | undefined {
+  return GRENADE_DEFS[id as GrenadeKind];
+}
+
+export function canonicalMed(id: string): ItemDef | undefined {
+  const item = ITEMS.find((candidate) => candidate.id === id);
+  return item?.kind === "meds" ? item : undefined;
+}
+
+export function canonicalBackpack(id: string): BackpackDef | undefined {
+  return BACKPACKS[id];
 }
 
 function mergeIfOver<T extends object>(base: T, over: object | undefined, enabled: boolean): T {
@@ -437,6 +503,36 @@ export function effectiveAttachment(
   return mergeIfOver(base, overrides.attachments[id], enabled);
 }
 
+export function effectiveGrenade(
+  id: GrenadeKind,
+  overrides: BalanceOverrides = getBalanceOverrides(),
+  enabled = DEV_TOOLS_ENABLED,
+): GrenadeDef | undefined {
+  const base = GRENADE_DEFS[id];
+  if (!base) return undefined;
+  return mergeIfOver(base, overrides.grenades[id], enabled);
+}
+
+export function effectiveMed(
+  id: string,
+  overrides: BalanceOverrides = getBalanceOverrides(),
+  enabled = DEV_TOOLS_ENABLED,
+): ItemDef | undefined {
+  const base = canonicalMed(id);
+  if (!base) return undefined;
+  return mergeIfOver(base, overrides.meds[id], enabled);
+}
+
+export function effectiveBackpack(
+  id: string,
+  overrides: BalanceOverrides = getBalanceOverrides(),
+  enabled = DEV_TOOLS_ENABLED,
+): BackpackDef | undefined {
+  const base = BACKPACKS[id];
+  if (!base) return undefined;
+  return mergeIfOver(base, overrides.backpacks[id], enabled);
+}
+
 export function lookupEffectiveAttachment(id: string): AttachmentDef | undefined {
   return effectiveAttachment(id);
 }
@@ -450,8 +546,12 @@ export function setOverrideField(
   canonical: OverrideScalar | undefined,
 ): BalanceOverrides {
   const next = cloneOverrides(src);
-  const bag =
-    kind === "weapon" ? next.weapons : kind === "armor" ? next.armors : next.attachments;
+  const bag = (kind === "weapon" ? next.weapons
+    : kind === "armor" ? next.armors
+      : kind === "attachment" ? next.attachments
+        : kind === "grenade" ? next.grenades
+          : kind === "med" ? next.meds
+            : next.backpacks) as Record<string, Record<string, OverrideScalar>>;
   const cur = { ...(bag[id] ?? {}) } as Record<string, OverrideScalar>;
   const normalized = typeof value === "string" ? value.trim() : value;
   const same =
@@ -462,7 +562,7 @@ export function setOverrideField(
   if (same) delete cur[key];
   else cur[key] = normalized as OverrideScalar;
   if (Object.keys(cur).length === 0) delete bag[id];
-  else (bag as Record<string, Record<string, OverrideScalar>>)[id] = cur;
+  else bag[id] = cur;
   return pruneBalanceOverrides(next);
 }
 
@@ -470,13 +570,16 @@ export function resetOverrideItem(src: BalanceOverrides, kind: LabKind, id: stri
   const next = cloneOverrides(src);
   if (kind === "weapon") delete next.weapons[id];
   else if (kind === "armor") delete next.armors[id];
-  else delete next.attachments[id];
+  else if (kind === "attachment") delete next.attachments[id];
+  else if (kind === "grenade") delete next.grenades[id as GrenadeKind];
+  else if (kind === "med") delete next.meds[id];
+  else delete next.backpacks[id];
   return next;
 }
 
 export function modifiedItemCount(overrides: BalanceOverrides): number {
   const clean = pruneBalanceOverrides(overrides);
-  return Object.keys(clean.weapons).length + Object.keys(clean.armors).length + Object.keys(clean.attachments).length;
+  return Object.keys(clean.weapons).length + Object.keys(clean.armors).length + Object.keys(clean.attachments).length + Object.keys(clean.grenades).length + Object.keys(clean.meds).length + Object.keys(clean.backpacks).length;
 }
 
 export type PatchLine = { id: string; name: string; kind: LabKind; field: string; from: OverrideScalar; to: OverrideScalar };
@@ -519,6 +622,19 @@ export function balancePatchLines(overrides: BalanceOverrides): PatchLine[] {
     const base = ATTACHMENTS[id];
     if (!base) continue;
     appendPatchLines(lines, "attachment", id, base.name, base, fields);
+  }
+  for (const [id, fields] of Object.entries(overrides.grenades)) {
+    const base = GRENADE_DEFS[id as GrenadeKind];
+    if (!base || !fields) continue;
+    appendPatchLines(lines, "grenade", id, `${base.label} GRENADE`, base, fields);
+  }
+  for (const [id, fields] of Object.entries(overrides.meds)) {
+    const base = canonicalMed(id);
+    if (base) appendPatchLines(lines, "med", id, base.name, base, fields);
+  }
+  for (const [id, fields] of Object.entries(overrides.backpacks)) {
+    const base = BACKPACKS[id];
+    if (base) appendPatchLines(lines, "backpack", id, base.name, base, fields);
   }
   return lines;
 }
@@ -573,6 +689,9 @@ export function parseStoredOverrides(raw: string | null): BalanceOverrides {
       weapons: parsed.weapons && typeof parsed.weapons === "object" ? parsed.weapons : {},
       armors: parsed.armors && typeof parsed.armors === "object" ? parsed.armors : {},
       attachments: parsed.attachments && typeof parsed.attachments === "object" ? parsed.attachments : {},
+      grenades: parsed.grenades && typeof parsed.grenades === "object" ? parsed.grenades : {},
+      meds: parsed.meds && typeof parsed.meds === "object" ? parsed.meds : {},
+      backpacks: parsed.backpacks && typeof parsed.backpacks === "object" ? parsed.backpacks : {},
     });
   } catch {
     return emptyBalanceOverrides();

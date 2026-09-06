@@ -1,4 +1,5 @@
 import type { TargetMode } from "./targeting";
+import type { AmmoTier } from "./gear";
 
 /** Two tactical surfaces. Not a 3D Z stack. */
 export type SurfaceLevel = "GROUND" | "HIGH";
@@ -116,6 +117,8 @@ export interface EnemyDef {
   body: string;
   gear: string;
   size: number;
+  /** Ammo tier this attack fires, for player-armor mitigation. Missing = NORMAL. */
+  ammoTier?: AmmoTier;
   /** Visual gun profile for draw (not player WEAPONS). */
   attackProfile?: "uzi" | "sg" | "ak";
   /** Body art profile for draw. */
@@ -183,6 +186,8 @@ export interface Bullet {
   towerId?: number;
   sx?: number;
   sy?: number;
+  /** Hostile bullets only: ammo tier for player-armor mitigation. Missing = NORMAL. */
+  ammoTier?: AmmoTier;
 }
 
 export interface Particle {

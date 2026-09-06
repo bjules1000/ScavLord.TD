@@ -1,24 +1,11 @@
-export type GrenadeKind = "frag" | "smoke" | "impact" | "flash" | "stun";
+import { effectiveGrenade } from "./dev/balance";
+import { GRENADE_DEFS, type GrenadeKind } from "./grenadeDefs";
+export { GRENADE_DEFS } from "./grenadeDefs";
+export type { GrenadeDef, GrenadeKind } from "./grenadeDefs";
 
-export type GrenadeDef = {
-  kind: GrenadeKind;
-  itemId: string;
-  label: string;
-  range: number;
-  radius: number;
-  fuseSeconds: number;
-  damage: number;
-  duration?: number;
-  color: string;
-};
-
-export const GRENADE_DEFS: Record<GrenadeKind, GrenadeDef> = {
-  frag: { kind: "frag", itemId: "g_frag", label: "FRAG", range: 220, radius: 72, fuseSeconds: 0.8, damage: 90, color: "#6f7b52" },
-  smoke: { kind: "smoke", itemId: "g_smoke", label: "SMOKE", range: 220, radius: 86, fuseSeconds: 0.8, damage: 0, duration: 8, color: "#a4a99d" },
-  impact: { kind: "impact", itemId: "g_impact", label: "IMPACT", range: 190, radius: 58, fuseSeconds: 0.35, damage: 72, color: "#7a6848" },
-  flash: { kind: "flash", itemId: "g_flash", label: "FLASH", range: 220, radius: 100, fuseSeconds: 0.7, damage: 0, duration: 3.5, color: "#d7d1b2" },
-  stun: { kind: "stun", itemId: "g_stun", label: "STUN", range: 200, radius: 78, fuseSeconds: 0.65, damage: 12, duration: 2.25, color: "#4f5960" },
-};
+export function grenadeDef(kind: GrenadeKind) {
+  return effectiveGrenade(kind) ?? GRENADE_DEFS[kind];
+}
 
 export const FRAG_ITEM_ID = GRENADE_DEFS.frag.itemId;
 export const FRAG_RANGE = GRENADE_DEFS.frag.range;
@@ -50,7 +37,7 @@ export function clampGrenadeTarget(kind: GrenadeKind, origin: { x: number; y: nu
   const dx = point.x - origin.x;
   const dy = point.y - origin.y;
   const distance = Math.hypot(dx, dy);
-  const range = GRENADE_DEFS[kind].range;
+  const range = grenadeDef(kind).range;
   if (distance <= range || distance === 0) return { x: point.x, y: point.y };
   return { x: origin.x + (dx / distance) * range, y: origin.y + (dy / distance) * range };
 }
@@ -58,7 +45,7 @@ export function clampGrenadeTarget(kind: GrenadeKind, origin: { x: number; y: nu
 export const clampFragTarget = (origin: { x: number; y: number }, point: { x: number; y: number }) => clampGrenadeTarget("frag", origin, point);
 
 export function spawnGrenade(id: number, shooterId: number, kind: GrenadeKind, origin: { x: number; y: number }, point: { x: number; y: number }): Grenade {
-  const def = GRENADE_DEFS[kind];
+  const def = grenadeDef(kind);
   const target = clampGrenadeTarget(kind, origin, point);
   return { id, shooterId, kind, x: origin.x, y: origin.y, targetX: target.x, targetY: target.y, fuse: def.fuseSeconds };
 }
@@ -66,7 +53,7 @@ export function spawnGrenade(id: number, shooterId: number, kind: GrenadeKind, o
 export const spawnFragGrenade = (id: number, shooterId: number, origin: { x: number; y: number }, point: { x: number; y: number }) => spawnGrenade(id, shooterId, "frag", origin, point);
 
 export function tickGrenade(g: Grenade, dt: number): boolean {
-  const total = GRENADE_DEFS[g.kind].fuseSeconds;
+  const total = grenadeDef(g.kind).fuseSeconds;
   g.fuse = Math.max(0, g.fuse - dt);
   const progress = 1 - g.fuse / total;
   g.x += (g.targetX - g.x) * Math.min(1, progress * 0.35 + dt * 5);
@@ -77,7 +64,7 @@ export function tickGrenade(g: Grenade, dt: number): boolean {
 export const tickFragGrenade = tickGrenade;
 
 export function grenadeDamageAt(kind: GrenadeKind, distance: number): number {
-  const def = GRENADE_DEFS[kind];
+  const def = grenadeDef(kind);
   if (distance > def.radius) return 0;
   return def.damage * (1 - (distance / def.radius) * 0.5);
 }

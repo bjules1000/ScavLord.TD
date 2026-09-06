@@ -8,6 +8,14 @@ export const RARITY_COLOR: Record<Rarity, string> = {
   epic: "#f0b400",
 };
 
+/**
+ * Incoming-fire classification for armor mitigation.
+ * AP always penetrates at least as much as NORMAL, and HEAVY at least as
+ * much as AP — every ArmorDef must keep reductionNormal >= reductionAp >=
+ * reductionHeavy (enforced in armor.test.ts).
+ */
+export type AmmoTier = "NORMAL" | "AP" | "HEAVY";
+
 export type WeaponClass = "shotgun" | "pistolCarbine" | "rifle" | "lmg" | "sniper" | "launcher";
 export type ReloadType = "MAGAZINE" | "PER_ROUND";
 
@@ -532,8 +540,12 @@ export function applyAttachmentMods(
 export interface ArmorDef {
   id: string;
   name: string;
-  /** flat fraction of incoming damage absorbed while durability lasts */
-  reduction: number;
+  /** Fraction of incoming damage absorbed against unmodified rounds, while durability lasts. */
+  reductionNormal: number;
+  /** Fraction absorbed against armor-piercing rounds. Always <= reductionNormal. */
+  reductionAp: number;
+  /** Fraction absorbed against the highest-penetration rounds. Always <= reductionAp. */
+  reductionHeavy: number;
   durability: number;
   plate: string;
   trim: string;
@@ -541,10 +553,139 @@ export interface ArmorDef {
   weight: number;
 }
 
+/**
+ * Light/medium/heavy x common/rare/epic grid, plus two trash-tier pieces below
+ * common. Progression story: bare Scav -> geared-up Scav -> Scav Boss trophy
+ * gear — never "PMC-issued." Rebalance in Balance Lab; keep
+ * reductionNormal >= reductionAp >= reductionHeavy for every entry (AP always
+ * penetrates at least as well as normal rounds, heavy at least as well as AP).
+ */
 export const ARMORS: Record<string, ArmorDef> = {
-  paca: { id: "paca", name: "SOFT VEST", reduction: 0.25, durability: 110, plate: "#4a4636", trim: "#6f6a4f", weight: 2 },
-  sixb23: { id: "sixb23", name: "RIOT PLATES", reduction: 0.35, durability: 190, plate: "#3f4a38", trim: "#6fd6ff", weight: 4 },
-  slick: { id: "slick", name: "PLATE CARRIER", reduction: 0.55, durability: 300, plate: "#26282b", trim: "#f0b400", weight: 6 },
+  // —— Trash — cheaper and shoddier than common, barely a choice ——
+  paper: {
+    id: "paper",
+    name: "PAPER VEST",
+    reductionNormal: 0.06,
+    reductionAp: 0,
+    reductionHeavy: 0,
+    durability: 30,
+    plate: "#c9c4ab",
+    trim: "#a39d82",
+    weight: 0.5,
+  },
+  press: {
+    id: "press",
+    name: "PRESS VEST",
+    reductionNormal: 0.12,
+    reductionAp: 0.02,
+    reductionHeavy: 0,
+    durability: 50,
+    plate: "#8a8570",
+    trim: "#5c5a4a",
+    weight: 0.8,
+  },
+  // —— Common — bare Scav kit ——
+  paca: {
+    id: "paca",
+    name: "SOFT VEST",
+    reductionNormal: 0.25,
+    reductionAp: 0.05,
+    reductionHeavy: 0,
+    durability: 90,
+    plate: "#4a4636",
+    trim: "#6f6a4f",
+    weight: 1.5,
+  },
+  sixb23: {
+    id: "sixb23",
+    name: "RIOT PLATES",
+    reductionNormal: 0.3,
+    reductionAp: 0.1,
+    reductionHeavy: 0,
+    durability: 130,
+    plate: "#3f4a38",
+    trim: "#8b8c7c",
+    weight: 2.8,
+  },
+  sixb13: {
+    id: "sixb13",
+    name: "6B13",
+    reductionNormal: 0.35,
+    reductionAp: 0.15,
+    reductionHeavy: 0.02,
+    durability: 170,
+    plate: "#3f3c2c",
+    trim: "#8b8c7c",
+    weight: 4.2,
+  },
+  // —— Rare — well-equipped Scav ——
+  mmac: {
+    id: "mmac",
+    name: "MMAC",
+    reductionNormal: 0.32,
+    reductionAp: 0.24,
+    reductionHeavy: 0.05,
+    durability: 150,
+    plate: "#39463f",
+    trim: "#6fd6ff",
+    weight: 2.1,
+  },
+  osprey: {
+    id: "osprey",
+    name: "OSPREY MK4",
+    reductionNormal: 0.4,
+    reductionAp: 0.3,
+    reductionHeavy: 0.08,
+    durability: 200,
+    plate: "#2f3a33",
+    trim: "#6fd6ff",
+    weight: 3.5,
+  },
+  zhuk4: {
+    id: "zhuk4",
+    name: "ZHUK-4",
+    reductionNormal: 0.46,
+    reductionAp: 0.36,
+    reductionHeavy: 0.12,
+    durability: 260,
+    plate: "#242e28",
+    trim: "#6fd6ff",
+    weight: 5.2,
+  },
+  // —— Epic — Scav Boss trophy gear ——
+  slick: {
+    id: "slick",
+    name: "PLATE CARRIER",
+    reductionNormal: 0.42,
+    reductionAp: 0.3,
+    reductionHeavy: 0.12,
+    durability: 220,
+    plate: "#26282b",
+    trim: "#f0b400",
+    weight: 1.9,
+  },
+  fenix: {
+    id: "fenix",
+    name: "FENIX",
+    reductionNormal: 0.55,
+    reductionAp: 0.48,
+    reductionHeavy: 0.22,
+    durability: 320,
+    plate: "#2a2b2f",
+    trim: "#f0b400",
+    weight: 3.6,
+  },
+  zebralo: {
+    id: "zebralo",
+    name: "ZEBRALO",
+    reductionNormal: 0.75,
+    reductionAp: 0.68,
+    reductionHeavy: 0.3,
+    durability: 450,
+    plate: "#1c1d20",
+    trim: "#f0b400",
+    weight: 7.5,
+  },
 };
 
 export interface BackpackDef {
@@ -626,9 +767,17 @@ export const ITEMS: ItemDef[] = [
   { id: "a_laser", kind: "attachment", ref: "laser", name: "TAC LASER", rarity: "rare", value: 260, desc: "+13% hit chance, +8% ROF.", price: 1000 },
   { id: "a_m995", kind: "attachment", ref: "m995", name: "AP ROUNDS", rarity: "epic", value: 420, desc: "+6 armor pen, +10% damage.", price: 1800 },
   // body armor — only your operator can wear it
-  { id: "ar_paca", kind: "armor", ref: "paca", name: "SOFT VEST", rarity: "common", value: 220, desc: "-25% incoming, 110 durability.", price: 700 },
-  { id: "ar_6b23", kind: "armor", ref: "sixb23", name: "RIOT PLATES", rarity: "rare", value: 480, desc: "-35% incoming, 190 durability.", price: 1600 },
-  { id: "ar_slick", kind: "armor", ref: "slick", name: "PLATE CARRIER", rarity: "epic", value: 820, desc: "-55% incoming, 300 durability.", price: 3800 },
+  { id: "ar_paper", kind: "armor", ref: "paper", name: "PAPER VEST", rarity: "common", value: 20, desc: "-6%/-0%/-0% (normal/AP/heavy), 30 durability. Whatever was lying around.", price: 60 },
+  { id: "ar_press", kind: "armor", ref: "press", name: "PRESS VEST", rarity: "common", value: 45, desc: "-12%/-2%/-0% (normal/AP/heavy), 50 durability. Bare Scav starter kit.", price: 150 },
+  { id: "ar_paca", kind: "armor", ref: "paca", name: "SOFT VEST", rarity: "common", value: 220, desc: "-25%/-5%/-0% (normal/AP/heavy), 90 durability. Standard Scav issue.", price: 700 },
+  { id: "ar_6b23", kind: "armor", ref: "sixb23", name: "RIOT PLATES", rarity: "common", value: 380, desc: "-30%/-10%/-0% (normal/AP/heavy), 130 durability. A working Scav's kit.", price: 1300 },
+  { id: "ar_6b13", kind: "armor", ref: "sixb13", name: "6B13", rarity: "common", value: 540, desc: "-35%/-15%/-2% (normal/AP/heavy), 170 durability. Heaviest gear a common Scav scrounges up.", price: 1900 },
+  { id: "ar_mmac", kind: "armor", ref: "mmac", name: "MMAC", rarity: "rare", value: 730, desc: "-32%/-24%/-5% (normal/AP/heavy), 150 durability. Light rig, actually holds against AP.", price: 2600 },
+  { id: "ar_osprey", kind: "armor", ref: "osprey", name: "OSPREY MK4", rarity: "rare", value: 950, desc: "-40%/-30%/-8% (normal/AP/heavy), 200 durability. A well-equipped Scav's plates.", price: 3400 },
+  { id: "ar_zhuk4", kind: "armor", ref: "zhuk4", name: "ZHUK-4", rarity: "rare", value: 1180, desc: "-46%/-36%/-12% (normal/AP/heavy), 260 durability. Heavy rig, rarely seen outside a raid squad.", price: 4200 },
+  { id: "ar_slick", kind: "armor", ref: "slick", name: "PLATE CARRIER", rarity: "epic", value: 1300, desc: "-42%/-30%/-12% (normal/AP/heavy), 220 durability. Light chassis a Scav Boss would carry as a trophy.", price: 4600 },
+  { id: "ar_fenix", kind: "armor", ref: "fenix", name: "FENIX", rarity: "epic", value: 2000, desc: "-55%/-48%/-22% (normal/AP/heavy), 320 durability. Balanced Scav Boss-tier plates.", price: 7200 },
+  { id: "ar_zebralo", kind: "armor", ref: "zebralo", name: "ZEBRALO", rarity: "epic", value: 3000, desc: "-75%/-68%/-30% (normal/AP/heavy), 450 durability. Almost unpennable. Still very slow.", price: 11000 },
   // meds
 
   { id: "g_frag", kind: "throwable", name: "FRAG GRENADE", rarity: "rare", value: 180, desc: "Thrown fragmentation grenade. 0.8s fuse, heavy area damage.", price: 650 },

@@ -265,7 +265,7 @@ export function equipArmor(
     weapon: "",
     armor: item.ref,
     armorHp: def.durability,
-    message: `${item.name} strapped on — ${Math.round(def.reduction * 100)}% incoming absorbed.`,
+    message: `${item.name} strapped on — ${Math.round(def.reductionNormal * 100)}% incoming absorbed.`,
   };
 }
 
