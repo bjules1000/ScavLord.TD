@@ -52,7 +52,8 @@ export function tileCenter(tx: number, ty: number): { x: number; y: number } {
   return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
 }
 
-export function operatorWorldPos(t: Pick<Tower, "tx" | "ty" | "move">): { x: number; y: number } {
+export function operatorWorldPos(t: Pick<Tower, "tx" | "ty" | "move" | "freeMove">): { x: number; y: number } {
+  if (t.freeMove) return { x: t.freeMove.x, y: t.freeMove.y };
   if (t.move) return { x: t.move.x, y: t.move.y };
   return tileCenter(t.tx, t.ty);
 }
