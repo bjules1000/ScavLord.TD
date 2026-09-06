@@ -324,6 +324,96 @@ export function arriveAtNode(t: Tower, node: MoveNode): void {
   t.surface = node.surface;
 }
 
+/** Held-direction input for direct (WASD) control. Diagonal input is normalized, not faster. */
+export interface DirectMoveInput {
+  up: boolean;
+  down: boolean;
+  left: boolean;
+  right: boolean;
+}
+
+export interface DirectMoveResult {
+  x: number;
+  y: number;
+  surface: SurfaceLevel;
+  tx: number;
+  ty: number;
+}
+
+/**
+ * Continuous free-roam movement for a directly-controlled operator.
+ *
+ * Axis-separated collision (resolve X, then Y, independently) against the
+ * same tile-walkability rules BFS pathing uses — moving along a wall slides
+ * rather than stopping dead, and a blocked axis never produces a tile that
+ * canTraverse would have rejected as a path step.
+ *
+ * Surface only changes when crossing into a new tile via a legal transition:
+ * same-surface first (canTraverse's open-edge rule), falling back to the
+ * other surface (canTraverse's isAuthoredSlope rule) only if the same-surface
+ * crossing is illegal — mirroring exactly how neighborsOf() offers both
+ * candidates to BFS. A crossing that is legal on neither surface is blocked,
+ * like hitting a wall.
+ */
+export function stepDirectMove(
+  x: number,
+  y: number,
+  surface: SurfaceLevel,
+  input: DirectMoveInput,
+  dt: number,
+  map: GameMap,
+  speedPx: number,
+): DirectMoveResult {
+  let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+  const len = Math.hypot(dx, dy);
+  if (len > 0) {
+    dx /= len;
+    dy /= len;
+  }
+  const step = Math.max(0, speedPx * dt);
+
+  let nx = x;
+  let ny = y;
+  let curSurface = surface;
+
+  const tryCross = (fromTx: number, fromTy: number, toTx: number, toTy: number): SurfaceLevel | null => {
+    if (fromTx === toTx && fromTy === toTy) return curSurface;
+    const from: MoveNode = { tx: fromTx, ty: fromTy, surface: curSurface };
+    const same: MoveNode = { tx: toTx, ty: toTy, surface: curSurface };
+    if (canTraverse(map, from, same)) return curSurface;
+    const otherSurface: SurfaceLevel = curSurface === "HIGH" ? "GROUND" : "HIGH";
+    const other: MoveNode = { tx: toTx, ty: toTy, surface: otherSurface };
+    if (canTraverse(map, from, other)) return otherSurface;
+    return null;
+  };
+
+  if (dx !== 0) {
+    const candidateX = x + dx * step;
+    const fromTx = Math.floor(x / TILE);
+    const fromTy = Math.floor(y / TILE);
+    const toTx = Math.floor(candidateX / TILE);
+    const landed = tryCross(fromTx, fromTy, toTx, fromTy);
+    if (landed) {
+      nx = candidateX;
+      curSurface = landed;
+    }
+  }
+  if (dy !== 0) {
+    const candidateY = y + dy * step;
+    const fromTx = Math.floor(nx / TILE);
+    const fromTy = Math.floor(y / TILE);
+    const toTy = Math.floor(candidateY / TILE);
+    const landed = tryCross(fromTx, fromTy, fromTx, toTy);
+    if (landed) {
+      ny = candidateY;
+      curSurface = landed;
+    }
+  }
+
+  return { x: nx, y: ny, surface: curSurface, tx: Math.floor(nx / TILE), ty: Math.floor(ny / TILE) };
+}
+
 export function stepOperatorMove(t: Tower, dt: number, map: GameMap, speedPx = operatorMoveSpeedPx(t)): void {
   if (!t.move || t.move.path.length === 0) {
     t.move = null;
