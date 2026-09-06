@@ -160,6 +160,7 @@ import {
 
 import {
   drawCrate,
+  drawExtractionZone,
   drawDropBag,
   drawElevatedSurfaces,
   drawEnemy,
@@ -2370,6 +2371,7 @@ export default function TarkovTD() {
       ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
 
       for (const c of s.crates) drawCrate(ctx, c.tx, c.ty, c.progress, c.opened);
+      for (const z of s.extractionZones) drawExtractionZone(ctx, z.tx, z.ty, z.progress);
       for (const o of s.obstacles)
         drawObstacle(ctx, o.tx, o.ty, o.kind, o.hp / o.maxHp, o.level, o.edge ?? "N");
 

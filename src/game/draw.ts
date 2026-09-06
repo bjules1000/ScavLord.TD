@@ -510,6 +510,35 @@ export function drawCrate(
   }
 }
 
+/** Player extraction zone. Always visible (unlike the dev-only lane port marker) with a hold-progress ring. */
+export function drawExtractionZone(ctx: CanvasRenderingContext2D, tx: number, ty: number, progress: number) {
+  const cx = tx * TILE + TILE / 2;
+  const cy = ty * TILE + TILE / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(SCALE, SCALE);
+  px(ctx, "#132b18", -16, -18, 32, 36);
+  px(ctx, "#1d5c2a", -14, -16, 28, 32);
+  px(ctx, "#4dd36a", -14, -16, 28, 4);
+  px(ctx, "#4dd36a", -14, 12, 28, 4);
+  px(ctx, "#0d1a10", -6, -6, 12, 12);
+  px(ctx, "#4dd36a", -4, -4, 8, 8);
+  ctx.restore();
+  ctx.save();
+  ctx.font = "8px monospace";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#000";
+  ctx.fillText("EXTRACT", cx + 1, cy - TILE / 2 - 5);
+  ctx.fillStyle = "#4dd36a";
+  ctx.fillText("EXTRACT", cx, cy - TILE / 2 - 6);
+  ctx.restore();
+  if (progress > 0) {
+    const w = TILE - 6;
+    px(ctx, "#14150f", cx - w / 2, cy - TILE / 2 - 20, w, 5);
+    px(ctx, "#4dd36a", cx - w / 2 + 1, cy - TILE / 2 - 19, (w - 2) * Math.min(1, progress), 3);
+  }
+}
+
 export function drawDropBag(ctx: CanvasRenderingContext2D, tx: number, ty: number, time: number) {
   const bob = Math.sin(time / 320 + tx) > 0 ? 0 : 1;
   scaled(ctx, tx * TILE, ty * TILE, () => {
