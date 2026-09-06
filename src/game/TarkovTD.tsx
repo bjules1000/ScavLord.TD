@@ -243,7 +243,7 @@ import {
   enemyBroadphaseRadius,
   enemyWorldBounds,
   resolveEnemyHitZones,
-  resolveHitZoneAtPoint,
+  resolveHitZoneAlongSegment,
 } from "./enemyHitZones";
 import {
   applyDamageReaction,
@@ -1955,13 +1955,13 @@ export default function TarkovTD() {
           const def = effectiveEnemy((e as unknown as { kind: EnemyKind }).kind);
           return enemyBroadphaseRadius(def.size, SCALE);
         };
-        const hitZoneOf = (e: ProjectileTickEnemy, hitX: number, hitY: number) => {
+        const hitZoneOf = (e: ProjectileTickEnemy, ax: number, ay: number, bx: number, by: number) => {
           const def = effectiveEnemy((e as unknown as { kind: EnemyKind }).kind);
           const zones = resolveEnemyHitZones(def.hitZones);
           const bounds = enemyWorldBounds(e.x, e.y, def.size, SCALE);
-          const hit = resolveHitZoneAtPoint(zones, bounds, hitX, hitY);
+          const hit = resolveHitZoneAlongSegment(zones, bounds, ax, ay, bx, by);
           if (!hit) return null;
-          return { damageMult: hit.damageMult, zoneId: hit.zone.id };
+          return { damageMult: hit.damageMult, zoneId: hit.zone.id, x: hit.x, y: hit.y };
         };
         const liveProjectiles: Projectile[] = [];
         for (const p of s.projectiles) {
