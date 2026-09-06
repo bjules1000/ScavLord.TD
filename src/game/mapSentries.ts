@@ -3,6 +3,7 @@ import { freshBehaviorRuntime } from "./enemyBehavior";
 import { effectiveEnemy } from "./dev/waveLabCore";
 import type { GameMap } from "./map";
 import type { Enemy } from "./types";
+import { operatorPlacementSurface } from "./surfaces";
 import { spawnedEnemyHp } from "./waves";
 
 export function authoredSentryEnemies(
@@ -17,7 +18,8 @@ export function authoredSentryEnemies(
       id: nextId(), kind: sentry.kind, hp, maxHp: hp,
       lane: 0, seg: 0, t: 0,
       x: sentry.tx * TILE + TILE / 2, y: sentry.ty * TILE + TILE / 2,
-      sentry: true, surface: "GROUND", contactingWireId: null, slow: 0, hitFlash: 0,
+      sentry: true, surface: operatorPlacementSurface(map, sentry.tx, sentry.ty) ?? "GROUND",
+      contactingWireId: null, slow: 0, hitFlash: 0,
       step: 0, fireCd: 750, aim: sentry.facing ?? Math.PI, muzzle: 0,
       leaked: false, counted: false, lastHitZoneId: null, behaviorRuntime: freshBehaviorRuntime(),
     };

@@ -63,6 +63,8 @@ export interface MapDef {
   /** short callsign shown on the region map */
   sector: string;
   path: Array<[number, number]>;
+  /** Authored road tiles outside lane routes. */
+  road?: Array<[number, number]>;
   /** Extra/all authored lanes. When set, MAIN is also listed here and `path` matches MAIN. */
   lanes?: Array<{ id: string; path: Array<[number, number]> }>;
   /** Water tiles. Not road, not buildable. */
@@ -424,6 +426,9 @@ export function buildMap(def: MapDef): GameMap {
   const primary = lanes[0] ?? { id: "MAIN", ...geometryFromPath(def.path) };
   const BLOCKED: boolean[][] = Array.from({ length: height }, () => Array(width).fill(false));
   for (const lane of lanes) stampRoad(BLOCKED, lane.PIX, width, height);
+  for (const [x, y] of def.road ?? []) {
+    if (x >= 0 && y >= 0 && x < width && y < height) BLOCKED[y]![x] = true;
+  }
   const WATER: boolean[][] = Array.from({ length: height }, () => Array(width).fill(false));
   for (const [x, y] of def.water ?? []) {
     if (x >= 0 && y >= 0 && x < width && y < height) WATER[y]![x] = true;

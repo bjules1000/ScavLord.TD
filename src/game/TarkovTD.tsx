@@ -95,6 +95,7 @@ import {
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
 import { authoredSentryEnemies, sentryMovementMultiplier } from "./mapSentries";
+import { selectDeploymentTiles } from "./mapDeployment";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -625,24 +626,12 @@ function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
 }
 
 function findDeployTiles(map: GameMap, s: GameState, count: number) {
-  const primary = pmcSpawnTile(map, s);
-  const tiles = [primary];
-  const steps = [
-    { dx: 1, dy: 0 },
-    { dx: -1, dy: 0 },
-    { dx: 0, dy: 1 },
-    { dx: 0, dy: -1 },
-    { dx: 1, dy: 1 },
-    { dx: -1, dy: 1 },
-  ];
-  for (const d of steps) {
-    if (tiles.length >= count) break;
-    const tx = primary.tx + d.dx;
-    const ty = primary.ty + d.dy;
-    if (operatorPlaceableFor(map, s, tx, ty)) tiles.push({ tx, ty, score: 0 });
-  }
-  while (tiles.length < count) tiles.push(primary);
-  return tiles;
+  return selectDeploymentTiles(
+    map,
+    count,
+    (tx, ty) => operatorPlaceableFor(map, s, tx, ty),
+    () => pmcSpawnTile(map, s),
+  );
 }
 
 function spawnPersistentOperatorTower(
@@ -862,7 +851,9 @@ export default function TarkovTD() {
       mapRef.current,
       Math.round(START_ROUBLES * debuffs.startRoubles) + skillMods(m.skills).startRoubles,
     );
-    const spot = pmcSpawnTile(mapRef.current, s);
+    const crewDeploy = aliveOperators(m).filter((o) => deployOperatorIds.includes(o.id));
+    const tiles = findDeployTiles(mapRef.current, s, crewDeploy.length + 1);
+    const spot = tiles[0] ?? pmcSpawnTile(mapRef.current, s);
     const hp = pmcMaxHp(m.pmc.level, debuffs);
     const armorDef = effectiveArmor(m.pmc.armor);
     s.towers.push({
@@ -889,8 +880,6 @@ export default function TarkovTD() {
         : null,
       ...weaponRuntimeFields(m.pmc.weapon),
     });
-    const crewDeploy = aliveOperators(m).filter((o) => deployOperatorIds.includes(o.id));
-    const tiles = findDeployTiles(mapRef.current, s, crewDeploy.length + 1);
     crewDeploy.forEach((op, i) => {
       spawnPersistentOperatorTower(s, mapRef.current, op, tiles[i + 1] ?? tiles[0]!, debuffs.pmcHp);
     });

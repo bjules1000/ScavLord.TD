@@ -10,7 +10,7 @@
  *
  * Browser never writes repo files. Export is the handoff boundary.
  *
- * Main MapDef stores `path` (MAIN), optional extra `lanes`, optional `water`,
+ * Main MapDef stores `path` (MAIN), optional extra `lanes`, authored `road`, optional `water`,
  * `mountain`, `highGround`, `collisionWalls`, `bridges`, `zones`,
  * plus props/cover/crates/checkpoints.
  * Combat gates and visual edge objects remain editor-native / future-compatible.
@@ -60,6 +60,9 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
   }
   for (const lane of mapLaneDefs(def)) {
     for (const [x, y] of onMapCells(pathCells(lane.path), width, height)) terrain[y]![x] = "ROAD";
+  }
+  for (const [x, y] of def.road ?? []) {
+    if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "ROAD";
   }
   for (const [x, y] of def.water ?? []) {
     if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "WATER";
@@ -134,9 +137,6 @@ export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
   for (const row of doc.terrain) for (const cell of row) kinds.add(cell);
   if (kinds.has("WATER")) {
     notes.push({ code: "WATER", message: "Water tiles exist; production MapDef.water must keep them." });
-  }
-  if (doc.zones.length) {
-    notes.push({ code: "ZONES", message: "Special zones exist; raid gameplay does not consume them yet." });
   }
   if (doc.gates.length) {
     notes.push({
@@ -216,6 +216,12 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
   if (mountain) def.mountain = mountain;
   const highGround = tilesOf(doc, "HIGH_GROUND");
   if (highGround) def.highGround = highGround;
+  const laneRoad = new Set(
+    doc.lanes.flatMap((entry) => onMapCells(pathCells(productionPathFromLane(entry)), doc.width, doc.height))
+      .map(([x, y]) => `${x},${y}`),
+  );
+  const road = tilesOf(doc, "ROAD")?.filter(([x, y]) => !laneRoad.has(`${x},${y}`));
+  if (road?.length) def.road = road;
   if (doc.collisionWalls.length) {
     def.collisionWalls = [...doc.collisionWalls]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.edge.localeCompare(b.edge))
