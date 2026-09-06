@@ -37,6 +37,7 @@ import {
   operatorWorldPos,
   getOperatorMoveSpeed,
   resolveMoveDestination,
+  stepDirectMove,
   stepOperatorMove,
 } from "./movement";
 import {
@@ -743,6 +744,10 @@ export default function TarkovTD() {
   const planBookRef = useRef<OperatorPlanBook>(new Map());
   const battleTimeRef = useRef<BattleTimeState>(createBattleTimeState());
   const pauseReloadSessionRef = useRef<PauseReloadSession>(createPauseReloadSession());
+  /** Direct (WASD/mouse) control for the selected operator — held movement keys, live cursor world position, trigger state. */
+  const directHeldKeysRef = useRef<Set<string>>(new Set());
+  const directMouseWorldRef = useRef<{ x: number; y: number } | null>(null);
+  const directTriggerHeldRef = useRef(false);
   const [battleTimeMode, setBattleTimeModeUi] = useState<BattleTimeMode>("NORMAL");
   const syncBattleTimeUi = useCallback(() => {
     setBattleTimeModeUi(battleTimeRef.current.mode);
@@ -1871,11 +1876,34 @@ export default function TarkovTD() {
         }
       }
 
-      // towers move, then fire (moving operators cannot shoot)
+      // towers move, then fire (moving operators cannot shoot — except the
+      // directly-controlled one, which is a live strafe-and-shoot unit)
       for (const t of s.towers) {
-        const wasMoving = isOperatorMoving(t);
-        if (wasMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
-        {
+        const isDirect = t.id === s.selectedId && directControlActive();
+        if (isDirect) {
+          if (!t.freeMove) {
+            const startPos = operatorWorldPos(t);
+            t.freeMove = { x: startPos.x, y: startPos.y };
+            t.move = null; // direct control overrides any queued path order
+          }
+          const keys = directHeldKeysRef.current;
+          const result = stepDirectMove(
+            t.freeMove.x,
+            t.freeMove.y,
+            t.surface ?? "GROUND",
+            { up: keys.has("w"), down: keys.has("s"), left: keys.has("a"), right: keys.has("d") },
+            dt,
+            mapRef.current,
+            towerMoveSpeedPx(t, metaRef.current),
+          );
+          t.freeMove = { x: result.x, y: result.y };
+          t.tx = result.tx;
+          t.ty = result.ty;
+          t.surface = result.surface;
+        } else {
+          if (t.freeMove) t.freeMove = null; // direct control just ended — settle onto the tile grid
+          const wasMoving = isOperatorMoving(t);
+          if (wasMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
           const plan = planBookRef.current.get(t.id);
           if (plan) {
             const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers, throwGrenade }, wasMoving);
@@ -1909,15 +1937,18 @@ export default function TarkovTD() {
             y: e.y,
             surface: e.surface ?? "GROUND",
           });
-        const holding = isHoldAimActive(t);
+        // Direct control fully suppresses the AI: no auto-target, no HOLD sector,
+        // no AUTO/MANUAL recenter — the player is personally aiming this operator.
+        const holding = !isDirect && isHoldAimActive(t);
         // While HOLD ANGLE is active, AUTO modes must not acquire a recenter target.
         const locked =
-          !holding && t.targetMode === "MANUAL"
+          !isDirect && !holding && t.targetMode === "MANUAL"
             ? pickManualTarget(t.manualTargetId, origin, st.range, live)
             : null;
-        const best = holding
-          ? null
-          : selectTarget(t.targetMode, origin, st.range, live, t.manualTargetId, visible);
+        const best =
+          isDirect || holding
+            ? null
+            : selectTarget(t.targetMode, origin, st.range, live, t.manualTargetId, visible);
 
         // HOLD_ANGLE: check if any enemy is in the held sector (fire eligibility only)
         let holdAngleCanFire = false;
@@ -1933,8 +1964,11 @@ export default function TarkovTD() {
           }
         }
 
-        const hasTarget = !!best || holdAngleCanFire;
-        if (!moving && t.targetMode === "MANUAL" && t.manualTargetId != null && !locked) {
+        // Under direct control, "has a target" for reload-pacing purposes means
+        // "actively pulling the trigger" — matches the existing PER_ROUND rule
+        // (a valid target interrupts idle top-off loading) with a live analog.
+        const hasTarget = isDirect ? directTriggerHeldRef.current : !!best || holdAngleCanFire;
+        if (!isDirect && !moving && t.targetMode === "MANUAL" && t.manualTargetId != null && !locked) {
           t.manualTargetId = null;
         }
         const prevReloadLeft = t.reloadLeft;
@@ -1961,14 +1995,16 @@ export default function TarkovTD() {
             if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
           }
         }
-        t.engageTargetId = holding
+        t.engageTargetId = isDirect || holding
           ? null
           : t.targetMode === "MANUAL"
             ? (locked?.id ?? null)
             : (best?.id ?? null);
 
-        // Update aim direction — HOLD locks authored angle; never recenter onto AUTO/MANUAL target.
+        // Update aim direction — direct control always wins; HOLD locks authored
+        // angle otherwise; never recenter onto AUTO/MANUAL target while holding.
         t.angle = resolveOperatorAimAngle({
+          directAim: isDirect ? directMouseWorldRef.current : null,
           holding,
           holdAngle: t.holdAngle,
           targetMode: t.targetMode,
@@ -1979,11 +2015,14 @@ export default function TarkovTD() {
           currentAngle: t.angle,
         });
 
-        const canFire =
-          (holding ? holdAngleCanFire : !!best || !!locked) &&
-          t.cd <= 0 &&
-          canShoot(t.ammo, t.reloadLeft) &&
-          operatorCanFire(t);
+        const canFire = isDirect
+          // No !isOperatorMoving check here (strafe-and-shoot is the point) —
+          // but a healing operator still can't fire, same rule as everyone else.
+          ? directTriggerHeldRef.current && !t.healing && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft)
+          : (holding ? holdAngleCanFire : !!best || !!locked) &&
+            t.cd <= 0 &&
+            canShoot(t.ammo, t.reloadLeft) &&
+            operatorCanFire(t);
         if (canFire) {
             t.cd = st.cooldown;
             t.flash = 0.06;
@@ -2740,6 +2779,15 @@ export default function TarkovTD() {
     return [Math.floor(w.x / TILE), Math.floor(w.y / TILE)] as const;
   };
 
+  /**
+   * WASD/mouse direct control is live for the selected operator whenever the
+   * game isn't paused. Pause is the mode switch back to click-based orders —
+   * see the click-handler fallback below and the tick loop's move/aim/fire
+   * branch for the other two thirds of this rule.
+   */
+  const directControlActive = () =>
+    gs.current.selectedId != null && battleTimeRef.current.mode !== "PAUSED";
+
   const recruitCost = () => Math.round(RECRUIT_BASE * Math.pow(1.4, gs.current.towers.length));
 
   const applyOperatorMoveToTile = (sel: Tower, tx: number, ty: number) => {
@@ -3094,12 +3142,18 @@ export default function TarkovTD() {
     }
 
     const sel = s.towers.find((t) => t.id === s.selectedId);
-    // LEFT-CLICK always means MOVE when an operator is selected (no MOVE mode required).
-    if (sel && !s.place) {
+    // Paused: LEFT-CLICK always means MOVE when an operator is selected (no MOVE mode
+    // required) — this is the escape hatch back to considered, click-based orders.
+    if (sel && !s.place && battleTimeRef.current.mode === "PAUSED") {
       applyOperatorMoveToTile(sel, tx, ty);
       rerender();
       return;
     }
+    // Unpaused with an operator selected: click is the direct-control trigger
+    // (onMouseDown/onMouseUp), not a move order — and firing a shot must not
+    // also deselect/move the operator, so this is a no-op rather than falling
+    // through to the deselect-everything branch below.
+    if (sel && !s.place) return;
 
     s.selectedObstacle = null;
 
@@ -3200,6 +3254,37 @@ export default function TarkovTD() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [actionWheel, closeOrdersUi, rerender, setOrdersMode, startWave, syncBattleTimeUi]);
+
+  /** WASD held-state for direct operator control. Separate from onKey above — this is continuous "is it held", not a discrete action-on-press. */
+  useEffect(() => {
+    const WASD = new Set(["w", "a", "s", "d"]);
+    const onKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (WASD.has(key)) directHeldKeysRef.current.add(key);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (WASD.has(key)) directHeldKeysRef.current.delete(key);
+    };
+    const onBlur = () => {
+      directHeldKeysRef.current.clear();
+      directTriggerHeldRef.current = false;
+    };
+    // Safety net: release the trigger even if mouseup lands outside the canvas.
+    const onWindowMouseUp = () => {
+      directTriggerHeldRef.current = false;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("mouseup", onWindowMouseUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("mouseup", onWindowMouseUp);
+    };
+  }, []);
 
   const s = gs.current;
   const selected = s.towers.find((t) => t.id === s.selectedId) ?? null;
@@ -3463,10 +3548,19 @@ export default function TarkovTD() {
                     gs.current.hoverTy = ty;
                     gs.current.hoverEdge =
                       gs.current.place === "barricade" ? edgeFromCursor(world.x, world.y, tx, ty, TILE) : null;
+                    directMouseWorldRef.current = world;
                   }}
                   onMouseLeave={() => {
                     gs.current.hoverTx = -1;
                     gs.current.hoverEdge = null;
+                  }}
+                  onMouseDown={(ev) => {
+                    if (ev.button !== 0) return;
+                    if (directControlActive()) directTriggerHeldRef.current = true;
+                  }}
+                  onMouseUp={(ev) => {
+                    if (ev.button !== 0) return;
+                    directTriggerHeldRef.current = false;
                   }}
                   onClick={onClick}
                   onContextMenu={(ev) => {
@@ -3539,7 +3633,7 @@ export default function TarkovTD() {
                   }}
                   onDragOver={(ev) => ev.preventDefault()}
                   onDrop={canvasDrop}
-                  className="block w-full cursor-crosshair"
+                  className={`block w-full ${directControlActive() ? "cursor-crosshair" : "cursor-default"}`}
                   style={{ imageRendering: "pixelated", aspectRatio: `${W} / ${H}` }}
                 />
               )}
