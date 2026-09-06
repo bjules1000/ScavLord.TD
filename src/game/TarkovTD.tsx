@@ -17,7 +17,7 @@ import {
   type GameMap,
 } from "./map";
 import { lanePathProgress } from "./lanes";
-import { scheduleWave, spawnedEnemyHp, type WaveSpawnEvent } from "./waves";
+import { randomPrepDelayMs, scheduleWave, spawnedEnemyHp, type WaveSpawnEvent } from "./waves";
 import {
   canPlaceOperator,
   enemyLaneSurface,
@@ -425,6 +425,8 @@ interface GameState {
   lives: number;
   wave: number;
   phase: Phase;
+  /** Ms until the next wave auto-starts. Null = not counting (e.g. loot pick pending). */
+  prepTimer: number | null;
   hoverTx: number;
   hoverTy: number;
   hoverEdge: BarricadeEdge | null;
@@ -462,6 +464,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     lives: START_LIVES,
     wave: 0,
     phase,
+    prepTimer: null,
     hoverTx: -1,
     hoverTy: -1,
     hoverEdge: null,
@@ -1558,6 +1561,10 @@ export default function TarkovTD() {
       if (s.phase === "dead" || s.phase === "loot" || s.phase === "extracted") {
         s.particles = s.particles.filter((p) => (p.life -= dt) > 0);
         return;
+      }
+      if (s.phase === "prep" && s.prepTimer != null) {
+        s.prepTimer -= dt * 1000;
+        if (s.prepTimer <= 0) startWave();
       }
       s.clock += dt * 1000;
       s.shake = Math.max(0, s.shake - dt * 30);
@@ -3015,6 +3022,9 @@ export default function TarkovTD() {
   const startWave = useCallback(() => {
     const s = gs.current;
     if (s.phase !== "prep") return;
+    // Cleared unconditionally (even on an early return below) so an auto-fired
+    // trigger with no towers deployed logs once instead of retrying every frame.
+    s.prepTimer = null;
     if (!s.towers.length) return pushLog("Hire at least one operator first.");
     s.wave += 1;
     const wave = effectiveWave(mapRef.current.def, s.wave);
@@ -3164,6 +3174,7 @@ export default function TarkovTD() {
     setSwapUid(null);
     setChoices([]);
     gs.current.phase = "prep";
+    gs.current.prepTimer = randomPrepDelayMs();
     pushLog(`Secured ${item.name}.`);
     rerender();
   };
@@ -3181,6 +3192,7 @@ export default function TarkovTD() {
     setSwapUid(null);
     setChoices([]);
     gs.current.phase = "prep";
+    gs.current.prepTimer = randomPrepDelayMs();
     rerender();
   };
 
@@ -4311,6 +4323,11 @@ export default function TarkovTD() {
                       ? "Choose your find."
                       : "Raid over."}
               </p>
+              {s.phase === "prep" && s.prepTimer != null && (
+                <p className="mt-1 font-mono text-[11px] text-primary" data-testid="prep-timer">
+                  Auto-starts in {(s.prepTimer / 1000).toFixed(1)}s
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap gap-1">
                 <button
                   type="button"
@@ -4319,7 +4336,7 @@ export default function TarkovTD() {
                   disabled={s.phase !== "prep"}
                   className="pixel-btn pixel-btn-primary px-2 py-1 text-[10px] disabled:opacity-40"
                 >
-                  START
+                  {s.phase === "prep" && s.prepTimer != null ? "START NOW" : "START"}
                 </button>
                 <button
                   type="button"

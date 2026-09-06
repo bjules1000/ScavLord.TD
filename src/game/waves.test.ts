@@ -3,8 +3,11 @@ import { ENEMIES, buildWave, waveScale } from "./data";
 import { MAP_BY_ID } from "./map";
 import { assignSpawnLane } from "./lanes";
 import {
+  PREP_TIMER_MAX_MS,
+  PREP_TIMER_MIN_MS,
   WAVE_START_DELAY_MS,
   compositionShares,
+  randomPrepDelayMs,
   scheduleWave,
   spawnDurationMs,
   spawnedEnemyHp,
@@ -51,5 +54,21 @@ describe("wave spawn schedule", () => {
     const factory = buildWave(1, MAP_BY_ID["factory"]!.waveMods);
     expect(woods.groups.length).toBeGreaterThan(0);
     expect(totalEnemyCount(woods.groups)).toBeLessThan(totalEnemyCount(factory.groups));
+  });
+});
+
+describe("prep timer", () => {
+  it("stays within [PREP_TIMER_MIN_MS, PREP_TIMER_MAX_MS] for the full rng range", () => {
+    expect(randomPrepDelayMs(() => 0)).toBe(PREP_TIMER_MIN_MS);
+    expect(randomPrepDelayMs(() => 1)).toBe(PREP_TIMER_MAX_MS);
+    expect(randomPrepDelayMs(() => 0.5)).toBeCloseTo((PREP_TIMER_MIN_MS + PREP_TIMER_MAX_MS) / 2);
+  });
+
+  it("defaults to Math.random when no rng is given", () => {
+    for (let i = 0; i < 50; i++) {
+      const ms = randomPrepDelayMs();
+      expect(ms).toBeGreaterThanOrEqual(PREP_TIMER_MIN_MS);
+      expect(ms).toBeLessThanOrEqual(PREP_TIMER_MAX_MS);
+    }
   });
 });
