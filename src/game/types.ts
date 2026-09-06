@@ -88,6 +88,8 @@ export interface Tower {
   holdAnglePoint?: { x: number; y: number } | null;
   /** Improvised Bench visual/build state carried into raid. */
   scavMods?: import("./weaponVisuals").WeaponVisualState | null;
+  /** In-progress heal-over-time channel. Null/absent = not healing. */
+  healing?: import("./healing").HealingState | null;
 }
 
 export type BuiltinEnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";

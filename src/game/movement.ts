@@ -61,8 +61,8 @@ export function isOperatorMoving(t: Pick<Tower, "move">): boolean {
   return !!t.move && t.move.path.length > 0;
 }
 
-export function operatorCanFire(t: Pick<Tower, "move">): boolean {
-  return !isOperatorMoving(t);
+export function operatorCanFire(t: Pick<Tower, "move" | "healing">): boolean {
+  return !isOperatorMoving(t) && !t.healing;
 }
 
 export function operatorSpeedMultiplier(weight: number): number {

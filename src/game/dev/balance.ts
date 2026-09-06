@@ -71,7 +71,7 @@ export type AttachmentOverride = Partial<
 >;
 
 export type GrenadeOverride = Partial<Pick<GrenadeDef, "name" | "range" | "radius" | "fuseSeconds" | "damage" | "duration">>;
-export type MedOverride = Partial<Pick<ItemDef, "name" | "heal">>;
+export type MedOverride = Partial<Pick<ItemDef, "name" | "heal" | "healRate">>;
 export type BackpackOverride = Partial<Pick<BackpackDef, "name" | "bonus">>;
 
 export type OverrideScalar = number | string | AttachMount[] | AttachmentCompatibility;
@@ -435,7 +435,10 @@ export function grenadeLabFields(def: GrenadeDef): LabField[] {
 }
 
 export function medLabFields(): LabField[] {
-  return [{ key: "heal", label: "Healing", step: 5 }];
+  return [
+    { key: "heal", label: "Healing", step: 5 },
+    { key: "healRate", label: "Heal rate (HP/s)", step: 1 },
+  ];
 }
 
 export function backpackLabFields(): LabField[] {

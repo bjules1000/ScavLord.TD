@@ -97,6 +97,7 @@ import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, 
 import { raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { selectDeploymentTiles } from "./mapDeployment";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
+import { healingProgress, healingSecondsRemaining, startHealing, tickHealing } from "./healing";
 import {
   BARRICADE_BUILD_COST,
   BARRICADE_HP,
@@ -614,6 +615,9 @@ function pmcSpawnTile(map: GameMap, s: GameState) {
   return best ?? { tx: 1, ty: 1 };
 }
 
+/** Move speed while treating a wound — a crawl, not a full stop. */
+const HEAL_MOVE_MULT = 0.1;
+
 function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
   const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
   const scav = scavVisualMods(t.weapon, t.scavMods);
@@ -622,7 +626,8 @@ function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
     const op = findOperator(meta, t.operatorId);
     if (op) weight = operatorEffectiveWeight(kit, resolveCombatMods(op)) + scav.weightAdd;
   }
-  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * TILE;
+  const healMult = t.healing ? HEAL_MOVE_MULT : 1;
+  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * healMult * TILE;
 }
 
 function findDeployTiles(map: GameMap, s: GameState, count: number) {
@@ -1366,6 +1371,7 @@ export default function TarkovTD() {
       const item = s.backpack.find((i) => i.uid === uid);
       const tower = s.towers.find((t) => t.id === towerId);
       if (!item || !tower) return;
+      if (tower.healing) return pushLog("Operator is treating a wound — can't swap gear yet.");
       if (item.kind === "weapon" && item.ref) {
         const result = swapRaidWeapon(item, tower.weapon, tower.attachments, s.backpack, tower.ammo);
         if (!result.ok) return pushLog(result.reason);
@@ -1397,10 +1403,12 @@ export default function TarkovTD() {
         s.backpack = result.backpack;
         pushLog(result.message);
       } else if (item.kind === "meds") {
-        if (tower.hp >= tower.maxHp) return pushLog("Operator is at full health.");
-        tower.hp = Math.min(tower.maxHp, tower.hp + (effectiveMed(item.id)?.heal ?? item.heal ?? 50));
+        const med = effectiveMed(item.id) ?? item;
+        const healing = startHealing(med, tower.maxHp, tower.hp);
+        if (!healing) return pushLog("Operator is at full health.");
+        tower.healing = healing;
         s.backpack = s.backpack.filter((i) => i.uid !== uid);
-        pushLog(`${item.name} used.`);
+        pushLog(`${item.name} applied — treating for ${Math.ceil(healing.totalHeal / healing.rate)}s.`);
       } else {
         return pushLog("Valuables can only be extracted.");
       }
@@ -1408,6 +1416,19 @@ export default function TarkovTD() {
       rerender();
     },
     [addToBackpack, pushLog, rerender],
+  );
+
+  /** Stop an in-progress heal early. Whatever HP already ticked in stays — no rollback. */
+  const cancelHealing = useCallback(
+    (towerId: number) => {
+      const s = gs.current;
+      const tower = s.towers.find((t) => t.id === towerId);
+      if (!tower?.healing) return;
+      tower.healing = null;
+      pushLog("Treatment stopped early.");
+      rerender();
+    },
+    [pushLog, rerender],
   );
 
   const detachFromTower = useCallback(
@@ -1786,6 +1807,11 @@ export default function TarkovTD() {
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
         t.hurt = Math.max(0, t.hurt - dt);
+        if (t.healing) {
+          const healed = tickHealing(t.healing, dt * 1000);
+          t.hp = Math.min(t.maxHp, t.hp + healed.healedThisTick);
+          t.healing = healed.state;
+        }
         const pos = towerPos(t);
         const cx = pos.x;
         const cy = pos.y;
@@ -4359,6 +4385,28 @@ export default function TarkovTD() {
                             {Math.round((effectiveArmor(selected.armor)?.reductionNormal ?? 0) * 100)}% ·{" "}
                             {Math.round(selected.armorHp ?? 0)}/
                             {effectiveArmor(selected.armor)?.durability ?? 0}
+                          </div>
+                        ) : null}
+                        {selected.healing ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-primary">
+                              <span>
+                                TREATING · {Math.ceil(healingSecondsRemaining(selected.healing))}s · CAN'T FIRE
+                              </span>
+                              <button
+                                type="button"
+                                className="pixel-btn px-1 py-0 text-[9px] text-muted-foreground"
+                                onClick={() => cancelHealing(selected.id)}
+                              >
+                                CANCEL
+                              </button>
+                            </div>
+                            <div className="h-1 border border-border bg-transparent">
+                              <div
+                                className="h-full bg-primary"
+                                style={{ width: `${Math.round(healingProgress(selected.healing) * 100)}%` }}
+                              />
+                            </div>
                           </div>
                         ) : null}
                         {sum ? <div className="text-[9px] text-primary">{sum}</div> : null}
