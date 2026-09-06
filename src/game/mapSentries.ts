@@ -29,3 +29,14 @@ export function authoredSentryEnemies(
 export function sentryMovementMultiplier(enemy: Pick<Enemy, "sentry">): 0 | 1 {
   return enemy.sentry ? 0 : 1;
 }
+
+/** Lane enemies derive their world position from route progress; authored sentries never do. */
+export function syncEnemyToLanePosition(
+  enemy: Pick<Enemy, "sentry" | "x" | "y">,
+  x: number,
+  y: number,
+): void {
+  if (enemy.sentry) return;
+  enemy.x = x;
+  enemy.y = y;
+}

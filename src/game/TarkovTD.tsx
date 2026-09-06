@@ -94,7 +94,7 @@ import {
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
-import { authoredSentryEnemies, sentryMovementMultiplier } from "./mapSentries";
+import { authoredSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { selectDeploymentTiles } from "./mapDeployment";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
@@ -1659,8 +1659,7 @@ export default function TarkovTD() {
           continue;
         }
         const [x, y] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
-        e.x = x;
-        e.y = y;
+        syncEnemyToLanePosition(e, x, y);
 
         const etx = Math.floor(e.x / TILE);
         const ety = Math.floor(e.y / TILE);
@@ -1728,7 +1727,7 @@ export default function TarkovTD() {
               ammoTier: def.ammoTier ?? "NORMAL",
             });
           }
-        } else {
+        } else if (!e.sentry) {
           const [nx, ny] = pathPoint(mapRef.current, e.seg, Math.min(1, e.t + 0.05), e.lane);
           e.aim = Math.atan2(ny - e.y, nx - e.x);
         }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { MAP_BY_ID, buildMap } from "./map";
-import { authoredSentryEnemies, sentryMovementMultiplier } from "./mapSentries";
+import { authoredSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { authoredDeploymentTiles, selectDeploymentTiles } from "./mapDeployment";
 import { applyAuthor } from "./mapBuilder/author";
 import { fromProductionMap } from "./mapBuilder/adapters";
@@ -48,6 +48,10 @@ describe("Pine Cut V2 conquest prototype", () => {
     expect(sentries).toHaveLength(map.def.sentries!.length);
     expect(sentries.every((enemy) => enemy.sentry && sentryMovementMultiplier(enemy) === 0)).toBe(true);
     expect(sentries[0]!.x).toBe(map.def.sentries![0]!.tx * 44 + 22);
+    const authoredPositions = sentries.map(({ x, y }) => `${x},${y}`);
+    for (const sentry of sentries) syncEnemyToLanePosition(sentry, map.PIX[0]![0], map.PIX[0]![1]);
+    expect(sentries.map(({ x, y }) => `${x},${y}`)).toEqual(authoredPositions);
+    expect(new Set(authoredPositions).size).toBe(28);
   });
 
   it("Map Builder places, exports, and imports sentries", () => {
