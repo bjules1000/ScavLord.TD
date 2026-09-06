@@ -85,6 +85,11 @@ export interface MapDef {
   checkpoint: CheckpointPart[];
   cover: Array<[number, number, CoverType]>;
   crates: Array<[number, number]>;
+  /**
+   * Extraction zone(s). One per map for now; the shape allows more later
+   * (with a cost or an objective gate) without a schema change.
+   */
+  extraction: Array<[number, number]>;
   /** Hostile defenders already occupying the map when the raid begins. */
   sentries?: Array<{ kind: import("./types").EnemyKind; tx: number; ty: number; facing?: number }>;
   /** False keeps authored sentries available to the editor without making them a mandatory raid-clear phase. */
@@ -117,6 +122,7 @@ export interface GameMap {
   CHECKPOINT: CheckpointPart[];
   COVER: CoverPiece[];
   CRATES: Array<{ tx: number; ty: number }>;
+  EXTRACTION: Array<{ tx: number; ty: number }>;
 }
 
 const KOLKHOZ_PAL: Palette = {
@@ -312,6 +318,7 @@ export const MAP_DEFS: MapDef[] = [
     ],
     cover: [],
     crates: [],
+    extraction: [[1, 2]],
   },
   {
     id: "factory",
@@ -374,6 +381,7 @@ export const MAP_DEFS: MapDef[] = [
       [8, 3],
       [15, 8],
     ],
+    extraction: [[12, 10]],
   },
 ];
 
@@ -460,6 +468,14 @@ export function buildMap(def: MapDef): GameMap {
         !PROPS.some((p) => p.tx === c.tx && p.ty === c.ty) &&
         !COVER.some((p) => p.tx === c.tx && p.ty === c.ty),
     );
+  const EXTRACTION = (def.extraction ?? [])
+    .map(([tx, ty]) => ({ tx, ty }))
+    .filter(
+      (c) =>
+        !occupied(c.tx, c.ty) &&
+        !PROPS.some((p) => p.tx === c.tx && p.ty === c.ty) &&
+        !COVER.some((p) => p.tx === c.tx && p.ty === c.ty),
+    );
   return {
     def,
     width,
@@ -476,6 +492,7 @@ export function buildMap(def: MapDef): GameMap {
     CHECKPOINT: def.checkpoint,
     COVER,
     CRATES,
+    EXTRACTION,
   };
 }
 

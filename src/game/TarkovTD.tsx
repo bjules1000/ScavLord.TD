@@ -405,6 +405,16 @@ interface CrateState {
   opened: boolean;
 }
 
+/** Channel-and-hold extraction point. progress resets to 0 once every present operator has left. */
+interface ExtractionZoneState {
+  tx: number;
+  ty: number;
+  progress: number;
+}
+
+const EXTRACTION_TIME = 6; // seconds a zone must be held before it completes
+const EXTRACTION_RADIUS = TILE * 1.6; // same proximity crates already use
+
 interface GameState {
   towers: Tower[];
   enemies: Enemy[];
@@ -418,6 +428,7 @@ interface GameState {
   drops: Drop[];
   obstacles: Obstacle[];
   crates: CrateState[];
+  extractionZones: ExtractionZoneState[];
   queue: SpawnEvent[];
   clock: number;
   nextId: number;
@@ -457,6 +468,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     drops: [],
     obstacles: [],
     crates: map.CRATES.map((c) => ({ tx: c.tx, ty: c.ty, progress: 0, opened: false })),
+    extractionZones: map.EXTRACTION.map((z) => ({ tx: z.tx, ty: z.ty, progress: 0 })),
     queue: [],
     clock: 0,
     nextId: 5000,
@@ -1799,6 +1811,65 @@ export default function TarkovTD() {
         }
       }
 
+      // Extraction — live anytime in-raid, not gated to combat like crates.
+      // Per-operator: whoever is physically in the zone when it completes
+      // leaves with their gear + the current shared backpack; anyone else
+      // keeps fighting and must come back (or use another zone) later.
+      for (const zone of s.extractionZones) {
+        const zx = zone.tx * TILE + TILE / 2;
+        const zy = zone.ty * TILE + TILE / 2;
+        const present = s.towers.filter((t) => {
+          const p = towerPos(t);
+          return Math.hypot(p.x - zx, p.y - zy) < EXTRACTION_RADIUS;
+        });
+        if (present.length) {
+          zone.progress += dt / EXTRACTION_TIME;
+          if (zone.progress >= 1) {
+            zone.progress = 0;
+            for (const t of present) {
+              if (t.pmc) {
+                metaRef.current.pmc.level = t.level ?? metaRef.current.pmc.level;
+                metaRef.current.pmc.xp = t.xp ?? metaRef.current.pmc.xp;
+                metaRef.current.pmc.weapon = t.weapon;
+                metaRef.current.pmc.attachments = [...t.attachments];
+                metaRef.current.pmc.armor = t.armor ?? null;
+                metaRef.current.pmc.scavMods = t.scavMods
+                  ? { ...t.scavMods, parts: { ...t.scavMods.parts } }
+                  : null;
+              } else if (t.operatorId) {
+                const idx = metaRef.current.crew.operators.findIndex((o) => o.id === t.operatorId);
+                if (idx >= 0 && metaRef.current.crew.operators[idx]!.status !== "dead") {
+                  metaRef.current.crew.operators[idx] = syncOperatorEquipmentFromTower(
+                    metaRef.current.crew.operators[idx]!,
+                    t,
+                  );
+                }
+              }
+            }
+            saveMeta(metaRef.current);
+            let extracted = recoveredLootFromSurvivingTowers(present, newUid);
+            if (s.backpack.length) {
+              extracted = [...extracted, ...s.backpack.flatMap((item) => expandPackedWeapon(item, newUid))];
+              s.backpack = [];
+            }
+            s.recovered = [...s.recovered, ...extracted];
+            const departingIds = new Set(present.map((t) => t.id));
+            s.towers = s.towers.filter((t) => !departingIds.has(t.id));
+            if (s.selectedId != null && departingIds.has(s.selectedId)) s.selectedId = null;
+            s.floats.push({ x: zx, y: zy - 18, life: 1.4, text: "EXTRACTED", color: "#8fbf4a" });
+            const names = present.map((t) => {
+              if (t.pmc) return metaRef.current.pmc.name;
+              if (t.operatorId) return findOperator(metaRef.current, t.operatorId)?.name ?? "Operator";
+              return "Hired gun";
+            });
+            pushLog(`${present.length} operator${present.length > 1 ? "s" : ""} extracted: ${names.join(", ")}.`);
+            rerender();
+          }
+        } else if (zone.progress > 0) {
+          zone.progress = Math.max(0, zone.progress - dt / (EXTRACTION_TIME * 2));
+        }
+      }
+
       // towers move, then fire (moving operators cannot shoot)
       for (const t of s.towers) {
         const wasMoving = isOperatorMoving(t);
@@ -2265,6 +2336,22 @@ export default function TarkovTD() {
         setPendingLoot(null);
         setSwapUid(null);
         pushLog(`Wave ${s.wave} cleared. Pick your find.`);
+        rerender();
+      }
+
+      // Raid ends once every operator has either extracted or died. PMC death
+      // (the catastrophic-loss path) always returns immediately at the point
+      // of death elsewhere in this function, so phase here is never "dead".
+      if (s.towers.length === 0) {
+        const items: { itemId: string; count: number }[] = [];
+        const counts = new Map<string, number>();
+        for (const it of s.recovered) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
+        for (const [itemId, count] of counts) items.push({ itemId, count });
+        noteQuestTestEvent({ type: "EXTRACT", mapId, items });
+        s.phase = "extracted";
+        setSellValuableUids(new Set());
+        setLeaveUids(new Set());
+        pushLog(`Raid over — everyone's out. Recovered ${s.recovered.length} item(s).`);
         rerender();
       }
     };
@@ -3210,29 +3297,6 @@ export default function TarkovTD() {
       else next.add(uid);
       return next;
     });
-  };
-
-  const doExtract = () => {
-    if (s.phase !== "prep") return pushLog("Extract only between waves.");
-    // Persistent kit (PMC / crew) is retained via writeback — never mint into haul.
-    // Only mid-raid hired operators contribute recovered equipped gear.
-    const carried = recoveredLootFromSurvivingTowers(s.towers, newUid);
-    s.recovered = carried;
-    s.backpack = s.backpack.flatMap((item) => expandPackedWeapon(item, newUid));
-    const haul = buildExtractHaul(s.backpack, carried);
-    const value = haul.reduce((a, i) => a + (i.kind === "valuable" ? saleValueOf(i) : 0), 0);
-    s.payout = value;
-    setSellValuableUids(new Set());
-    setLeaveUids(new Set());
-    const items: { itemId: string; count: number }[] = [];
-    const counts = new Map<string, number>();
-    for (const it of haul) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
-    for (const [itemId, count] of counts) items.push({ itemId, count });
-    noteQuestTestEvent({ type: "EXTRACT", mapId, items });
-    // Extract count for quest trackers is applied in toHideout via applyRaidQuestProgress.
-    s.phase = "extracted";
-    pushLog(`Extracted with ${haul.length} item(s). Decide what to keep.`);
-    rerender();
   };
 
   const doDismiss = () => {
@@ -4338,16 +4402,26 @@ export default function TarkovTD() {
                 >
                   {s.phase === "prep" && s.prepTimer != null ? "START NOW" : "START"}
                 </button>
-                <button
-                  type="button"
-                  data-testid="raid-extract"
-                  onClick={doExtract}
-                  disabled={s.phase !== "prep"}
-                  className="pixel-btn px-2 py-1 text-[10px] disabled:opacity-40"
-                >
-                  EXTRACT
-                </button>
               </div>
+              {s.extractionZones.some((z) => z.progress > 0) && (
+                <div className="mt-2 space-y-1" data-testid="extraction-status">
+                  {s.extractionZones
+                    .filter((z) => z.progress > 0)
+                    .map((z, i) => (
+                      <div key={i}>
+                        <p className="font-mono text-[10px] text-primary">
+                          EXTRACTING · {Math.round(z.progress * 100)}%
+                        </p>
+                        <div className="h-1 border border-border bg-transparent">
+                          <div
+                            className="h-full bg-primary"
+                            style={{ width: `${Math.round(z.progress * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
 
             {selected ? (

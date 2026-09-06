@@ -94,6 +94,7 @@ export const WOODS_V2_MAP: MapDef = {
   checkpoint: [{ type: "gate2", tx: 18, ty: 3 }],
   cover: [],
   crates: [[3, 12], [14, 13], [6, 15], [24, 18]],
+  extraction: [[2, 14]],
   sentries: parseSentries(SENTRIES),
   activateSentries: false,
 };

@@ -194,6 +194,9 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
     crates: [...doc.crates]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx)
       .map((c) => [c.tx, c.ty] as [number, number]),
+    // Not yet authorable in Map Builder — extraction zones are hand-placed directly
+    // in each MapDef for now. Preserve an existing zone on round-trip export.
+    extraction: doc.sourceMapId ? (MAP_BY_ID[doc.sourceMapId]?.extraction ?? []) : [],
     palette: { ...doc.palette },
     sentries: [...doc.sentries]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || String(a.kind).localeCompare(String(b.kind)))
