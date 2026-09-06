@@ -16,7 +16,8 @@ export type EnemyTacticalRuntime = {
   laneHalfWidth: number;
   evadeLeftMs: number;
   evadeCooldownMs: number;
-  decisionLeftMs: number;
+  resumeMode: Exclude<EnemyTacticalMode, "EVADE">;
+  resumeOffset: number;
   engaged: boolean;
   normalX: number;
   normalY: number;
@@ -51,7 +52,8 @@ export function createEnemyTacticalRuntime(
     laneHalfWidth,
     evadeLeftMs: 0,
     evadeCooldownMs: 0,
-    decisionLeftMs: 0,
+    resumeMode: "ADVANCE",
+    resumeOffset: baseOffset,
     engaged: false,
     normalX: 0,
     normalY: 0,
@@ -80,39 +82,53 @@ export function tickEnemyTactics(
   dtMs: number,
   coverOffset: number | null = null,
 ): void {
+  const wasEvading = runtime.evadeLeftMs > 0;
   runtime.evadeLeftMs = Math.max(0, runtime.evadeLeftMs - dtMs);
   runtime.evadeCooldownMs = Math.max(0, runtime.evadeCooldownMs - dtMs);
-  runtime.decisionLeftMs = Math.max(0, runtime.decisionLeftMs - dtMs);
-  if (runtime.evadeLeftMs <= 0 && (engaged !== runtime.engaged || runtime.decisionLeftMs <= 0)) {
+  if (engaged !== runtime.engaged) {
+    let nextMode: Exclude<EnemyTacticalMode, "EVADE">;
+    let nextOffset: number;
     if (!engaged) {
-      runtime.mode = "ADVANCE";
-      runtime.targetOffset = runtime.baseOffset;
-      runtime.decisionLeftMs = 3000;
+      nextMode = "ADVANCE";
+      nextOffset = runtime.baseOffset;
     } else if (coverOffset != null && kind !== "scav" && kind !== "boss") {
-      runtime.mode = "COVER";
-      runtime.targetOffset = Math.max(-runtime.laneHalfWidth, Math.min(runtime.laneHalfWidth, coverOffset));
-      runtime.decisionLeftMs = 3500;
+      nextMode = "COVER";
+      nextOffset = Math.max(-runtime.laneHalfWidth, Math.min(runtime.laneHalfWidth, coverOffset));
     } else {
-      runtime.mode = roleMode(kind);
-      runtime.targetOffset = roleOffset(runtime, kind);
-      runtime.decisionLeftMs = 3500;
+      nextMode = roleMode(kind) as Exclude<EnemyTacticalMode, "EVADE">;
+      nextOffset = roleOffset(runtime, kind);
+    }
+    runtime.resumeMode = nextMode;
+    runtime.resumeOffset = nextOffset;
+    if (!wasEvading) {
+      runtime.mode = nextMode;
+      runtime.targetOffset = nextOffset;
     }
   }
+  if (wasEvading && runtime.evadeLeftMs <= 0) {
+    runtime.mode = runtime.resumeMode;
+    runtime.targetOffset = runtime.resumeOffset;
+  }
   runtime.engaged = engaged;
-  const maxStep = TILE * 1.15 * (dtMs / 1000);
+  const maxStep = TILE * 0.38 * (dtMs / 1000);
   const delta = runtime.targetOffset - runtime.offset;
   runtime.offset += Math.sign(delta) * Math.min(Math.abs(delta), maxStep);
 }
 
 export function triggerEnemyTacticalReaction(runtime?: EnemyTacticalRuntime): void {
-  if (!runtime || runtime.evadeCooldownMs > 0) return;
-  const anchor = Math.abs(runtime.offset) > 1 ? runtime.offset : runtime.targetOffset || runtime.baseOffset;
-  const side = anchor >= 0 ? -1 : 1;
+  if (!runtime || runtime.squadId == null || runtime.evadeCooldownMs > 0) return;
+  if (runtime.mode !== "EVADE") {
+    runtime.resumeMode = runtime.mode;
+    runtime.resumeOffset = runtime.targetOffset;
+  }
+  const preferredDirection = (runtime.squadId + runtime.slot) % 2 === 0 ? -1 : 1;
+  const step = TILE * 0.3;
+  const preferredTarget = runtime.offset + preferredDirection * step;
+  const direction = Math.abs(preferredTarget) <= runtime.laneHalfWidth ? preferredDirection : -preferredDirection;
   runtime.mode = "EVADE";
-  runtime.targetOffset = side * runtime.laneHalfWidth * 0.9;
-  runtime.evadeLeftMs = 750;
-  runtime.evadeCooldownMs = 2800;
-  runtime.decisionLeftMs = 750;
+  runtime.targetOffset = Math.max(-runtime.laneHalfWidth, Math.min(runtime.laneHalfWidth, runtime.offset + direction * step));
+  runtime.evadeLeftMs = 1000;
+  runtime.evadeCooldownMs = 5000;
 }
 
 export function tacticalForwardMultiplier(runtime: EnemyTacticalRuntime | undefined, kind: EnemyKind, base: number): number {

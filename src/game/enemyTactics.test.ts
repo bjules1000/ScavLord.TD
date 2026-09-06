@@ -59,16 +59,19 @@ describe("wide tactical lane AI", () => {
     expect(runtime.targetOffset).toBe(coverOffset!);
   });
 
-  it("evades across the lane when hit, then resumes its tactical role", () => {
+  it("takes a small sidestep when hit, then resumes the same tactical plan", () => {
     const runtime = createEnemyTacticalRuntime(3, 1.35)!;
-    const before = runtime.targetOffset;
+    tickEnemyTactics(runtime, "raider", true, 16, 24);
+    const plannedMode = runtime.mode;
+    const plannedOffset = runtime.targetOffset;
     triggerEnemyTacticalReaction(runtime);
     expect(runtime.mode).toBe("EVADE");
-    expect(Math.sign(runtime.targetOffset)).toBe(-Math.sign(before));
+    expect(Math.abs(runtime.targetOffset - runtime.offset)).toBeLessThanOrEqual(44 * 0.3);
     tickEnemyTactics(runtime, "raider", true, 400);
     expect(runtime.mode).toBe("EVADE");
     tickEnemyTactics(runtime, "raider", true, 600);
-    expect(runtime.mode).toBe("FLANK");
+    expect(runtime.mode).toBe(plannedMode);
+    expect(runtime.targetOffset).toBe(plannedOffset);
   });
 
   it("offsets enemies around the route without entering blocked terrain", () => {
@@ -92,11 +95,23 @@ describe("wide tactical lane AI", () => {
     expect(runtime.targetOffset).toBe(30);
     tickEnemyTactics(runtime, "raider", true, 16, -30);
     expect(runtime.targetOffset).toBe(30);
+    tickEnemyTactics(runtime, "raider", true, 4000, -30);
+    expect(runtime.targetOffset).toBe(30);
 
     triggerEnemyTacticalReaction(runtime);
     const evasionSide = Math.sign(runtime.targetOffset);
     triggerEnemyTacticalReaction(runtime);
     expect(Math.sign(runtime.targetOffset)).toBe(evasionSide);
+  });
+
+  it("does not give uncoordinated scavs a lateral dodge", () => {
+    const runtime = createEnemyTacticalRuntime(2, 1.35, "scav")!;
+    tickEnemyTactics(runtime, "scav", true, 16);
+    const targetOffset = runtime.targetOffset;
+    triggerEnemyTacticalReaction(runtime);
+    expect(runtime.mode).toBe("ADVANCE");
+    expect(runtime.targetOffset).toBe(targetOffset);
+    expect(runtime.evadeCooldownMs).toBe(0);
   });
 
   it("shares a spotted operator with squad mates", () => {
