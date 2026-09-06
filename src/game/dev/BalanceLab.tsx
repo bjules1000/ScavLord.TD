@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   attachmentLabFields,
+  backpackLabFields,
   armorLabFields,
   applyBalanceOverrides,
   balanceFieldTone,
@@ -8,13 +9,18 @@ import {
   balanceToneBorderClass,
   balanceToneTextClass,
   canonicalArmor,
+  canonicalBackpack,
   canonicalAttachment,
+  canonicalGrenade,
+  canonicalMed,
   canonicalWeapon,
   emptyBalanceOverrides,
   filterLabCatalog,
   formatBalancePatch,
   formatLabDelta,
   formatLabValue,
+  grenadeLabFields,
+  medLabFields,
   getBalanceOverrides,
   itemOverrideCount,
   itemOverrideRecord,
@@ -49,7 +55,7 @@ import {
   type ScalarMetric,
 } from "./compareMetrics";
 
-const CATS: LabCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS"];
+const CATS: LabCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS", "GRENADES", "MEDS", "BACKPACKS"];
 const EDITOR_COLS =
   "grid-cols-[minmax(6rem,0.9fr)_minmax(3.5rem,0.5fr)_minmax(5rem,0.7fr)_minmax(6rem,0.8fr)]";
 const WEAPON_EDITOR_COLS =
@@ -106,9 +112,15 @@ export default function BalanceLab({
       ? canonicalWeapon(selected.id)
       : selected?.kind === "armor"
         ? canonicalArmor(selected.id)
-        : selected
+        : selected?.kind === "attachment"
           ? canonicalAttachment(selected.id)
-          : undefined;
+          : selected?.kind === "grenade"
+            ? canonicalGrenade(selected.id)
+            : selected?.kind === "med"
+              ? canonicalMed(selected.id)
+              : selected
+                ? canonicalBackpack(selected.id)
+                : undefined;
   const fields: LabField[] =
     !selected || !canonical
       ? []
@@ -116,7 +128,13 @@ export default function BalanceLab({
         ? weaponLabFields(canonical as ReturnType<typeof canonicalWeapon> & object)
         : selected.kind === "armor"
           ? armorLabFields()
-          : attachmentLabFields(canonical as NonNullable<ReturnType<typeof canonicalAttachment>>);
+          : selected.kind === "attachment"
+            ? attachmentLabFields(canonical as NonNullable<ReturnType<typeof canonicalAttachment>>)
+            : selected.kind === "grenade"
+              ? grenadeLabFields(canonical as NonNullable<ReturnType<typeof canonicalGrenade>>)
+              : selected.kind === "med"
+                ? medLabFields()
+                : backpackLabFields();
 
   const overBag = selected ? itemOverrideRecord(draft, selected.kind, selected.id) : undefined;
   const selectedChanged = selected ? itemOverrideCount(draft, selected.kind, selected.id) : 0;

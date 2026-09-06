@@ -60,7 +60,7 @@ export type EconomyOverrides = {
   maps: Record<string, { lootMult?: number }>;
 };
 
-export type EconomyCategory = "ALL" | "WEAPONS" | "ARMOR" | "ATTACHMENTS" | "LOOT";
+export type EconomyCategory = "ALL" | "WEAPONS" | "ARMOR" | "ATTACHMENTS" | "THROWABLES" | "MEDS" | "BACKPACKS" | "VALUABLES";
 
 export type EconomyLabView = "items" | "sources";
 
@@ -144,14 +144,19 @@ export const FUTURE_SOURCE_TYPES: readonly LootSourceType[] = ["enemy", "boss", 
 
 export const DEFAULT_LOOT_SOURCE_ID = lootSourceId("woods", "crate");
 
-export const ECONOMY_CATEGORIES: readonly EconomyCategory[] = ["ALL", "WEAPONS", "ARMOR", "ATTACHMENTS", "LOOT"];
+export const ECONOMY_CATEGORIES: readonly EconomyCategory[] = [
+  "ALL", "WEAPONS", "ARMOR", "ATTACHMENTS", "THROWABLES", "MEDS", "BACKPACKS", "VALUABLES",
+];
 
 const CATEGORY_KINDS: Record<EconomyCategory, readonly ItemKind[] | null> = {
   ALL: null,
   WEAPONS: ["weapon"],
   ARMOR: ["armor"],
   ATTACHMENTS: ["attachment"],
-  LOOT: ["valuable", "meds"],
+  THROWABLES: ["throwable"],
+  MEDS: ["meds"],
+  BACKPACKS: ["backpack"],
+  VALUABLES: ["valuable"],
 };
 
 export const DEFAULT_DIAGNOSTIC_WAVE = 1;

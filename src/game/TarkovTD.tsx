@@ -93,7 +93,7 @@ import {
   type WheelActionId,
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
-import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
+import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
   BARRICADE_BUILD_COST,
@@ -126,9 +126,7 @@ import {
   type DefensePiece,
 } from "./defenses";
 import {
-  ARMORS,
   ATTACHMENTS,
-  BACKPACKS,
   ITEMS,
   ITEM_BY_ID,
   RARITY_COLOR,
@@ -331,6 +329,9 @@ import { confirmLeaveRaidForMapBuilder, type DevToolId } from "./dev/menu";
 import DevToolsMenu from "./dev/DevToolsMenu";
 import {
   clampLiveKit,
+  effectiveArmor,
+  effectiveBackpack,
+  effectiveMed,
   getBalanceOverrides,
 } from "./dev/balance";
 import BalanceLab from "./dev/BalanceLab";
@@ -655,7 +656,7 @@ function spawnPersistentOperatorTower(
   debuffHpMult: number,
 ) {
   const hp = persistentOperatorMaxHp(op, debuffHpMult);
-  const armorDef = op.equipment.armor ? ARMORS[op.equipment.armor] : undefined;
+  const armorDef = effectiveArmor(op.equipment.armor);
   s.towers.push({
     id: s.nextId++,
     tx: spot.tx,
@@ -786,7 +787,7 @@ export default function TarkovTD() {
   const backpackSlots = useCallback(
     () =>
       BASE_BACKPACK_SLOTS +
-      (BACKPACKS[metaRef.current.backpack]?.bonus ?? 0) +
+      (effectiveBackpack(metaRef.current.backpack)?.bonus ?? 0) +
       skillMods(metaRef.current.skills).backpackBonus,
     [],
   );
@@ -810,7 +811,7 @@ export default function TarkovTD() {
 
   function throwGrenade(tower: Tower, grenade: GrenadeKind, point: { x: number; y: number }) {
     const state = gs.current;
-    const def = GRENADE_DEFS[grenade];
+    const def = grenadeDef(grenade);
     if (!consumeGrenadeItem(state.backpack, grenade)) return { ok: false as const, reason: `NO ${def.label} GRENADE` };
     state.grenades.push(spawnGrenade(state.nextId++, tower.id, grenade, towerPos(tower), point));
     tower.angle = Math.atan2(point.y - towerPos(tower).y, point.x - towerPos(tower).x);
@@ -863,7 +864,7 @@ export default function TarkovTD() {
     );
     const spot = pmcSpawnTile(mapRef.current, s);
     const hp = pmcMaxHp(m.pmc.level, debuffs);
-    const armorDef = m.pmc.armor ? ARMORS[m.pmc.armor] : undefined;
+    const armorDef = effectiveArmor(m.pmc.armor);
     s.towers.push({
       id: s.nextId++,
       tx: spot.tx,
@@ -1004,12 +1005,12 @@ export default function TarkovTD() {
       const price = Math.round(def.price * skillMods(m.skills).buyMult);
       if (m.bank < price) return pushLog("Not enough banked roubles.");
       if (def.kind === "backpack" && def.ref) {
-        const own = BACKPACKS[m.backpack]?.bonus ?? 0;
-        if ((BACKPACKS[def.ref]?.bonus ?? 0) <= own) return pushLog("You already carry a bigger rig.");
+        const own = effectiveBackpack(m.backpack)?.bonus ?? 0;
+        if ((effectiveBackpack(def.ref)?.bonus ?? 0) <= own) return pushLog("You already carry a bigger rig.");
         m.bank -= price;
         m.backpack = def.ref;
         saveMeta(m);
-        pushLog(`${def.name} bought — backpack now ${BASE_BACKPACK_SLOTS + BACKPACKS[def.ref]!.bonus} slots.`);
+        pushLog(`${def.name} bought — backpack now ${BASE_BACKPACK_SLOTS + (effectiveBackpack(def.ref)?.bonus ?? 0)} slots.`);
         rerender();
         return;
       }
@@ -1402,12 +1403,12 @@ export default function TarkovTD() {
         const result = equipArmor(item, tower.armor ?? null, s.backpack);
         if (!result.ok) return pushLog(result.reason);
         tower.armor = result.armor ?? item.ref;
-        tower.armorHp = result.armorHp ?? ARMORS[item.ref]!.durability;
+        tower.armorHp = result.armorHp ?? effectiveArmor(item.ref)?.durability ?? 0;
         s.backpack = result.backpack;
         pushLog(result.message);
       } else if (item.kind === "meds") {
         if (tower.hp >= tower.maxHp) return pushLog("Operator is at full health.");
-        tower.hp = Math.min(tower.maxHp, tower.hp + (item.heal ?? 50));
+        tower.hp = Math.min(tower.maxHp, tower.hp + (effectiveMed(item.id)?.heal ?? item.heal ?? 50));
         s.backpack = s.backpack.filter((i) => i.uid !== uid);
         pushLog(`${item.name} used.`);
       } else {
@@ -2028,7 +2029,7 @@ export default function TarkovTD() {
         spawnParticles(grenade.x, grenade.y, "#ffb347", 24, 150);
         spawnParticles(grenade.x, grenade.y, "#5a5142", 14, 110);
         s.shake = Math.max(s.shake, 6);
-        const def = GRENADE_DEFS[grenade.kind];
+        const def = grenadeDef(grenade.kind);
         if (grenade.kind === "smoke") {
           s.grenadeClouds.push({ id: grenade.id, kind: "smoke", x: grenade.x, y: grenade.y, radius: def.radius, left: def.duration ?? 8 });
         }
@@ -2422,7 +2423,7 @@ export default function TarkovTD() {
             x: s.hoverTx * TILE + TILE / 2,
             y: s.hoverTy * TILE + TILE / 2,
           });
-          const def = GRENADE_DEFS[oMode.grenade];
+          const def = grenadeDef(oMode.grenade);
           const target = clampGrenadeTarget(oMode.grenade, geometry.origin, geometry.point);
           ctx.strokeStyle = "rgba(255,179,71,0.9)";
           ctx.setLineDash([4, 4]);
@@ -2493,7 +2494,7 @@ export default function TarkovTD() {
               ctx.stroke();
               ctx.setLineDash([]);
               ctx.beginPath();
-              ctx.arc(order.point.x, order.point.y, GRENADE_DEFS[order.grenade].radius, 0, Math.PI * 2);
+              ctx.arc(order.point.x, order.point.y, grenadeDef(order.grenade).radius, 0, Math.PI * 2);
               ctx.stroke();
             } else if (order.type === "HOLD_ANGLE") {
               const len = TILE * (strong ? 2.6 : 2);
@@ -2558,11 +2559,11 @@ export default function TarkovTD() {
         ctx.fillRect(Math.round(proj.x) - 1, Math.round(proj.y) - 1, sz, sz);
       }
       for (const grenade of s.grenades) {
-        ctx.fillStyle = GRENADE_DEFS[grenade.kind].color;
+        ctx.fillStyle = grenadeDef(grenade.kind).color;
         ctx.fillRect(Math.round(grenade.x) - 3, Math.round(grenade.y) - 3, 6, 6);
         ctx.strokeStyle = "rgba(255,179,71,0.35)";
         ctx.beginPath();
-        ctx.arc(grenade.targetX, grenade.targetY, GRENADE_DEFS[grenade.kind].radius, 0, Math.PI * 2);
+        ctx.arc(grenade.targetX, grenade.targetY, grenadeDef(grenade.kind).radius, 0, Math.PI * 2);
         ctx.stroke();
       }
       for (const cloud of s.grenadeClouds) {
@@ -3476,7 +3477,7 @@ export default function TarkovTD() {
                         {meta.pmc.name} · LVL {meta.pmc.level}
                       </div>
                       <div className="mt-1 text-muted-foreground">
-                        {BACKPACKS[meta.backpack]?.name ?? "SLING BAG"} ({backpackSlots()} slots) · XP {meta.pmc.xp}/
+                        {effectiveBackpack(meta.backpack)?.name ?? "SLING BAG"} ({backpackSlots()} slots) · XP {meta.pmc.xp}/
                         {xpForLevel(meta.pmc.level)} · Deaths {meta.pmc.deaths}
                       </div>
                       <div className="mt-2 text-muted-foreground">CONDITION</div>
@@ -3567,7 +3568,7 @@ export default function TarkovTD() {
                                 WEAPON: {WEAPONS[op.equipment.weapon]?.name ?? "SIDEARM"}
                               </button>
                               <button onClick={() => unequipCrew(op.id, "armor")} className="pixel-card text-left">
-                                ARMOR: {op.equipment.armor ? (ARMORS[op.equipment.armor]?.name ?? "ARMOR") : "EMPTY"}
+                                ARMOR: {op.equipment.armor ? (effectiveArmor(op.equipment.armor)?.name ?? "ARMOR") : "EMPTY"}
                               </button>
                               {op.equipment.attachments.map((att, i) => (
                                 <button key={att} onClick={() => unequipCrew(op.id, i)} className="pixel-card text-left">
@@ -3820,7 +3821,7 @@ export default function TarkovTD() {
                   />
                   <div className="mt-3 font-mono text-[10px] text-muted-foreground">
                     PRIMARY: {WEAPONS[meta.pmc.weapon]?.name ?? "SIDEARM"} · ARMOR:{" "}
-                    {meta.pmc.armor ? (ARMORS[meta.pmc.armor]?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
+                    {meta.pmc.armor ? (effectiveArmor(meta.pmc.armor)?.name ?? "ARMOR") : "None"} · LOADOUT:{" "}
                     {loadout.length}/{loadoutSlots}
                   </div>
                   {aliveOperators(meta).length > 0 && (
@@ -4364,10 +4365,10 @@ export default function TarkovTD() {
                         <StatRow label="AMMO" value={`${selected.ammo} / ${mag}`} />
                         {selected.armor ? (
                           <div className="text-[10px] text-muted-foreground">
-                            {ARMORS[selected.armor]?.name ?? "ARMOR"} ·{" "}
-                            {Math.round((ARMORS[selected.armor]?.reduction ?? 0) * 100)}% ·{" "}
+                            {effectiveArmor(selected.armor)?.name ?? "ARMOR"} ·{" "}
+                            {Math.round((effectiveArmor(selected.armor)?.reduction ?? 0) * 100)}% ·{" "}
                             {Math.round(selected.armorHp ?? 0)}/
-                            {ARMORS[selected.armor]?.durability ?? 0}
+                            {effectiveArmor(selected.armor)?.durability ?? 0}
                           </div>
                         ) : null}
                         {sum ? <div className="text-[9px] text-primary">{sum}</div> : null}
@@ -4439,11 +4440,11 @@ export default function TarkovTD() {
                               <>
                                 <StatRow
                                   label="ARMOR"
-                                  value={`${ARMORS[selected.armor]?.name ?? "ARMOR"} · ${Math.round((ARMORS[selected.armor]?.reduction ?? 0) * 100)}%`}
+                                  value={`${effectiveArmor(selected.armor)?.name ?? "ARMOR"} · ${Math.round((effectiveArmor(selected.armor)?.reduction ?? 0) * 100)}%`}
                                 />
                                 <StatRow
                                   label="DURABILITY"
-                                  value={`${Math.round(selected.armorHp ?? 0)}/${ARMORS[selected.armor]?.durability ?? 0}`}
+                                  value={`${Math.round(selected.armorHp ?? 0)}/${effectiveArmor(selected.armor)?.durability ?? 0}`}
                                 />
                                 <button
                                   type="button"
@@ -4626,7 +4627,7 @@ export default function TarkovTD() {
                       }
                       if (type in GRENADE_DEFS) {
                         const grenade = type as GrenadeKind;
-                        const def = GRENADE_DEFS[grenade];
+                        const def = grenadeDef(grenade);
                         if (!s.backpack.some((item) => item.id === def.itemId)) {
                           pushLog(`NO ${def.label} GRENADE`);
                           setOrdersMode({ kind: "idle" });
@@ -5107,7 +5108,7 @@ function MarketPanel({
             const def = effectiveItemDef(id) ?? ITEM_BY_ID[id]!;
             const price = Math.round(def.price! * buyMult);
             const owned =
-              def.kind === "backpack" && (BACKPACKS[def.ref!]?.bonus ?? 0) <= (BACKPACKS[backpack]?.bonus ?? 0);
+              def.kind === "backpack" && (effectiveBackpack(def.ref!)?.bonus ?? 0) <= (effectiveBackpack(backpack)?.bonus ?? 0);
             return (
               <button
                 key={id}

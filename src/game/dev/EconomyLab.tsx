@@ -207,7 +207,7 @@ export default function EconomyLab({
                   }`}
                   onClick={() => setCategory(cat)}
                 >
-                  {cat === "LOOT" ? "VALUABLES / LOOT" : cat}
+                  {cat}
                 </button>
               ))
             : (
@@ -221,7 +221,7 @@ export default function EconomyLab({
                     }`}
                     onClick={() => setCategory(cat)}
                   >
-                    {cat === "LOOT" ? "VALUABLES / LOOT" : cat}
+                    {cat}
                   </button>
                 ))}
                 {(["ALL", "CRATE", "REWARD", "SHOP"] as const).map((f) => (
@@ -438,7 +438,10 @@ export default function EconomyLab({
                     if (category === "WEAPONS") return row.kind === "weapon";
                     if (category === "ARMOR") return row.kind === "armor";
                     if (category === "ATTACHMENTS") return row.kind === "attachment";
-                    return row.kind === "valuable" || row.kind === "meds";
+                    if (category === "THROWABLES") return row.kind === "throwable";
+                    if (category === "MEDS") return row.kind === "meds";
+                    if (category === "BACKPACKS") return row.kind === "backpack";
+                    return row.kind === "valuable";
                   })}
                   draft={draft}
                   liveRules={liveRules}
