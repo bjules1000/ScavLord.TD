@@ -10,6 +10,7 @@ import type {
   EditorCheckpoint,
   EditorCover,
   EditorCrate,
+  EditorExtraction,
   EditorSentry,
   EditorEdgeObject,
   EditorGate,
@@ -63,6 +64,12 @@ export function placeCrate(doc: EditorMapDoc, tx: number, ty: number): EditorMap
   if (!canPlaceOccupant(doc, tx, ty)) return doc;
   const next: EditorCrate = { id: nextObjectId(doc, "crate"), tx, ty };
   return { ...doc, crates: [...doc.crates, next] };
+}
+
+export function placeExtraction(doc: EditorMapDoc, tx: number, ty: number): EditorMapDoc {
+  if (!canPlaceOccupant(doc, tx, ty)) return doc;
+  const next: EditorExtraction = { id: nextObjectId(doc, "extraction"), tx, ty };
+  return { ...doc, extraction: [...doc.extraction, next] };
 }
 
 export function placeSentry(doc: EditorMapDoc, tx: number, ty: number, kind: EditorSentry["kind"]): EditorMapDoc {

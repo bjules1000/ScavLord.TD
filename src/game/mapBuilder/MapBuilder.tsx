@@ -179,6 +179,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       | "prop"
       | "cover"
       | "crate"
+      | "extraction"
       | "sentry"
       | "checkpoint"
       | "spawn"
@@ -197,6 +198,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       invalid = tool.id === "edge" ? false : !canPlaceOccupant(doc, hover.tx, hover.ty);
       if (tool.id === "cover") ghostItem = "cover";
       else if (tool.id === "crate") ghostItem = "crate";
+      else if (tool.id === "extraction") ghostItem = "extraction";
       else if (tool.id === "sentry") ghostItem = "sentry";
       else if (tool.id === "checkpoint") ghostItem = "checkpoint";
       else ghostItem = "prop";
@@ -664,6 +666,9 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               <Chip active={tool.id === "crate"} onClick={() => setTool({ id: "crate" })}>
                 LOOT CRATE
               </Chip>
+              <Chip active={tool.id === "extraction"} onClick={() => setTool({ id: "extraction" })}>
+                EXTRACTION
+              </Chip>
               {CHECKPOINT_TYPES.map((c) => (
                 <Chip key={c} active={tool.id === "checkpoint" && tool.type === c} onClick={() => setTool({ id: "checkpoint", type: c })}>
                   {c}
@@ -1023,12 +1028,14 @@ function Inspector({
   const prop = doc.props.find((p) => p.id === selected?.id);
   const cover = doc.cover.find((p) => p.id === selected?.id);
   const crate = doc.crates.find((p) => p.id === selected?.id);
+  const extraction = doc.extraction.find((p) => p.id === selected?.id);
   const cp = doc.checkpoints.find((p) => p.id === selected?.id);
   const zone = doc.zones.find((p) => p.id === selected?.id);
   const gate = doc.gates.find((p) => p.id === selected?.id);
   if (prop) return <div>PROP {prop.type} · X {prop.tx} Y {prop.ty}</div>;
   if (cover) return <div>COVER {cover.type} · X {cover.tx} Y {cover.ty}</div>;
   if (crate) return <div>CRATE · X {crate.tx} Y {crate.ty}</div>;
+  if (extraction) return <div>EXTRACTION · X {extraction.tx} Y {extraction.ty}</div>;
   if (cp) return <div>CHECKPOINT {cp.type} · X {cp.tx} Y {cp.ty}</div>;
   if (zone) return <div>ZONE {zone.type} · {zone.name} · {zone.cells.length} tiles</div>;
   if (gate) return <div>GATE {gate.id} · LANE {gate.laneId} · X {gate.tx} Y {gate.ty} · {gate.edge}</div>;

@@ -69,6 +69,12 @@ export interface EditorCrate {
   ty: number;
 }
 
+export interface EditorExtraction {
+  id: string;
+  tx: number;
+  ty: number;
+}
+
 export interface EditorSentry {
   id: string;
   kind: EnemyKind;
@@ -159,6 +165,7 @@ export interface EditorMapDoc {
   props: EditorProp[];
   cover: EditorCover[];
   crates: EditorCrate[];
+  extraction: EditorExtraction[];
   sentries: EditorSentry[];
   checkpoints: EditorCheckpoint[];
   edges: EditorEdgeObject[];

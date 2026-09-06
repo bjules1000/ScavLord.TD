@@ -55,6 +55,7 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
   for (const p of doc.props) checkTile(`Prop ${p.type}`, p.tx, p.ty);
   for (const p of doc.cover) checkTile(`Cover ${p.type}`, p.tx, p.ty);
   for (const p of doc.crates) checkTile("Crate", p.tx, p.ty);
+  for (const p of doc.extraction) checkTile("Extraction zone", p.tx, p.ty);
   for (const p of doc.sentries) checkTile(`Sentry ${p.kind}`, p.tx, p.ty);
   for (const p of doc.checkpoints) checkTile(`Checkpoint ${p.type}`, p.tx, p.ty);
   for (const p of doc.edges) checkTile(`Edge ${p.type}`, p.tx, p.ty);
@@ -239,6 +240,10 @@ export function validateMap(doc: EditorMapDoc): ValidationResult {
   }
   if (ground < 8) warnings.push(issue("warning", "GROUND", "Very little legal ground remains."));
   if (!doc.zones.length) warnings.push(issue("warning", "ZONE", "No special zones authored."));
+  // A map with zero extraction zones is unplayable — there's no way to leave alive.
+  if (!doc.extraction.length) {
+    errors.push(issue("error", "EXTRACTION", "No extraction zone authored — this map cannot be left alive."));
+  }
 
   return { ok: errors.length === 0, errors, warnings };
 }

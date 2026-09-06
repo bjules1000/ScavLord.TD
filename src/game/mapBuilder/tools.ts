@@ -14,6 +14,7 @@ export type EditorTool =
   | { id: "prop"; type: PropType }
   | { id: "cover"; type: CoverType }
   | { id: "crate" }
+  | { id: "extraction" }
   | { id: "sentry"; kind: EnemyKind }
   | { id: "checkpoint"; type: CheckpointPart["type"] }
   | { id: "edge"; type: "fence" | "wall" }
@@ -77,7 +78,7 @@ export function isLosProbeMode(tool: EditorTool): boolean {
 }
 
 export function isPropPlaceMode(tool: EditorTool): boolean {
-  return tool.id === "prop" || tool.id === "cover" || tool.id === "crate" || tool.id === "sentry" || tool.id === "checkpoint" || tool.id === "edge";
+  return tool.id === "prop" || tool.id === "cover" || tool.id === "crate" || tool.id === "extraction" || tool.id === "sentry" || tool.id === "checkpoint" || tool.id === "edge";
 }
 
 export function isPropEraseMode(tool: EditorTool): boolean {

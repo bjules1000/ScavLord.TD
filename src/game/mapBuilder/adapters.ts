@@ -81,6 +81,7 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     ty,
   }));
   doc.crates = def.crates.map(([tx, ty], i) => ({ id: `crate-${i + 1}`, tx, ty }));
+  doc.extraction = (def.extraction ?? []).map(([tx, ty], i) => ({ id: `extraction-${i + 1}`, tx, ty }));
   doc.sentries = (def.sentries ?? []).map((s, i) => ({ id: `sentry-${i + 1}`, ...s, facing: s.facing ?? Math.PI }));
   doc.checkpoints = def.checkpoint.map((c, i) => ({
     id: `cp-${i + 1}`,
@@ -194,9 +195,9 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
     crates: [...doc.crates]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx)
       .map((c) => [c.tx, c.ty] as [number, number]),
-    // Not yet authorable in Map Builder — extraction zones are hand-placed directly
-    // in each MapDef for now. Preserve an existing zone on round-trip export.
-    extraction: doc.sourceMapId ? (MAP_BY_ID[doc.sourceMapId]?.extraction ?? []) : [],
+    extraction: [...doc.extraction]
+      .sort((a, b) => a.ty - b.ty || a.tx - b.tx)
+      .map((c) => [c.tx, c.ty] as [number, number]),
     palette: { ...doc.palette },
     sentries: [...doc.sentries]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || String(a.kind).localeCompare(String(b.kind)))

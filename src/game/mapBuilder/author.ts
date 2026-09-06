@@ -12,6 +12,7 @@ import {
   placeCheckpoint,
   placeCover,
   placeCrate,
+  placeExtraction,
   placeSentry,
   placeEdgeObject,
   placeGate,
@@ -64,6 +65,8 @@ export function applyAuthor(
       return placeCover(doc, cell.tx, cell.ty, tool.type);
     case "crate":
       return placeCrate(doc, cell.tx, cell.ty);
+    case "extraction":
+      return placeExtraction(doc, cell.tx, cell.ty);
     case "sentry":
       return placeSentry(doc, cell.tx, cell.ty, tool.kind);
     case "checkpoint":
@@ -145,6 +148,7 @@ export function erasePropAt(doc: EditorMapDoc, tx: number, ty: number, edge?: Ti
     props: doc.props.filter((p) => !(p.tx === tx && p.ty === ty)),
     cover: doc.cover.filter((p) => !(p.tx === tx && p.ty === ty)),
     crates: doc.crates.filter((p) => !(p.tx === tx && p.ty === ty)),
+    extraction: doc.extraction.filter((p) => !(p.tx === tx && p.ty === ty)),
     sentries: doc.sentries.filter((p) => !(p.tx === tx && p.ty === ty)),
     checkpoints: doc.checkpoints.filter((p) => !(p.tx === tx && p.ty === ty)),
   };
@@ -267,6 +271,7 @@ export function propAt(doc: EditorMapDoc, tx: number, ty: number): boolean {
     doc.props.some((p) => p.tx === tx && p.ty === ty) ||
     doc.cover.some((p) => p.tx === tx && p.ty === ty) ||
     doc.crates.some((p) => p.tx === tx && p.ty === ty) ||
+    doc.extraction.some((p) => p.tx === tx && p.ty === ty) ||
     doc.sentries.some((p) => p.tx === tx && p.ty === ty) ||
     doc.checkpoints.some((p) => p.tx === tx && p.ty === ty) ||
     doc.edges.some((p) => p.tx === tx && p.ty === ty)
