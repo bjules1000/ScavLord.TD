@@ -116,6 +116,7 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     body: "#8a7a5c",
     gear: "#4b4030",
     size: 13,
+    ammoTier: "NORMAL",
     attackProfile: "uzi",
     artProfile: "light",
     hitZones: authoredZones([
@@ -137,6 +138,7 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     body: "#6b5340",
     gear: "#3a2a1c",
     size: 14,
+    ammoTier: "NORMAL",
     attackProfile: "sg",
     artProfile: "light",
     hitZones: authoredZones([
@@ -158,6 +160,7 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     body: "#5e6b4d",
     gear: "#2f3626",
     size: 15,
+    ammoTier: "NORMAL",
     attackProfile: "ak",
     artProfile: "heavy",
     hitZones: authoredZones([
@@ -179,6 +182,7 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     body: "#3f4a55",
     gear: "#20272e",
     size: 16,
+    ammoTier: "AP",
     attackProfile: "ak",
     artProfile: "heavy",
     hitZones: authoredZones([
@@ -200,6 +204,7 @@ export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyD
     body: "#5a3a28",
     gear: "#241810",
     size: 22,
+    ammoTier: "AP",
     attackProfile: "ak",
     artProfile: "heavy",
     hitZones: authoredZones([

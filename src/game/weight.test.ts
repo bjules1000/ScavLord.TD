@@ -33,24 +33,24 @@ describe("equipped weight", () => {
     expect(getEquippedWeight({ weapon: "mp133" })).toBe(3);
   });
 
-  it("PACA contributes 2", () => {
-    expect(ARMORS["paca"]!.weight).toBe(2);
-    expect(getEquippedWeight({ armor: "paca" })).toBe(2);
+  it("PACA contributes 1.5", () => {
+    expect(ARMORS["paca"]!.weight).toBe(1.5);
+    expect(getEquippedWeight({ armor: "paca" })).toBe(1.5);
   });
 
-  it("6B23 contributes 4", () => {
-    expect(ARMORS["sixb23"]!.weight).toBe(4);
-    expect(getEquippedWeight({ armor: "sixb23" })).toBe(4);
+  it("6B23 contributes 2.8", () => {
+    expect(ARMORS["sixb23"]!.weight).toBe(2.8);
+    expect(getEquippedWeight({ armor: "sixb23" })).toBe(2.8);
   });
 
-  it("Slick contributes 6", () => {
-    expect(ARMORS["slick"]!.weight).toBe(6);
-    expect(getEquippedWeight({ armor: "slick" })).toBe(6);
+  it("Slick contributes 1.9", () => {
+    expect(ARMORS["slick"]!.weight).toBe(1.9);
+    expect(getEquippedWeight({ armor: "slick" })).toBe(1.9);
   });
 
   it("weapon + armor weights sum", () => {
-    expect(getEquippedWeight({ weapon: "toz", armor: "paca" })).toBe(4);
-    expect(getEquippedWeight({ weapon: "mp133", armor: "sixb23" })).toBe(7);
+    expect(getEquippedWeight({ weapon: "toz", armor: "paca" })).toBeCloseTo(3.5);
+    expect(getEquippedWeight({ weapon: "mp133", armor: "sixb23" })).toBeCloseTo(5.8);
   });
 
   it("installed attachment weight is included", () => {
@@ -100,14 +100,15 @@ describe("operator movement speed", () => {
     expect(WEIGHT_SPEED_PENALTY).toBe(0.04);
     expect(operatorSpeedMultiplier(2)).toBeCloseTo(1 - 2 * 0.04);
     expect(getOperatorMoveSpeed({ weapon: "toz" })).toBeCloseTo(2 * (1 - 2 * 0.04));
-    expect(getOperatorMoveSpeed({ weapon: "toz", armor: "paca" })).toBeCloseTo(1.68);
+    expect(getOperatorMoveSpeed({ weapon: "toz", armor: "paca" })).toBeCloseTo(2 * (1 - 3.5 * 0.04));
   });
 
   it("speed multiplier clamps at 0.60", () => {
     expect(WEIGHT_SPEED_MIN_MULT).toBe(0.6);
     expect(operatorSpeedMultiplier(10)).toBe(0.6);
     expect(operatorSpeedMultiplier(25)).toBe(0.6);
-    expect(getOperatorMoveSpeed({ weapon: "pkm", armor: "slick", attachments: ["mag", "supp"] })).toBe(1.2);
+    // zebralo (epic heavy, weight 7.5) is now the item heavy enough to hit the floor here.
+    expect(getOperatorMoveSpeed({ weapon: "pkm", armor: "zebralo", attachments: ["mag", "supp"] })).toBe(1.2);
   });
 
   it("speed never exceeds base speed", () => {

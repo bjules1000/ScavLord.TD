@@ -1735,6 +1735,7 @@ export default function TarkovTD() {
               towerId: fireTgt.id,
               sx: e.x,
               sy: e.y,
+              ammoTier: def.ammoTier ?? "NORMAL",
             });
           }
         } else {
@@ -2076,7 +2077,7 @@ export default function TarkovTD() {
               const missed = Math.random() < prot * COVER_MISS_FACTOR;
               if (!missed) {
                 let dmg = coveredDamage(b.damage, prot);
-                const soaked = absorbWithArmor(dmg, tw.armor, tw.armorHp ?? 0);
+                const soaked = absorbWithArmor(dmg, tw.armor, tw.armorHp ?? 0, b.ammoTier ?? "NORMAL");
                 tw.armorHp = soaked.armorHp;
                 dmg = soaked.damage;
                 if (soaked.broke)
@@ -4366,7 +4367,7 @@ export default function TarkovTD() {
                         {selected.armor ? (
                           <div className="text-[10px] text-muted-foreground">
                             {effectiveArmor(selected.armor)?.name ?? "ARMOR"} ·{" "}
-                            {Math.round((effectiveArmor(selected.armor)?.reduction ?? 0) * 100)}% ·{" "}
+                            {Math.round((effectiveArmor(selected.armor)?.reductionNormal ?? 0) * 100)}% ·{" "}
                             {Math.round(selected.armorHp ?? 0)}/
                             {effectiveArmor(selected.armor)?.durability ?? 0}
                           </div>
@@ -4438,9 +4439,10 @@ export default function TarkovTD() {
                             />
                             {selected.armor ? (
                               <>
+                                <StatRow label="ARMOR" value={effectiveArmor(selected.armor)?.name ?? "ARMOR"} />
                                 <StatRow
-                                  label="ARMOR"
-                                  value={`${effectiveArmor(selected.armor)?.name ?? "ARMOR"} · ${Math.round((effectiveArmor(selected.armor)?.reduction ?? 0) * 100)}%`}
+                                  label="VS NORMAL / AP / HEAVY"
+                                  value={`${Math.round((effectiveArmor(selected.armor)?.reductionNormal ?? 0) * 100)}% / ${Math.round((effectiveArmor(selected.armor)?.reductionAp ?? 0) * 100)}% / ${Math.round((effectiveArmor(selected.armor)?.reductionHeavy ?? 0) * 100)}%`}
                                 />
                                 <StatRow
                                   label="DURABILITY"

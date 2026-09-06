@@ -47,7 +47,9 @@ export type WeaponOverride = Partial<
   >
 >;
 
-export type ArmorOverride = Partial<Pick<ArmorDef, "name" | "weight" | "reduction" | "durability">>;
+export type ArmorOverride = Partial<
+  Pick<ArmorDef, "name" | "weight" | "reductionNormal" | "reductionAp" | "reductionHeavy" | "durability">
+>;
 
 export type AttachmentOverride = Partial<
   Pick<
@@ -201,8 +203,10 @@ export function balanceToneBorderClass(tone: BalanceTone): string {
   return "border-border";
 }
 
+const REDUCTION_FIELDS = new Set(["reduction", "reductionNormal", "reductionAp", "reductionHeavy"]);
+
 export function formatLabValue(key: string, n: number): string {
-  if (key === "reduction") return `${Math.round(n * 100)}%`;
+  if (REDUCTION_FIELDS.has(key)) return `${Math.round(n * 100)}%`;
   if (nearlyEqualNum(n, Math.round(n))) return String(Math.round(n));
   return String(Math.round(n * 1000) / 1000);
 }
@@ -396,7 +400,9 @@ export function testFitLegal(
 export function armorLabFields(): LabField[] {
   return [
     { key: "weight", label: "Weight", step: 0.25 },
-    { key: "reduction", label: "Protection", step: 0.01 },
+    { key: "reductionNormal", label: "vs Normal", step: 0.01 },
+    { key: "reductionAp", label: "vs AP", step: 0.01 },
+    { key: "reductionHeavy", label: "vs Heavy", step: 0.01 },
     { key: "durability", label: "Durability", step: 10 },
   ];
 }

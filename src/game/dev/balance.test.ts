@@ -71,7 +71,7 @@ describe("Balance Lab catalog", () => {
   });
 
   it("armor filter works", () => {
-    expect(filterLabCatalog(catalog, "ARMOR", "").map((e) => e.id).sort()).toEqual(["paca", "sixb23", "slick"].sort());
+    expect(filterLabCatalog(catalog, "ARMOR", "").map((e) => e.id).sort()).toEqual(Object.keys(ARMORS).sort());
   });
 
   it("attachments filter works", () => {
@@ -99,9 +99,10 @@ describe("Balance Lab runtime overrides", () => {
   });
 
   it("armor override changes effective armor value", () => {
-    const over = setOverrideField(emptyBalanceOverrides(), "armor", "slick", "reduction", 0.5, 0.55);
-    expect(effectiveArmor("slick", over, true)?.reduction).toBe(0.5);
-    expect(ARMORS["slick"]!.reduction).toBe(0.55);
+    const base = ARMORS["slick"]!.reductionNormal;
+    const over = setOverrideField(emptyBalanceOverrides(), "armor", "slick", "reductionNormal", 0.9, base);
+    expect(effectiveArmor("slick", over, true)?.reductionNormal).toBe(0.9);
+    expect(ARMORS["slick"]!.reductionNormal).toBe(base);
   });
 
   it("attachment override changes effective modifier", () => {
