@@ -5,10 +5,8 @@ import {
   isCoordinatedEnemyKind,
   nearbyCoverOffset,
   squadAlertTargetId,
-  tacticalForwardMultiplier,
   tacticalLanePosition,
   tickEnemyTactics,
-  triggerEnemyTacticalReaction,
 } from "./enemyTactics";
 import { MAP_BY_ID, buildMap, laneRoute, pathPoint } from "./map";
 import type { Enemy } from "./types";
@@ -34,16 +32,16 @@ describe("wide tactical lane AI", () => {
     expect(scav.targetOffset).toBe(scav.baseOffset);
   });
 
-  it("changes role behavior on contact while preserving forward pressure", () => {
+  it("changes role behavior on contact without crossing its assigned side", () => {
     const raider = createEnemyTacticalRuntime(1, 1.35)!;
     tickEnemyTactics(raider, "raider", true, 500);
     expect(raider.mode).toBe("FLANK");
-    expect(tacticalForwardMultiplier(raider, "raider", 0.1)).toBe(0.42);
+    expect(Math.sign(raider.targetOffset)).toBe(Math.sign(raider.baseOffset));
 
     const sniper = createEnemyTacticalRuntime(2, 1.35)!;
     tickEnemyTactics(sniper, "sniperScav", true, 500);
     expect(sniper.mode).toBe("OVERWATCH");
-    expect(tacticalForwardMultiplier(sniper, "sniperScav", 0)).toBe(0.18);
+    expect(Math.sign(sniper.targetOffset)).toBe(Math.sign(sniper.baseOffset));
   });
 
   it("moves a contacted rifleman toward nearby authored scenery", () => {
@@ -55,21 +53,22 @@ describe("wide tactical lane AI", () => {
     const coverOffset = nearbyCoverOffset(map, route, seg, x, y, runtime.laneHalfWidth);
     expect(coverOffset).not.toBeNull();
     tickEnemyTactics(runtime, "raider", true, 500, coverOffset);
-    expect(runtime.mode).toBe("COVER");
-    expect(runtime.targetOffset).toBe(coverOffset!);
+    if (Math.sign(coverOffset!) === Math.sign(runtime.baseOffset)) {
+      expect(runtime.mode).toBe("COVER");
+      expect(runtime.targetOffset).toBe(coverOffset!);
+    } else {
+      expect(runtime.mode).toBe("FLANK");
+      expect(Math.sign(runtime.targetOffset)).toBe(Math.sign(runtime.baseOffset));
+    }
   });
 
-  it("takes a small sidestep when hit, then resumes the same tactical plan", () => {
+  it("commits to one tactical plan even when contact repeatedly breaks", () => {
     const runtime = createEnemyTacticalRuntime(3, 1.35)!;
     tickEnemyTactics(runtime, "raider", true, 16, 24);
     const plannedMode = runtime.mode;
     const plannedOffset = runtime.targetOffset;
-    triggerEnemyTacticalReaction(runtime);
-    expect(runtime.mode).toBe("EVADE");
-    expect(Math.abs(runtime.targetOffset - runtime.offset)).toBeLessThanOrEqual(44 * 0.3);
-    tickEnemyTactics(runtime, "raider", true, 400);
-    expect(runtime.mode).toBe("EVADE");
-    tickEnemyTactics(runtime, "raider", true, 600);
+    tickEnemyTactics(runtime, "raider", false, 1500);
+    tickEnemyTactics(runtime, "raider", true, 16, -24);
     expect(runtime.mode).toBe(plannedMode);
     expect(runtime.targetOffset).toBe(plannedOffset);
   });
@@ -89,29 +88,26 @@ describe("wide tactical lane AI", () => {
     expect(map.WATER[ty]?.[tx]).toBe(false);
   });
 
-  it("locks cover decisions and rate-limits hit evasion instead of bouncing each frame", () => {
+  it("locks cover decisions instead of bouncing between nearby scenery", () => {
     const runtime = createEnemyTacticalRuntime(1, 1.35)!;
-    tickEnemyTactics(runtime, "raider", true, 16, 30);
-    expect(runtime.targetOffset).toBe(30);
     tickEnemyTactics(runtime, "raider", true, 16, -30);
-    expect(runtime.targetOffset).toBe(30);
-    tickEnemyTactics(runtime, "raider", true, 4000, -30);
-    expect(runtime.targetOffset).toBe(30);
+    expect(runtime.targetOffset).toBe(-30);
+    tickEnemyTactics(runtime, "raider", true, 16, 30);
+    expect(runtime.targetOffset).toBe(-30);
+    tickEnemyTactics(runtime, "raider", true, 4000, 30);
+    expect(runtime.targetOffset).toBe(-30);
 
-    triggerEnemyTacticalReaction(runtime);
-    const evasionSide = Math.sign(runtime.targetOffset);
-    triggerEnemyTacticalReaction(runtime);
-    expect(Math.sign(runtime.targetOffset)).toBe(evasionSide);
   });
 
-  it("does not give uncoordinated scavs a lateral dodge", () => {
+  it("keeps uncoordinated scavs on their original independent track", () => {
     const runtime = createEnemyTacticalRuntime(2, 1.35, "scav")!;
     tickEnemyTactics(runtime, "scav", true, 16);
     const targetOffset = runtime.targetOffset;
-    triggerEnemyTacticalReaction(runtime);
+    tickEnemyTactics(runtime, "scav", false, 1000, -30);
+    tickEnemyTactics(runtime, "scav", true, 1000, 30);
     expect(runtime.mode).toBe("ADVANCE");
     expect(runtime.targetOffset).toBe(targetOffset);
-    expect(runtime.evadeCooldownMs).toBe(0);
+    expect(runtime.hasCommittedTactic).toBe(false);
   });
 
   it("shares a spotted operator with squad mates", () => {

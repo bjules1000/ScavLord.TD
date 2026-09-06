@@ -101,10 +101,8 @@ import {
   isCoordinatedEnemyKind,
   nearbyCoverOffset,
   squadAlertTargetId,
-  tacticalForwardMultiplier,
   tacticalLanePosition,
   tickEnemyTactics,
-  triggerEnemyTacticalReaction,
 } from "./enemyTactics";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
 import {
@@ -1490,7 +1488,6 @@ export default function TarkovTD() {
       if (dealt > 0 && def.behavior) {
         if (!e.behaviorRuntime) e.behaviorRuntime = freshBehaviorRuntime();
         applyDamageReaction(def.behavior, e.behaviorRuntime);
-        triggerEnemyTacticalReaction(e.tacticalRuntime);
       }
       return dealt;
     };
@@ -1667,7 +1664,7 @@ export default function TarkovTD() {
             : null;
           tickEnemyTactics(e.tacticalRuntime, e.kind, br.state === "ENGAGED" || !!tgt, dt * 1000, coverOffset);
         }
-        const behaviorMoveMult = tacticalForwardMultiplier(e.tacticalRuntime, e.kind, movementSpeedMult(behavior, br));
+        const behaviorMoveMult = movementSpeedMult(behavior, br);
         const moveMult = sentryMovementMultiplier(e) * ((grenadeAffected.stunLeft ?? 0) > 0 ? 0 : behaviorMoveMult);
         const sp =
           def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? WIRE_SPEED_MULT : 1) * moveMult;
@@ -2019,7 +2016,6 @@ export default function TarkovTD() {
               if (def.behavior) {
                 if (!e.behaviorRuntime) e.behaviorRuntime = freshBehaviorRuntime();
                 applyDamageReaction(def.behavior, e.behaviorRuntime);
-                triggerEnemyTacticalReaction(e.tacticalRuntime);
               }
               spawnParticles(e.x, e.y, "#c94b3a", p.pellet ? 2 : 4, p.pellet ? 36 : 55);
               if (DEV_TOOLS_ENABLED && hit.hitZoneId === "head") {
