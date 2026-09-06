@@ -292,9 +292,11 @@ export interface ProjectileTickResult {
 
 export type ProjectileHitZoneQuery = (
   enemy: ProjectileTickEnemy,
-  hitX: number,
-  hitY: number,
-) => { damageMult: number; zoneId: string | null } | null;
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+) => { damageMult: number; zoneId: string | null; x: number; y: number } | null;
 
 /**
  * Advance a single projectile by dt seconds.
@@ -302,9 +304,15 @@ export type ProjectileHitZoneQuery = (
  * Mutates the projectile in place. Sets `dead = true` when finished.
  * Returns hit events for the caller to process (kill credit, FX, etc.).
  *
- * Hit-zone rule: broadphase circle first; then if `hitZoneOf` is provided,
- * the impact point must land in an enabled zone. Missing zones → no damage.
- * Overlap: highest zone priority wins (see enemyHitZones.resolveHitZoneAtPoint).
+ * Hit-zone rule: broadphase circle first (a cheap, lossless prefilter — its
+ * radius circumscribes the enemy's full bounds); then if `hitZoneOf` is
+ * provided, it is queried with the whole frame segment and resolves the
+ * first enabled zone that segment actually enters (see
+ * enemyHitZones.resolveHitZoneAlongSegment). This is a swept test, not a
+ * single end-of-frame sample — a zone narrower than one frame of travel
+ * still registers, so hit detection does not depend on frame rate or
+ * projectile speed. Missing zones → no damage. Overlap: earliest entry
+ * wins; ties break by highest zone priority.
  */
 export function tickProjectile(
   p: Projectile,
@@ -352,8 +360,13 @@ export function tickProjectile(
   const hits: ProjectileHitEvent[] = [];
   const splashes: ProjectileTickResult["splashes"] = [];
 
-  // Collect all enemy intersections along this segment
-  const candidates: { enemy: ProjectileTickEnemy; t: number }[] = [];
+  // Collect all enemy intersections along this segment. The broadphase circle
+  // is a lossless prefilter (it circumscribes the enemy's full bounds, so it
+  // can only over-include, never miss); the exact hit point and zone come
+  // from testing the whole segment against the real zone geometry, not a
+  // single sampled point — see the swept-test note above.
+  type Candidate = { enemy: ProjectileTickEnemy; t: number; x: number; y: number; zoneMult: number; zoneId: string | null };
+  const candidates: Candidate[] = [];
   for (const e of enemies) {
     if (isSettledOut(e as KillState)) continue;
     if (p.hitIds.includes(e.id)) continue;
@@ -361,8 +374,29 @@ export function tickProjectile(
       x: e.x, y: e.y, surface: (e.surface as "GROUND" | "HIGH") ?? "GROUND",
     })) continue;
     const r = radiusOf ? radiusOf(e) : hitRadius;
-    const t = segmentCircleHit(p.px, p.py, ex, ey, e.x, e.y, r);
-    if (t != null) candidates.push({ enemy: e, t });
+    const broad = segmentCircleHit(p.px, p.py, ex, ey, e.x, e.y, r);
+    if (broad == null) continue;
+    if (hitZoneOf) {
+      const zone = hitZoneOf(e, p.px, p.py, ex, ey);
+      if (!zone) continue; // swept path never enters an enabled zone
+      candidates.push({
+        enemy: e,
+        t: Math.hypot(zone.x - p.px, zone.y - p.py),
+        x: zone.x,
+        y: zone.y,
+        zoneMult: zone.damageMult,
+        zoneId: zone.zoneId,
+      });
+    } else {
+      candidates.push({
+        enemy: e,
+        t: broad,
+        x: p.px + (ex - p.px) * broad,
+        y: p.py + (ey - p.py) * broad,
+        zoneMult: 1,
+        zoneId: null,
+      });
+    }
   }
   candidates.sort((a, b) => a.t - b.t);
 
@@ -371,20 +405,10 @@ export function tickProjectile(
     const e = c.enemy;
     if (isSettledOut(e as KillState)) continue;
 
-    const hitX = p.px + (ex - p.px) * c.t;
-    const hitY = p.py + (ey - p.py) * c.t;
-
-    let zoneMult = 1;
-    let zoneId: string | null = null;
-    if (hitZoneOf) {
-      const zone = hitZoneOf(e, hitX, hitY);
-      if (!zone) {
-        // Broadphase hit but missed all enabled zones — skip this enemy.
-        continue;
-      }
-      zoneMult = zone.damageMult;
-      zoneId = zone.zoneId;
-    }
+    const hitX = c.x;
+    const hitY = c.y;
+    const zoneMult = c.zoneMult;
+    const zoneId = c.zoneId;
 
     if (p.splash > 0) {
       splashes.push({

@@ -64,7 +64,7 @@ describe("canonical generator math", () => {
     expect(p.weapon).toBeCloseTo(0.074);
     expect(p.attachment).toBeCloseTo((1 - 0.074) * 0.32);
     expect(p.backpack).toBe(0);
-    const sum = p.weapon + p.attachment + p.armor + p.meds + p.valuable;
+    const sum = p.weapon + p.attachment + p.armor + p.meds + p.throwable + p.valuable;
     expect(sum).toBeCloseTo(1);
   });
 

@@ -4,6 +4,7 @@
  */
 
 import type { GameMap } from "./map";
+import type { GrenadeKind } from "./grenades";
 import { clearOperatorMove, issueOperatorMove, type IssueMoveResult } from "./movement";
 import { isAutoTargetMode, type AutoTargetMode, type TargetMode } from "./targeting";
 import type { Tower } from "./types";
@@ -23,6 +24,7 @@ function restoreAutoPreference(tower: Tower): AutoTargetMode {
 
 export type MoveCommand = { type: "MOVE"; tx: number; ty: number };
 export type ReloadCommand = { type: "RELOAD" };
+export type ThrowGrenadeCommand = { type: "THROW_GRENADE"; grenade: GrenadeKind; point: { x: number; y: number } };
 export type HoldAngleCommand = {
   type: "HOLD_ANGLE";
   angle: number;
@@ -41,6 +43,7 @@ export type SetTargetingCommand = {
 export type OperatorCommand =
   | MoveCommand
   | ReloadCommand
+  | ThrowGrenadeCommand
   | HoldAngleCommand
   | ClearHoldAngleCommand
   | ClearMoveCommand
@@ -54,6 +57,7 @@ export type DispatchResult =
 export type OperatorCommandContext = {
   map: GameMap;
   towers: readonly Tower[];
+  throwGrenade?: (tower: Tower, grenade: GrenadeKind, point: { x: number; y: number }) => DispatchResult;
 };
 
 /**
@@ -88,6 +92,8 @@ export function dispatchOperatorCommand(
       tower.reloadLeft = next;
       return { ok: true, message: "RELOAD STARTED" };
     }
+    case "THROW_GRENADE":
+      return ctx.throwGrenade?.(tower, command.grenade, command.point) ?? { ok: false, reason: `NO ${command.grenade.toUpperCase()} GRENADE` };
     case "HOLD_ANGLE": {
       // Retain AUTO preference for CLEAR HOLD / later resume.
       rememberAutoPreference(tower);

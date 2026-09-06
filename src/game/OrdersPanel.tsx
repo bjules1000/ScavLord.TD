@@ -4,6 +4,7 @@
  */
 
 import type { OperatorOrder, OperatorPlan } from "./operatorPlans";
+import { GRENADE_DEFS, type GrenadeKind } from "./grenades";
 import {
   MAX_OPERATOR_ORDERS,
   activeOrderCount,
@@ -17,6 +18,7 @@ export type OrdersEditorMode =
   | { kind: "idle" }
   | { kind: "pick_add" }
   | { kind: "author_move"; editIndex: number | null }
+  | { kind: "author_grenade"; grenade: GrenadeKind; editIndex: number | null }
   | { kind: "author_hold"; editIndex: number | null };
 
 export type OrdersPanelProps = {
@@ -25,7 +27,7 @@ export type OrdersPanelProps = {
   editorMode: OrdersEditorMode;
   /** sidebar = permanent raid chrome; overlay = legacy floating (unused). */
   variant?: "sidebar" | "overlay";
-  onAddPick: (type: "MOVE" | "RELOAD" | "HOLD_ANGLE") => void;
+  onAddPick: (type: "MOVE" | "RELOAD" | GrenadeKind | "HOLD_ANGLE") => void;
   onRequestAddMenu: () => void;
   onCancelAddMenu: () => void;
   onEdit: (index: number) => void;
@@ -135,12 +137,14 @@ export function OrdersPanel({
 
       {showAddMenu ? (
         <div className="mt-2 flex flex-wrap gap-1 border-t border-border pt-2">
-          {(["MOVE", "RELOAD", "HOLD_ANGLE"] as const).map((type) => {
+          {(["MOVE", "RELOAD", "frag", "smoke", "impact", "flash", "stun", "HOLD_ANGLE"] as const).map((type) => {
             const probe =
               type === "MOVE"
                 ? canAppendToPlan(plan, { type: "MOVE", tx: 0, ty: 0 })
                 : type === "RELOAD"
                   ? canAppendToPlan(plan, { type: "RELOAD" })
+                  : type in GRENADE_DEFS
+                    ? canAppendToPlan(plan, { type: "THROW_GRENADE", grenade: type as GrenadeKind, point: { x: 0, y: 0 } })
                   : canAppendToPlan(plan, {
                       type: "HOLD_ANGLE",
                       angle: 0,
@@ -154,7 +158,7 @@ export function OrdersPanel({
                 className="pixel-btn px-1.5 py-0.5 text-[9px] disabled:opacity-40"
                 onClick={() => onAddPick(type)}
               >
-                {type === "HOLD_ANGLE" ? "HOLD ANGLE" : type}
+                {type === "HOLD_ANGLE" ? "HOLD ANGLE" : type in GRENADE_DEFS ? `THROW ${type.toUpperCase()}` : type}
               </button>
             );
           })}
@@ -182,11 +186,11 @@ export function OrdersPanel({
         </div>
       )}
 
-      {(editorMode.kind === "author_move" || editorMode.kind === "author_hold") && (
+      {(editorMode.kind === "author_move" || editorMode.kind === "author_hold" || editorMode.kind === "author_grenade") && (
         <p className="mt-2 font-mono text-[9px] text-primary">
           {editorMode.kind === "author_move"
             ? "CLICK DESTINATION · ESC CANCEL"
-            : "CLICK HOLD DIRECTION · ESC CANCEL"}
+            : editorMode.kind === "author_grenade" ? `CLICK ${editorMode.grenade.toUpperCase()} TARGET · ESC CANCEL` : "CLICK HOLD DIRECTION · ESC CANCEL"}
         </p>
       )}
 
@@ -214,5 +218,6 @@ function formatOrderRow(order: OperatorOrder): string {
     const deg = Math.round(((order.angle * 180) / Math.PI + 360) % 360);
     return `HOLD → ${deg}°`;
   }
+  if (order.type === "THROW_GRENADE") return `THROW ${order.grenade.toUpperCase()}`;
   return orderLabel(order);
 }

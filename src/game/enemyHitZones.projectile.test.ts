@@ -4,8 +4,7 @@ import {
   enemyBroadphaseRadius,
   enemyWorldBounds,
   resolveEnemyHitZones,
-  resolveHitZoneAtPoint,
-  zoneWorldRect,
+  resolveHitZoneAlongSegment,
 } from "./enemyHitZones";
 import { spawnProjectile, tickProjectile } from "./shooting";
 import { MAP_BY_ID, buildMap, type MapDef } from "./map";
@@ -72,7 +71,7 @@ describe("projectile hit-zone integration", () => {
       () => 0,
       map,
       enemyBroadphaseRadius(def.size, SCALE),
-      () => ({ damageMult: 1.75, zoneId: "head" }),
+      (_enemy, ax, ay) => ({ damageMult: 1.75, zoneId: "head", x: ax, y: ay }),
     );
 
     expect(result.hits.length).toBe(1);
@@ -113,18 +112,84 @@ describe("projectile hit-zone integration", () => {
       () => 0,
       map,
       enemyBroadphaseRadius(def.size, SCALE),
-      (enemy, hitX, hitY) => {
-        const hit = resolveHitZoneAtPoint(
+      (enemy, ax, ay, bx, by) => {
+        const hit = resolveHitZoneAlongSegment(
           zones,
           enemyWorldBounds(enemy.x, enemy.y, def.size, SCALE),
-          hitX,
-          hitY,
+          ax,
+          ay,
+          bx,
+          by,
         );
         if (!hit) return null;
-        return { damageMult: hit.damageMult, zoneId: hit.zone.id };
+        return { damageMult: hit.damageMult, zoneId: hit.zone.id, x: hit.x, y: hit.y };
       },
     );
     expect(result.hits.length).toBe(0);
     expect(e.hp).toBe(500);
+  });
+
+  it("a zone narrower than one frame of travel still registers a hit", () => {
+    // Regression for F1: at low fps a fast bullet's per-frame segment can be
+    // much wider than a hit zone. A single end-of-frame point sample would
+    // straddle the zone and miss; the swept segment test must not.
+    const def = ENEMIES.scav!;
+    const zones = resolveEnemyHitZones(def.hitZones);
+    const bounds = enemyWorldBounds(200, 200, def.size, SCALE);
+    const bodyZone = zones.find((z) => z.id === "body")!;
+    const bodyRect = {
+      left: bounds.left + bodyZone.x * bounds.width,
+      top: bounds.top + bodyZone.y * bounds.height,
+      width: bodyZone.width * bounds.width,
+      height: bodyZone.height * bounds.height,
+    };
+    // Confirm the authored zone really is narrower than one low-fps frame step.
+    const lowFpsStep = 2000 * (1 / 20);
+    expect(bodyRect.width).toBeLessThan(lowFpsStep);
+
+    const e = {
+      id: 3,
+      x: 200,
+      y: 200,
+      hp: 1000,
+      kind: "scav",
+      surface: "GROUND" as const,
+      leaked: false,
+      counted: false,
+    };
+    const p = spawnProjectile({
+      id: 11,
+      shooterId: 1,
+      origin: { x: 150, y: 200 },
+      angle: 0,
+      speed: 2000,
+      range: 400,
+      damage: 20,
+      pen: 0,
+      color: "#fff",
+      surface: "GROUND",
+    });
+    const hitZoneOf = (enemy: typeof e, ax: number, ay: number, bx: number, by: number) => {
+      const hit = resolveHitZoneAlongSegment(
+        zones,
+        enemyWorldBounds(enemy.x, enemy.y, def.size, SCALE),
+        ax,
+        ay,
+        bx,
+        by,
+      );
+      if (!hit) return null;
+      return { damageMult: hit.damageMult, zoneId: hit.zone.id, x: hit.x, y: hit.y };
+    };
+    const result = tickProjectile(
+      p,
+      1 / 20,
+      [e],
+      () => 0,
+      map,
+      enemyBroadphaseRadius(def.size, SCALE),
+      hitZoneOf,
+    );
+    expect(result.hits.length).toBe(1);
   });
 });

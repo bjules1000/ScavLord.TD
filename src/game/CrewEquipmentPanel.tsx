@@ -28,7 +28,7 @@ import {
   kitResolvedStatLines,
 } from "./weaponAttachments";
 
-type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "valuable";
+type StashKindTab = "all" | "weapon" | "attachment" | "armor" | "meds" | "throwable" | "valuable";
 
 export default function CrewEquipmentPanel({
   meta,
@@ -195,7 +195,7 @@ export default function CrewEquipmentPanel({
               Shared gang stash · EQUIP / INSTALL → {selectedRow.name} · PACK → raid loadout
             </p>
             <div className="mt-2 flex flex-wrap gap-1">
-              {(["all", "weapon", "attachment", "armor", "meds", "valuable"] as const).map((t) => (
+              {(["all", "weapon", "attachment", "armor", "meds", "throwable", "valuable"] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
