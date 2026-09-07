@@ -24,7 +24,7 @@ function authoredZones(
   }));
 }
 
-export const TILE = 44;
+export const TILE = 32;
 
 export const SCALE = TILE / 32;
 export const COLS = 20;
