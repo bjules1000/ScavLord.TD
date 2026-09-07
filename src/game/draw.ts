@@ -3,7 +3,7 @@ import { shouldDrawLanePortMarkers } from "./lanePortsView";
 import { extractMarkerCenter, type GameMap } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
 import type { Enemy, Tower } from "./types";
-import { operatorWorldPos } from "./movement";
+import { operatorWorldPos, STAMINA_MAX } from "./movement";
 import { effectiveEnemy } from "./dev/waveLabCore";
 import { drawGear, drawSprite, floorImage } from "./sprites";
 import type { GearFrameName } from "./sprites";
@@ -737,6 +737,10 @@ export function drawTower(ctx: CanvasRenderingContext2D, t: Tower, time: number,
   if (armor && t.armorHp != null && t.armorHp > 0) {
     px(ctx, "#140f0d", cx - bw / 2, cy - TILE / 2 + 6, bw, 3);
     px(ctx, armor.trim, cx - bw / 2 + 1, cy - TILE / 2 + 7, (bw - 2) * Math.max(0, Math.min(1, t.armorHp / armor.durability)), 1);
+  }
+  if (t.stamina < STAMINA_MAX) {
+    px(ctx, "#140f0d", cx - bw / 2, cy - TILE / 2 + 10, bw, 3);
+    px(ctx, "#8fd3ff", cx - bw / 2 + 1, cy - TILE / 2 + 11, (bw - 2) * Math.max(0, t.stamina / STAMINA_MAX), 1);
   }
 }
 

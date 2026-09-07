@@ -28,6 +28,7 @@ import {
   partitionBySurface,
 } from "./surfaces";
 import {
+  canSprint,
   clearOperatorMove,
   findOperatorPath,
   isOperatorMoving,
@@ -37,8 +38,10 @@ import {
   operatorWorldPos,
   getOperatorMoveSpeed,
   resolveMoveDestination,
+  SPRINT_SPEED_MULT,
   stepDirectMove,
   stepOperatorMove,
+  tickStamina,
 } from "./movement";
 import {
   BATTLE_TIME_MODE_ORDER,
@@ -639,7 +642,7 @@ const HEAL_MOVE_MULT = 0.1;
 /** Direct-control G key: shorter than this is a tap (cycle kind); at/above this is a hold (throw on release). */
 const GRENADE_HOLD_THRESHOLD_MS = 220;
 
-function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
+function towerMoveSpeedPx(t: Tower, meta?: Meta, sprinting = false): number {
   const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
   const scav = scavVisualMods(t.weapon, t.scavMods);
   let weight = getEquippedWeight(kit) + scav.weightAdd;
@@ -648,7 +651,8 @@ function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
     if (op) weight = operatorEffectiveWeight(kit, resolveCombatMods(op)) + scav.weightAdd;
   }
   const healMult = t.healing ? HEAL_MOVE_MULT : 1;
-  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * healMult * TILE;
+  const sprintMult = sprinting ? SPRINT_SPEED_MULT : 1;
+  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * healMult * sprintMult * TILE;
 }
 
 function findDeployTiles(map: GameMap, s: GameState, count: number) {
@@ -1894,6 +1898,8 @@ export default function TarkovTD() {
             t.move = null; // direct control overrides any queued path order
           }
           const keys = directHeldKeysRef.current;
+          const moving = keys.has("w") || keys.has("a") || keys.has("s") || keys.has("d");
+          const sprinting = moving && keys.has("shift") && canSprint(t);
           const result = stepDirectMove(
             t.freeMove.x,
             t.freeMove.y,
@@ -1901,16 +1907,19 @@ export default function TarkovTD() {
             { up: keys.has("w"), down: keys.has("s"), left: keys.has("a"), right: keys.has("d") },
             dt,
             mapRef.current,
-            towerMoveSpeedPx(t, metaRef.current),
+            towerMoveSpeedPx(t, metaRef.current, sprinting),
           );
           t.freeMove = { x: result.x, y: result.y };
           t.tx = result.tx;
           t.ty = result.ty;
           t.surface = result.surface;
+          t.stamina = tickStamina(t.stamina, sprinting, dt);
         } else {
           if (t.freeMove) t.freeMove = null; // direct control just ended — settle onto the tile grid
           const wasMoving = isOperatorMoving(t);
-          if (wasMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
+          const sprinting = wasMoving && t.move?.sprint === true && canSprint(t);
+          if (wasMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current, sprinting));
+          t.stamina = tickStamina(t.stamina, sprinting, dt);
           const plan = planBookRef.current.get(t.id);
           if (plan) {
             const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers, throwGrenade }, wasMoving);
@@ -2821,7 +2830,7 @@ export default function TarkovTD() {
 
   const recruitCost = () => Math.round(RECRUIT_BASE * Math.pow(1.4, gs.current.towers.length));
 
-  const applyOperatorMoveToTile = (sel: Tower, tx: number, ty: number) => {
+  const applyOperatorMoveToTile = (sel: Tower, tx: number, ty: number, sprint = false) => {
     const s = gs.current;
     const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), tx, ty);
     if (!dest) {
@@ -2829,7 +2838,7 @@ export default function TarkovTD() {
       return;
     }
     const paused = battleTimeRef.current.mode === "PAUSED";
-    const decision = resolveLeftClickMovePlan(planBookRef.current.get(sel.id), dest.tx, dest.ty, paused);
+    const decision = resolveLeftClickMovePlan(planBookRef.current.get(sel.id), dest.tx, dest.ty, paused, sprint);
     if (decision.kind === "refuse") {
       pushLog(decision.reason);
       openOrdersForOperator(sel.id, planBookRef.current.get(sel.id) ?? createEmptyPlan());
@@ -3176,7 +3185,7 @@ export default function TarkovTD() {
     // Paused: LEFT-CLICK always means MOVE when an operator is selected (no MOVE mode
     // required) — this is the escape hatch back to considered, click-based orders.
     if (sel && !s.place && battleTimeRef.current.mode === "PAUSED") {
-      applyOperatorMoveToTile(sel, tx, ty);
+      applyOperatorMoveToTile(sel, tx, ty, ev.shiftKey);
       rerender();
       return;
     }
@@ -3288,10 +3297,10 @@ export default function TarkovTD() {
 
   /** WASD held-state for direct operator control. Separate from onKey above — this is continuous "is it held", not a discrete action-on-press. */
   useEffect(() => {
-    const WASD = new Set(["w", "a", "s", "d"]);
+    const TRACKED_KEYS = new Set(["w", "a", "s", "d", "shift"]);
     const onKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (WASD.has(key)) directHeldKeysRef.current.add(key);
+      if (TRACKED_KEYS.has(key)) directHeldKeysRef.current.add(key);
       if (key === "g" && !e.repeat) {
         const s = gs.current;
         const sel = s.towers.find((t) => t.id === s.selectedId);
@@ -3302,7 +3311,7 @@ export default function TarkovTD() {
     };
     const onKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (WASD.has(key)) directHeldKeysRef.current.delete(key);
+      if (TRACKED_KEYS.has(key)) directHeldKeysRef.current.delete(key);
       if (key === "g") {
         const start = directGrenadeHoldStartRef.current;
         directGrenadeHoldStartRef.current = null;

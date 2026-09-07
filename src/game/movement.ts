@@ -66,6 +66,24 @@ export function operatorCanFire(t: Pick<Tower, "move" | "healing">): boolean {
   return !isOperatorMoving(t) && !t.healing;
 }
 
+/** Sprint fuel, 0..STAMINA_MAX. */
+export const STAMINA_MAX = 100;
+/** Move-speed multiplier while sprinting. */
+export const SPRINT_SPEED_MULT = 1.6;
+export const STAMINA_DRAIN_PER_SEC = 20;
+export const STAMINA_REGEN_PER_SEC = 12;
+
+/** A healing operator is passive (no sprint, same rule as no fire/no items). */
+export function canSprint(t: Pick<Tower, "healing" | "stamina">): boolean {
+  return !t.healing && t.stamina > 0;
+}
+
+/** Drains while sprinting, regenerates otherwise. Hard drop to walk speed at 0 — see canSprint. */
+export function tickStamina(current: number, sprinting: boolean, dt: number): number {
+  const next = current + (sprinting ? -STAMINA_DRAIN_PER_SEC : STAMINA_REGEN_PER_SEC) * dt;
+  return Math.max(0, Math.min(STAMINA_MAX, next));
+}
+
 export function operatorSpeedMultiplier(weight: number): number {
   return Math.min(WEIGHT_SPEED_MAX_MULT, Math.max(WEIGHT_SPEED_MIN_MULT, 1 - weight * WEIGHT_SPEED_PENALTY));
 }
@@ -267,7 +285,7 @@ export function clearOperatorMove(t: Tower): void {
   t.move = null;
 }
 
-function beginMove(t: Tower, path: MoveNode[], dest: MoveNode): void {
+function beginMove(t: Tower, path: MoveNode[], dest: MoveNode, sprint: boolean): void {
   const pos = operatorWorldPos(t);
   t.move = {
     x: pos.x,
@@ -275,6 +293,7 @@ function beginMove(t: Tower, path: MoveNode[], dest: MoveNode): void {
     path: path.slice(1),
     dest,
     pendingDest: null,
+    sprint,
   };
 }
 
@@ -288,6 +307,7 @@ export function issueOperatorMove(
   t: Tower,
   tx: number,
   ty: number,
+  sprint = false,
 ): IssueMoveResult {
   const from = isOperatorMoving(t) ? segmentAnchor(t) : logicalNode(t);
   const dest = resolveMoveDestination(map, logicalNode(t), tx, ty);
@@ -302,13 +322,14 @@ export function issueOperatorMove(
     if (!path) return { ok: false, reason: "NO ROUTE" };
     t.move.pendingDest = dest;
     t.move.dest = dest;
+    t.move.sprint = sprint;
     return { ok: true };
   }
 
   const path = findOperatorPath(map, from, dest);
   if (!path) return { ok: false, reason: "NO ROUTE" };
   if (path.length < 2) return { ok: true, alreadyThere: true };
-  beginMove(t, path, dest);
+  beginMove(t, path, dest, sprint);
   return { ok: true };
 }
 

@@ -3,6 +3,8 @@ import { TILE } from "./data";
 import { MAP_BY_ID, buildMap, isMountain, isRoad, isWater, type MapDef } from "./map";
 import {
   OPERATOR_MOVE_SPEED_TILES,
+  STAMINA_MAX,
+  canSprint,
   canTraverse,
   canWalkHigh,
   canWalkLow,
@@ -23,6 +25,7 @@ import {
   resolveMoveDestination,
   stepDirectMove,
   stepOperatorMove,
+  tickStamina,
   tileCenter,
   walkableNodesAt,
   type DirectMoveInput,
@@ -78,6 +81,7 @@ function op(partial: Partial<Tower> & Pick<Tower, "tx" | "ty">): Tower {
     targetMode: "FIRST",
     manualTargetId: null,
     engageTargetId: null,
+    stamina: STAMINA_MAX,
     ...partial,
   };
 }
@@ -914,5 +918,56 @@ describe("direct (WASD) movement", () => {
     const r = stepDirectMove(start.x, start.y, "GROUND", { ...NONE, down: true, left: true }, 0.2, map, 150);
     expect(r.tx).toBe(Math.floor(r.x / TILE));
     expect(r.ty).toBe(Math.floor(r.y / TILE));
+  });
+});
+
+describe("sprint and stamina", () => {
+  it("drains while sprinting, regenerates otherwise", () => {
+    expect(tickStamina(100, true, 1)).toBeCloseTo(80);
+    expect(tickStamina(50, false, 1)).toBeCloseTo(62);
+  });
+
+  it("clamps to [0, STAMINA_MAX]", () => {
+    expect(tickStamina(10, true, 5)).toBe(0);
+    expect(tickStamina(95, false, 5)).toBe(STAMINA_MAX);
+  });
+
+  it("canSprint requires stamina above zero", () => {
+    const t = op({ tx: 0, ty: 0, stamina: 1 });
+    expect(canSprint(t)).toBe(true);
+    t.stamina = 0;
+    expect(canSprint(t)).toBe(false);
+  });
+
+  it("a healing operator can't sprint, same passive rule as firing", () => {
+    const t = op({
+      tx: 0,
+      ty: 0,
+      stamina: STAMINA_MAX,
+      healing: { medId: "m", medName: "Med", remainingHeal: 10, totalHeal: 10, rate: 5, tickAccumMs: 0 },
+    });
+    expect(canSprint(t)).toBe(false);
+  });
+
+  it("issueOperatorMove carries the sprint intent onto the move state", () => {
+    const map = testMap();
+    const t = op({ tx: 4, ty: 4 });
+    issueOperatorMove(map, [t], t, 8, 4, true);
+    expect(t.move?.sprint).toBe(true);
+  });
+
+  it("re-issuing a move while already moving updates the sprint flag", () => {
+    const map = testMap();
+    const t = op({ tx: 4, ty: 4 });
+    issueOperatorMove(map, [t], t, 8, 4, true);
+    issueOperatorMove(map, [t], t, 4, 8, false);
+    expect(t.move?.sprint).toBe(false);
+  });
+
+  it("a plain move order defaults to no sprint", () => {
+    const map = testMap();
+    const t = op({ tx: 4, ty: 4 });
+    issueOperatorMove(map, [t], t, 8, 4);
+    expect(t.move?.sprint).toBe(false);
   });
 });
