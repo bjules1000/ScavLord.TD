@@ -232,7 +232,7 @@ export function enemyEditorFields(): EnemyEditorField[] {
   return [
     { key: "hp", label: "HP", step: 1 },
     { key: "speed", label: "Speed", step: 1 },
-    { key: "armor", label: "Armor (flat)", step: 1 },
+    { key: "armor", label: "Armor (% mitigation)", step: 1 },
     { key: "towerDamage", label: "Operator damage", step: 1 },
     { key: "fireRange", label: "Fire range", step: 1 },
     { key: "fireCooldown", label: "Fire cycle ms", step: 50 },

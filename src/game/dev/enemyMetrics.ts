@@ -6,7 +6,8 @@
  * dps = towerDamage * attacksPerSec
  *   Theoretical operator DPS. Live cadence is fireCooldown * (0.75..1.25); this uses the authored cooldown.
  * ehpVs10 = hp * 10 / damageAfterArmor(10, armor, 0)
- *   Effective HP against 10-raw 0-pen hits. Armor is flat, so EHP depends on assumed hit size.
+ *   Effective HP against 10-raw 0-pen hits. Armor mitigates proportionally, so this scales
+ *   to any hit size — the reference hit only matters for the floor-of-1 chip-damage edge case.
  * bountyPerHp = bounty / hp
  */
 

@@ -117,7 +117,7 @@ export interface EnemyDef {
   hp: number;
   speed: number;
   bounty: number;
-  armor: number; // flat damage reduction
+  armor: number; // proportional damage reduction — see damageAfterArmor / ARMOR_MITIGATION_K
   damage: number; // lives lost on leak
   fireRange: number;
   fireCooldown: number;

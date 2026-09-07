@@ -683,8 +683,8 @@ describe("damage / rewards", () => {
       range: 500, damage: 30, pen: 0, color: "#fff", surface: "GROUND",
     });
     tickProjectile(proj, 2.0, [e], () => 5, map); // armor=5
-    // applyHit: max(1, 30 - max(0, 5 - 0)) = 25
-    expect(e.hp).toBe(75);
+    // applyHit: max(1, 30 * (1 - min(1, max(0, 5 - 0) / 12))) = 30 * 7/12 = 17.5
+    expect(e.hp).toBe(82.5);
   });
 
   it("miss grants nothing", () => {

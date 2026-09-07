@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import {
   applyHit,
   applyWireDamage,
+  ARMOR_MITIGATION_K,
   creditKillBook,
+  damageAfterArmor,
   leakIfAlive,
   settleRemovedEnemies,
   type KillBook,
@@ -117,6 +119,37 @@ describe("canonical death resolution", () => {
     leakIfAlive(e);
     expect(applyHit(e, 40, scavArmor, 0)).toBe(0);
     expect(applyWireDamage(e, 10)).toBe(0);
+  });
+});
+
+describe("armor mitigation is proportional, not flat", () => {
+  it("takes the same fraction off a small hit and a large hit", () => {
+    const armor = 6; // half of ARMOR_MITIGATION_K
+    expect(damageAfterArmor(10, armor, 0)).toBeCloseTo(5);
+    expect(damageAfterArmor(100, armor, 0)).toBeCloseTo(50);
+  });
+
+  it("pen offsets armor before the reduction is computed", () => {
+    const armor = 9;
+    const pen = 6;
+    const expected = 40 * (1 - (armor - pen) / ARMOR_MITIGATION_K);
+    expect(damageAfterArmor(40, armor, pen)).toBeCloseTo(expected);
+    expect(damageAfterArmor(40, armor, pen)).toBeGreaterThan(damageAfterArmor(40, armor, 0));
+  });
+
+  it("pen blunts high armor but never fully cancels it", () => {
+    // Old flat model: pen >= armor fully negated it. Proportional model never lets pen zero it out
+    // as long as some armor remains above pen — this is the fix for F4 (AP rounds as an off-switch).
+    expect(damageAfterArmor(100, 9, 6)).toBeLessThan(100);
+  });
+
+  it("armor at or above K caps the reduction at 100%, never negative damage", () => {
+    expect(damageAfterArmor(50, ARMOR_MITIGATION_K * 3, 0)).toBe(1);
+  });
+
+  it("zero armor deals full damage regardless of pen", () => {
+    expect(damageAfterArmor(23, 0, 0)).toBe(23);
+    expect(damageAfterArmor(23, 0, 6)).toBe(23);
   });
 });
 

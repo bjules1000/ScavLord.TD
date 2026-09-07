@@ -10,10 +10,17 @@ export function isSettledOut(e: KillState): boolean {
   return !!e.leaked || !!e.counted || e.hp <= 0;
 }
 
-/** Flat armor minus pen, always at least 1 damage. */
+/**
+ * Armor above pen removes a fraction of incoming damage — proportional, not flat, so it
+ * bites a shotgun pellet and a sniper round the same relative amount. Always deals at
+ * least 1 damage; pen can blunt armor but never fully cancels it once armor exceeds K.
+ */
+export const ARMOR_MITIGATION_K = 12;
+
 export function damageAfterArmor(amount: number, armor: number, pen: number): number {
-  const remaining = Math.max(0, armor - pen);
-  return Math.max(1, amount - remaining);
+  const effective = Math.max(0, armor - pen);
+  const reduction = Math.min(1, effective / ARMOR_MITIGATION_K);
+  return Math.max(1, amount * (1 - reduction));
 }
 
 export function applyHit(e: KillState, amount: number, armor: number, pen: number): number {
