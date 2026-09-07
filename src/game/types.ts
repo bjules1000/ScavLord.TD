@@ -48,6 +48,12 @@ export interface Tower {
   surface?: SurfaceLevel;
   /** In-raid travel. Null/absent when stationary. */
   move?: OperatorMoveState | null;
+  /**
+   * Continuous free-roam position while under direct (WASD) control.
+   * Takes priority over `move`/tile-center wherever position is read.
+   * Null/absent when not under direct control.
+   */
+  freeMove?: { x: number; y: number } | null;
   /** weapon id from gear.ts WEAPONS */
   weapon: string;
   /** attachment ids from gear.ts ATTACHMENTS */
@@ -111,7 +117,7 @@ export interface EnemyDef {
   hp: number;
   speed: number;
   bounty: number;
-  armor: number; // flat damage reduction
+  armor: number; // proportional damage reduction — see damageAfterArmor / ARMOR_MITIGATION_K
   damage: number; // lives lost on leak
   fireRange: number;
   fireCooldown: number;

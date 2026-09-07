@@ -21,6 +21,24 @@ export function consumeGrenadeItem<T extends { id: string }>(items: T[], kind: G
 
 export const consumeFragItem = <T extends { id: string }>(items: T[]) => consumeGrenadeItem(items, "frag");
 
+/** Fixed cycle order for the direct-control quick-select (tap G to advance). */
+export const GRENADE_ORDER: readonly GrenadeKind[] = ["frag", "impact", "flash", "stun", "smoke"];
+
+export function carriedGrenadeKinds<T extends { id: string }>(backpack: readonly T[]): GrenadeKind[] {
+  return GRENADE_ORDER.filter((kind) => backpack.some((item) => item.id === GRENADE_DEFS[kind].itemId));
+}
+
+/** Advances from `current` to the next carried kind, wrapping. Null in/out means "not carrying anything". */
+export function nextGrenadeKind<T extends { id: string }>(
+  backpack: readonly T[],
+  current: GrenadeKind | null,
+): GrenadeKind | null {
+  const carried = carriedGrenadeKinds(backpack);
+  if (carried.length === 0) return null;
+  const idx = current == null ? -1 : carried.indexOf(current);
+  return carried[(idx + 1) % carried.length]!;
+}
+
 export type Grenade = {
   id: number;
   shooterId: number;

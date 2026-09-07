@@ -21,9 +21,11 @@ import {
   operatorMoveSpeedPx,
   operatorWorldPos,
   resolveMoveDestination,
+  stepDirectMove,
   stepOperatorMove,
   tileCenter,
   walkableNodesAt,
+  type DirectMoveInput,
 } from "./movement";
 import { applyHighGroundCombat, elevatedSurfaceAt, grantsHighGroundCombatBonus, hasSuspendedBridge } from "./surfaces";
 import { absorbWithArmor } from "./armor";
@@ -825,5 +827,92 @@ describe("weighted runtime movement", () => {
       operatorWorldPos(heavy).y - tileCenter(4, 8).y,
     );
     expect(lightDist).toBeLessThan(heavyDist);
+  });
+});
+
+describe("direct (WASD) movement", () => {
+  const NONE: DirectMoveInput = { up: false, down: false, left: false, right: false };
+
+  it("moves in the held direction when unobstructed", () => {
+    const map = testMap();
+    const start = tileCenter(4, 4);
+    const r = stepDirectMove(start.x, start.y, "GROUND", { ...NONE, right: true }, 0.1, map, 100);
+    expect(r.x).toBeCloseTo(start.x + 10);
+    expect(r.y).toBeCloseTo(start.y);
+    expect(r.surface).toBe("GROUND");
+    expect(r.tx).toBe(4);
+    expect(r.ty).toBe(4);
+  });
+
+  it("holding no keys does not move", () => {
+    const map = testMap();
+    const start = tileCenter(4, 4);
+    const r = stepDirectMove(start.x, start.y, "GROUND", NONE, 0.1, map, 100);
+    expect(r.x).toBeCloseTo(start.x);
+    expect(r.y).toBeCloseTo(start.y);
+  });
+
+  it("normalizes diagonal input so it isn't faster than a straight line", () => {
+    const map = testMap();
+    const start = tileCenter(4, 4);
+    const step = 10;
+    const r = stepDirectMove(start.x, start.y, "GROUND", { ...NONE, up: true, right: true }, 0.1, map, step / 0.1);
+    const dist = Math.hypot(r.x - start.x, r.y - start.y);
+    expect(dist).toBeCloseTo(step, 1);
+  });
+
+  it("is blocked by a mountain tile, exactly like canWalkLow says", () => {
+    const map = slopeMap(); // mountain at (8,5)
+    const start = tileCenter(7, 5);
+    expect(canWalkLow(map, 8, 5)).toBe(false);
+    const r = stepDirectMove(start.x, start.y, "GROUND", { ...NONE, right: true }, 0.1, map, 300);
+    expect(r.x).toBeCloseTo(start.x);
+    expect(r.tx).toBe(7);
+  });
+
+  it("is blocked by water the same way", () => {
+    const map = testMap({ water: [[9, 5]] });
+    const start = tileCenter(8, 5);
+    expect(canWalkLow(map, 9, 5)).toBe(false);
+    const r = stepDirectMove(start.x, start.y, "GROUND", { ...NONE, right: true }, 0.1, map, 300);
+    expect(r.x).toBeCloseTo(start.x);
+    expect(r.tx).toBe(8);
+  });
+
+  it("climbs an authored slope, switching surface from GROUND to HIGH", () => {
+    const map = slopeMap(); // slope south of (2,2): (2,3) GROUND -> (2,2) HIGH_GROUND
+    expect(isAuthoredSlope(map, node(2, 3, "GROUND"), node(2, 2, "HIGH"))).toBe(true);
+    const start = tileCenter(2, 3);
+    const r = stepDirectMove(start.x, start.y, "GROUND", { ...NONE, up: true }, 0.1, map, 300);
+    expect(r.surface).toBe("HIGH");
+    expect(r.ty).toBe(2);
+  });
+
+  it("a walled same-surface edge blocks crossing even when the destination is otherwise walkable", () => {
+    const map = slopeMap(); // wall east of (2,2), also east of (3,2) — both HIGH_GROUND, no slope available
+    const start = tileCenter(2, 2);
+    const r = stepDirectMove(start.x, start.y, "HIGH", { ...NONE, right: true }, 0.1, map, 300);
+    expect(r.x).toBeCloseTo(start.x);
+    expect(r.surface).toBe("HIGH");
+    expect(r.tx).toBe(2);
+  });
+
+  it("slides along one axis when the other is blocked (axis-separated collision)", () => {
+    const map = testMap({ mountain: [[5, 4]] }); // mountain directly east of the start tile
+    const start = tileCenter(4, 4);
+    const r = stepDirectMove(start.x, start.y, "GROUND", { ...NONE, up: true, right: true }, 0.1, map, 600);
+    // X blocked (mountain at (5,4)), Y succeeds (open ground north) — net movement is vertical only.
+    expect(r.x).toBeCloseTo(start.x);
+    expect(r.y).toBeLessThan(start.y);
+    expect(r.tx).toBe(4);
+    expect(r.ty).toBe(3);
+  });
+
+  it("never reports a tx/ty that disagrees with the returned x/y", () => {
+    const map = woods();
+    const start = tileCenter(4, 8);
+    const r = stepDirectMove(start.x, start.y, "GROUND", { ...NONE, down: true, left: true }, 0.2, map, 150);
+    expect(r.tx).toBe(Math.floor(r.x / TILE));
+    expect(r.ty).toBe(Math.floor(r.y / TILE));
   });
 });

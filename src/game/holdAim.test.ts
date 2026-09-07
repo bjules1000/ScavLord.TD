@@ -399,3 +399,83 @@ describe("HOLD ANGLE aim lock", () => {
     expect(wolf.targetMode).toBe("HOLD_ANGLE");
   });
 });
+
+describe("direct (WASD/mouse) aim override", () => {
+  it("a live directAim point wins over HOLD ANGLE", () => {
+    const aim = resolveOperatorAimAngle({
+      directAim: { x: 100, y: 0 },
+      holding: true,
+      holdAngle: Math.PI, // west — would otherwise win
+      targetMode: "HOLD_ANGLE",
+      locked: null,
+      best: null,
+      originX: 0,
+      originY: 0,
+      currentAngle: 0,
+    });
+    expect(aim).toBeCloseTo(0); // east, toward directAim, not west
+  });
+
+  it("a live directAim point wins over a MANUAL lock", () => {
+    const aim = resolveOperatorAimAngle({
+      directAim: { x: 0, y: -100 },
+      holding: false,
+      holdAngle: null,
+      targetMode: "MANUAL",
+      locked: { x: 100, y: 0 }, // would otherwise win, pointing east
+      best: null,
+      originX: 0,
+      originY: 0,
+      currentAngle: 0,
+    });
+    expect(aim).toBeCloseTo(-Math.PI / 2); // north, toward directAim
+  });
+
+  it("a live directAim point wins over the best AUTO target", () => {
+    const aim = resolveOperatorAimAngle({
+      directAim: { x: -100, y: 0 },
+      holding: false,
+      holdAngle: null,
+      targetMode: "FIRST",
+      locked: null,
+      best: { x: 100, y: 0 }, // would otherwise win, pointing east
+      originX: 0,
+      originY: 0,
+      currentAngle: 0,
+    });
+    expect(aim).toBeCloseTo(Math.PI); // west, toward directAim
+  });
+
+  it("no directAim falls through to the existing priority chain unchanged", () => {
+    const aim = resolveOperatorAimAngle({
+      directAim: null,
+      holding: false,
+      holdAngle: null,
+      targetMode: "FIRST",
+      locked: null,
+      best: { x: 100, y: 0 },
+      originX: 0,
+      originY: 0,
+      currentAngle: 0,
+    });
+    // Matches the existing AUTO-target branch exactly, -4px offset included.
+    expect(aim).toBeCloseTo(Math.atan2(-4, 100));
+  });
+
+  it("directAim points exactly at the cursor, with no vertical offset", () => {
+    // Unlike the AUTO/MANUAL branches (which nudge -4px for target center-mass),
+    // direct aim should point exactly where the player put the cursor.
+    const aim = resolveOperatorAimAngle({
+      directAim: { x: 0, y: 100 },
+      holding: false,
+      holdAngle: null,
+      targetMode: "FIRST",
+      locked: null,
+      best: null,
+      originX: 0,
+      originY: 0,
+      currentAngle: 0,
+    });
+    expect(aim).toBeCloseTo(Math.PI / 2);
+  });
+});

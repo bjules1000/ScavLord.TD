@@ -125,9 +125,12 @@ export function selectTarget<T extends Targetable>(
 
 /**
  * Resolve operator facing for this tick.
- * HOLD ANGLE always wins over AUTO/MANUAL recenter while active.
+ * Direct control (a live mouse-aim point) always wins — it's the player
+ * personally piloting this operator, overriding every AI/authored mode.
+ * Otherwise HOLD ANGLE wins over AUTO/MANUAL recenter while active.
  */
 export function resolveOperatorAimAngle(args: {
+  directAim?: { x: number; y: number } | null;
   holding: boolean;
   holdAngle: number | null | undefined;
   targetMode: TargetMode;
@@ -137,6 +140,9 @@ export function resolveOperatorAimAngle(args: {
   originY: number;
   currentAngle: number;
 }): number {
+  if (args.directAim) {
+    return Math.atan2(args.directAim.y - args.originY, args.directAim.x - args.originX);
+  }
   if (args.holding && args.holdAngle != null && Number.isFinite(args.holdAngle)) {
     return args.holdAngle;
   }
