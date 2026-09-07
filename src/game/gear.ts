@@ -715,6 +715,8 @@ export interface ItemDef {
   desc: string;
   ref?: string; // weapon, attachment, armor or backpack id
   heal?: number;
+  /** HP per second while channeling this med. Missing = healing.ts DEFAULT_HEAL_RATE. */
+  healRate?: number;
   price?: number; // buyable in the hideout shop when unlocked
 }
 
@@ -786,9 +788,9 @@ export const ITEMS: ItemDef[] = [
   { id: "g_flash", kind: "throwable", name: "FLASH GRENADE", rarity: "rare", value: 150, desc: "Blinds enemies, preventing attacks for 3.5 seconds.", price: 520 },
   { id: "g_stun", kind: "throwable", name: "STUN GRENADE", rarity: "rare", value: 170, desc: "Stops enemies for 2.25 seconds and deals light damage.", price: 580 },
 
-  { id: "m_ifak", kind: "meds", name: "POCKET KIT", rarity: "common", value: 80, heal: 45, desc: "Heals an operator for 45 HP.", price: 260 },
-  { id: "m_salewa", kind: "meds", name: "TRAUMA BAG", rarity: "common", value: 140, heal: 90, desc: "Heals an operator for 90 HP.", price: 420 },
-  { id: "m_grizzly", kind: "meds", name: "SURGEON KIT", rarity: "rare", value: 280, heal: 220, desc: "Full trauma kit — 220 HP.", price: 850 },
+  { id: "m_ifak", kind: "meds", name: "POCKET KIT", rarity: "common", value: 80, heal: 45, healRate: 6, desc: "Heals 45 HP at 6 HP/s. Takes time — you're exposed while it works.", price: 260 },
+  { id: "m_salewa", kind: "meds", name: "TRAUMA BAG", rarity: "common", value: 140, heal: 90, healRate: 9, desc: "Heals 90 HP at 9 HP/s. Takes time — you're exposed while it works.", price: 420 },
+  { id: "m_grizzly", kind: "meds", name: "SURGEON KIT", rarity: "rare", value: 280, heal: 220, healRate: 15, desc: "Full trauma kit — 220 HP at 15 HP/s, the fastest treatment there is.", price: 850 },
   // valuables
   { id: "v_bolts", kind: "valuable", name: "BOLTS", rarity: "common", value: 60, desc: "Pure sell value." },
   { id: "v_gpu", kind: "valuable", name: "GRAPHICS CARD", rarity: "rare", value: 520, desc: "Pure sell value." },

@@ -1,4 +1,4 @@
-import { COLS, ROWS, SCALE, TILE } from "./data";
+import { SCALE, TILE } from "./data";
 import { shouldDrawLanePortMarkers } from "./lanePortsView";
 import { extractMarkerCenter, type GameMap } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
@@ -62,8 +62,8 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
   const pal = map.def.palette;
   const r = rnd(7);
   const cell = TILE / 8;
-  const W = COLS * TILE;
-  const H = ROWS * TILE;
+  const W = map.width * TILE;
+  const H = map.height * TILE;
   const floor = floorImage();
   if (floor) {
     // photographed-dirt base texture, tiled and tinted per location
@@ -86,8 +86,8 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
     }
     ctx.globalAlpha = 1;
   } else {
-    for (let y = 0; y < ROWS; y++) {
-      for (let x = 0; x < COLS; x++) {
+    for (let y = 0; y < map.height; y++) {
+      for (let x = 0; x < map.width; x++) {
         const n = r();
         ctx.fillStyle = n > 0.7 ? pal.grassA : n > 0.35 ? pal.grassB : pal.grassC;
         ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
@@ -105,8 +105,8 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
   }
 
 
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
       if (!map.WATER[y]![x]) continue;
       ctx.fillStyle = "#1a4a6a";
       ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
@@ -115,8 +115,8 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
     }
   }
 
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
       if (!map.MOUNTAIN[y]![x]) continue;
       ctx.fillStyle = "#3a3c42";
       ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
@@ -125,8 +125,8 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
     }
   }
 
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
       if (!map.HIGH_GROUND[y]![x] || map.MOUNTAIN[y]![x] || map.BLOCKED[y]![x]) continue;
       ctx.fillStyle = "#6a5430";
       ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
@@ -156,8 +156,8 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
   // gravel speckles on road
   const r2 = rnd(31);
   for (let i = 0; i < 900; i++) {
-    const x = Math.floor(r2() * COLS * TILE);
-    const y = Math.floor(r2() * ROWS * TILE);
+    const x = Math.floor(r2() * map.width * TILE);
+    const y = Math.floor(r2() * map.height * TILE);
     const tx = Math.floor(x / TILE);
     const ty = Math.floor(y / TILE);
     if (map.BLOCKED[ty]?.[tx]) {
@@ -168,8 +168,8 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
 
   // scattered vegetation decals on off-road tiles
   const r3 = rnd(53);
-  for (let ty = 0; ty < ROWS; ty++) {
-    for (let tx = 0; tx < COLS; tx++) {
+  for (let ty = 0; ty < map.height; ty++) {
+    for (let tx = 0; tx < map.width; tx++) {
       const n = r3();
       const on = map.BLOCKED[ty]?.[tx] || map.WATER[ty]?.[tx] || map.MOUNTAIN[ty]?.[tx] || map.HIGH_GROUND[ty]?.[tx];
       if (on || n > 0.16) continue;
@@ -507,6 +507,35 @@ export function drawCrate(
     const w = TILE - 10;
     px(ctx, "#14150f", x + 5, y + 2, w, 5);
     px(ctx, "#f0b400", x + 6, y + 3, (w - 2) * Math.min(1, progress), 3);
+  }
+}
+
+/** Player extraction zone. Always visible (unlike the dev-only lane port marker) with a hold-progress ring. */
+export function drawExtractionZone(ctx: CanvasRenderingContext2D, tx: number, ty: number, progress: number) {
+  const cx = tx * TILE + TILE / 2;
+  const cy = ty * TILE + TILE / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(SCALE, SCALE);
+  px(ctx, "#132b18", -16, -18, 32, 36);
+  px(ctx, "#1d5c2a", -14, -16, 28, 32);
+  px(ctx, "#4dd36a", -14, -16, 28, 4);
+  px(ctx, "#4dd36a", -14, 12, 28, 4);
+  px(ctx, "#0d1a10", -6, -6, 12, 12);
+  px(ctx, "#4dd36a", -4, -4, 8, 8);
+  ctx.restore();
+  ctx.save();
+  ctx.font = "8px monospace";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#000";
+  ctx.fillText("EXTRACT", cx + 1, cy - TILE / 2 - 5);
+  ctx.fillStyle = "#4dd36a";
+  ctx.fillText("EXTRACT", cx, cy - TILE / 2 - 6);
+  ctx.restore();
+  if (progress > 0) {
+    const w = TILE - 6;
+    px(ctx, "#14150f", cx - w / 2, cy - TILE / 2 - 20, w, 5);
+    px(ctx, "#4dd36a", cx - w / 2 + 1, cy - TILE / 2 - 19, (w - 2) * Math.min(1, progress), 3);
   }
 }
 

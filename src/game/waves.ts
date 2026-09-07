@@ -16,6 +16,15 @@ import type { EnemyKind } from "./types";
 export const WAVE_START_DELAY_MS = 400;
 export const WAVE_GROUP_PADDING_MS = 700;
 
+/** Between-wave prep window before the next wave auto-starts. */
+export const PREP_TIMER_MIN_MS = 8000;
+export const PREP_TIMER_MAX_MS = 14000;
+
+/** Random prep countdown for one wave gap. Randomized per-gap so it can't be timed/memorized. */
+export function randomPrepDelayMs(rng: () => number = Math.random): number {
+  return PREP_TIMER_MIN_MS + rng() * (PREP_TIMER_MAX_MS - PREP_TIMER_MIN_MS);
+}
+
 export type WaveSpawnEvent = {
   at: number;
   kind: EnemyKind;

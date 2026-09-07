@@ -17,7 +17,7 @@ import {
   type GameMap,
 } from "./map";
 import { lanePathProgress } from "./lanes";
-import { scheduleWave, spawnedEnemyHp, type WaveSpawnEvent } from "./waves";
+import { randomPrepDelayMs, scheduleWave, spawnedEnemyHp, type WaveSpawnEvent } from "./waves";
 import {
   canPlaceOperator,
   enemyLaneSurface,
@@ -94,7 +94,10 @@ import {
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
+import { raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
+import { selectDeploymentTiles } from "./mapDeployment";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
+import { healingProgress, healingSecondsRemaining, startHealing, tickHealing } from "./healing";
 import {
   BARRICADE_BUILD_COST,
   BARRICADE_HP,
@@ -157,6 +160,7 @@ import {
 
 import {
   drawCrate,
+  drawExtractionZone,
   drawDropBag,
   drawElevatedSurfaces,
   drawEnemy,
@@ -363,10 +367,6 @@ import {
 import { clearRaidBackpack, devAddToBackpack } from "./dev/inventory";
 import DevItemPicker from "./dev/DevItemPicker";
 
-const PLAYABLE_W = COLS * TILE;
-const PLAYABLE_H = ROWS * TILE;
-const W = PLAYABLE_W + BOARD_GUTTER * 2;
-const H = PLAYABLE_H + BOARD_GUTTER * 2;
 const START_ROUBLES = 500;
 const START_LIVES = 20;
 const BASE_BACKPACK_SLOTS = 5;
@@ -406,6 +406,16 @@ interface CrateState {
   opened: boolean;
 }
 
+/** Channel-and-hold extraction point. progress resets to 0 once every present operator has left. */
+interface ExtractionZoneState {
+  tx: number;
+  ty: number;
+  progress: number;
+}
+
+const EXTRACTION_TIME = 6; // seconds a zone must be held before it completes
+const EXTRACTION_RADIUS = TILE * 1.6; // same proximity crates already use
+
 interface GameState {
   towers: Tower[];
   enemies: Enemy[];
@@ -419,6 +429,7 @@ interface GameState {
   drops: Drop[];
   obstacles: Obstacle[];
   crates: CrateState[];
+  extractionZones: ExtractionZoneState[];
   queue: SpawnEvent[];
   clock: number;
   nextId: number;
@@ -426,6 +437,8 @@ interface GameState {
   lives: number;
   wave: number;
   phase: Phase;
+  /** Ms until the next wave auto-starts. Null = not counting (e.g. loot pick pending). */
+  prepTimer: number | null;
   hoverTx: number;
   hoverTy: number;
   hoverEdge: BarricadeEdge | null;
@@ -456,6 +469,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     drops: [],
     obstacles: [],
     crates: map.CRATES.map((c) => ({ tx: c.tx, ty: c.ty, progress: 0, opened: false })),
+    extractionZones: map.EXTRACTION.map((z) => ({ tx: z.tx, ty: z.ty, progress: 0 })),
     queue: [],
     clock: 0,
     nextId: 5000,
@@ -463,6 +477,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     lives: START_LIVES,
     wave: 0,
     phase,
+    prepTimer: null,
     hoverTx: -1,
     hoverTy: -1,
     hoverEdge: null,
@@ -605,8 +620,8 @@ const attachItemId = (attId: string) =>
 function pmcSpawnTile(map: GameMap, s: GameState) {
   const [sx, sy] = map.PIX[0]!;
   let best: { tx: number; ty: number; score: number } | null = null;
-  for (let ty = 0; ty < ROWS; ty++) {
-    for (let tx = 0; tx < COLS; tx++) {
+  for (let ty = 0; ty < map.height; ty++) {
+    for (let tx = 0; tx < map.width; tx++) {
       if (!operatorPlaceableFor(map, s, tx, ty)) continue;
       const d = Math.hypot(tx * TILE + TILE / 2 - sx, ty * TILE + TILE / 2 - sy);
       const score = bestCoverAt(map.COVER, tx, ty) * 400 - d;
@@ -616,6 +631,9 @@ function pmcSpawnTile(map: GameMap, s: GameState) {
   return best ?? { tx: 1, ty: 1 };
 }
 
+/** Move speed while treating a wound — a crawl, not a full stop. */
+const HEAL_MOVE_MULT = 0.1;
+
 function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
   const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
   const scav = scavVisualMods(t.weapon, t.scavMods);
@@ -624,28 +642,17 @@ function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
     const op = findOperator(meta, t.operatorId);
     if (op) weight = operatorEffectiveWeight(kit, resolveCombatMods(op)) + scav.weightAdd;
   }
-  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * TILE;
+  const healMult = t.healing ? HEAL_MOVE_MULT : 1;
+  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * healMult * TILE;
 }
 
 function findDeployTiles(map: GameMap, s: GameState, count: number) {
-  const primary = pmcSpawnTile(map, s);
-  const tiles = [primary];
-  const steps = [
-    { dx: 1, dy: 0 },
-    { dx: -1, dy: 0 },
-    { dx: 0, dy: 1 },
-    { dx: 0, dy: -1 },
-    { dx: 1, dy: 1 },
-    { dx: -1, dy: 1 },
-  ];
-  for (const d of steps) {
-    if (tiles.length >= count) break;
-    const tx = primary.tx + d.dx;
-    const ty = primary.ty + d.dy;
-    if (operatorPlaceableFor(map, s, tx, ty)) tiles.push({ tx, ty, score: 0 });
-  }
-  while (tiles.length < count) tiles.push(primary);
-  return tiles;
+  return selectDeploymentTiles(
+    map,
+    count,
+    (tx, ty) => operatorPlaceableFor(map, s, tx, ty),
+    () => pmcSpawnTile(map, s),
+  );
 }
 
 function spawnPersistentOperatorTower(
@@ -714,6 +721,9 @@ export default function TarkovTD() {
   const [recruitmentLabOpen, setRecruitmentLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
+  const selectedMapDef = MAP_BY_ID[mapId] ?? MAP_DEFS[1]!;
+  const W = (selectedMapDef.width ?? COLS) * TILE + BOARD_GUTTER * 2;
+  const H = (selectedMapDef.height ?? ROWS) * TILE + BOARD_GUTTER * 2;
   const gs = useRef<GameState>(freshState([], "hideout", mapRef.current));
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
@@ -862,7 +872,9 @@ export default function TarkovTD() {
       mapRef.current,
       Math.round(START_ROUBLES * debuffs.startRoubles) + skillMods(m.skills).startRoubles,
     );
-    const spot = pmcSpawnTile(mapRef.current, s);
+    const crewDeploy = aliveOperators(m).filter((o) => deployOperatorIds.includes(o.id));
+    const tiles = findDeployTiles(mapRef.current, s, crewDeploy.length + 1);
+    const spot = tiles[0] ?? pmcSpawnTile(mapRef.current, s);
     const hp = pmcMaxHp(m.pmc.level, debuffs);
     const armorDef = effectiveArmor(m.pmc.armor);
     s.towers.push({
@@ -889,11 +901,10 @@ export default function TarkovTD() {
         : null,
       ...weaponRuntimeFields(m.pmc.weapon),
     });
-    const crewDeploy = aliveOperators(m).filter((o) => deployOperatorIds.includes(o.id));
-    const tiles = findDeployTiles(mapRef.current, s, crewDeploy.length + 1);
     crewDeploy.forEach((op, i) => {
       spawnPersistentOperatorTower(s, mapRef.current, op, tiles[i + 1] ?? tiles[0]!, debuffs.pmcHp);
     });
+    s.enemies.push(...raidStartingSentryEnemies(mapRef.current, () => s.nextId++, debuffs.enemyHp));
     gs.current = s;
     setChoices([]);
     setPendingLoot(null);
@@ -1376,6 +1387,7 @@ export default function TarkovTD() {
       const item = s.backpack.find((i) => i.uid === uid);
       const tower = s.towers.find((t) => t.id === towerId);
       if (!item || !tower) return;
+      if (tower.healing) return pushLog("Operator is treating a wound — can't swap gear yet.");
       if (item.kind === "weapon" && item.ref) {
         const result = swapRaidWeapon(item, tower.weapon, tower.attachments, s.backpack, tower.ammo);
         if (!result.ok) return pushLog(result.reason);
@@ -1407,10 +1419,12 @@ export default function TarkovTD() {
         s.backpack = result.backpack;
         pushLog(result.message);
       } else if (item.kind === "meds") {
-        if (tower.hp >= tower.maxHp) return pushLog("Operator is at full health.");
-        tower.hp = Math.min(tower.maxHp, tower.hp + (effectiveMed(item.id)?.heal ?? item.heal ?? 50));
+        const med = effectiveMed(item.id) ?? item;
+        const healing = startHealing(med, tower.maxHp, tower.hp);
+        if (!healing) return pushLog("Operator is at full health.");
+        tower.healing = healing;
         s.backpack = s.backpack.filter((i) => i.uid !== uid);
-        pushLog(`${item.name} used.`);
+        pushLog(`${item.name} applied — treating for ${Math.ceil(healing.totalHeal / healing.rate)}s.`);
       } else {
         return pushLog("Valuables can only be extracted.");
       }
@@ -1418,6 +1432,19 @@ export default function TarkovTD() {
       rerender();
     },
     [addToBackpack, pushLog, rerender],
+  );
+
+  /** Stop an in-progress heal early. Whatever HP already ticked in stays — no rollback. */
+  const cancelHealing = useCallback(
+    (towerId: number) => {
+      const s = gs.current;
+      const tower = s.towers.find((t) => t.id === towerId);
+      if (!tower?.healing) return;
+      tower.healing = null;
+      pushLog("Treatment stopped early.");
+      rerender();
+    },
+    [pushLog, rerender],
   );
 
   const detachFromTower = useCallback(
@@ -1548,6 +1575,10 @@ export default function TarkovTD() {
         s.particles = s.particles.filter((p) => (p.life -= dt) > 0);
         return;
       }
+      if (s.phase === "prep" && s.prepTimer != null) {
+        s.prepTimer -= dt * 1000;
+        if (s.prepTimer <= 0) startWave();
+      }
       s.clock += dt * 1000;
       s.shake = Math.max(0, s.shake - dt * 30);
       const mods = debuffMods(metaRef.current.pmc.debuffs);
@@ -1634,7 +1665,7 @@ export default function TarkovTD() {
           if (br.state !== "REACTION" || br.reactionLeftMs <= 0) br.state = "ADVANCING";
         }
 
-        const moveMult = (grenadeAffected.stunLeft ?? 0) > 0 ? 0 : movementSpeedMult(behavior, br);
+        const moveMult = sentryMovementMultiplier(e) * ((grenadeAffected.stunLeft ?? 0) > 0 ? 0 : movementSpeedMult(behavior, br));
         const route = laneRoute(mapRef.current, e.lane);
         const sp =
           def.speed * SCALE * waveScale(s.wave).speed * (e.slow > 0 ? WIRE_SPEED_MULT : 1) * moveMult;
@@ -1669,8 +1700,7 @@ export default function TarkovTD() {
           continue;
         }
         const [x, y] = pathPoint(mapRef.current, e.seg, e.t, e.lane);
-        e.x = x;
-        e.y = y;
+        syncEnemyToLanePosition(e, x, y);
 
         const etx = Math.floor(e.x / TILE);
         const ety = Math.floor(e.y / TILE);
@@ -1738,7 +1768,7 @@ export default function TarkovTD() {
               ammoTier: def.ammoTier ?? "NORMAL",
             });
           }
-        } else {
+        } else if (!e.sentry) {
           const [nx, ny] = pathPoint(mapRef.current, e.seg, Math.min(1, e.t + 0.05), e.lane);
           e.aim = Math.atan2(ny - e.y, nx - e.x);
         }
@@ -1782,6 +1812,65 @@ export default function TarkovTD() {
         }
       }
 
+      // Extraction — live anytime in-raid, not gated to combat like crates.
+      // Per-operator: whoever is physically in the zone when it completes
+      // leaves with their gear + the current shared backpack; anyone else
+      // keeps fighting and must come back (or use another zone) later.
+      for (const zone of s.extractionZones) {
+        const zx = zone.tx * TILE + TILE / 2;
+        const zy = zone.ty * TILE + TILE / 2;
+        const present = s.towers.filter((t) => {
+          const p = towerPos(t);
+          return Math.hypot(p.x - zx, p.y - zy) < EXTRACTION_RADIUS;
+        });
+        if (present.length) {
+          zone.progress += dt / EXTRACTION_TIME;
+          if (zone.progress >= 1) {
+            zone.progress = 0;
+            for (const t of present) {
+              if (t.pmc) {
+                metaRef.current.pmc.level = t.level ?? metaRef.current.pmc.level;
+                metaRef.current.pmc.xp = t.xp ?? metaRef.current.pmc.xp;
+                metaRef.current.pmc.weapon = t.weapon;
+                metaRef.current.pmc.attachments = [...t.attachments];
+                metaRef.current.pmc.armor = t.armor ?? null;
+                metaRef.current.pmc.scavMods = t.scavMods
+                  ? { ...t.scavMods, parts: { ...t.scavMods.parts } }
+                  : null;
+              } else if (t.operatorId) {
+                const idx = metaRef.current.crew.operators.findIndex((o) => o.id === t.operatorId);
+                if (idx >= 0 && metaRef.current.crew.operators[idx]!.status !== "dead") {
+                  metaRef.current.crew.operators[idx] = syncOperatorEquipmentFromTower(
+                    metaRef.current.crew.operators[idx]!,
+                    t,
+                  );
+                }
+              }
+            }
+            saveMeta(metaRef.current);
+            let extracted = recoveredLootFromSurvivingTowers(present, newUid);
+            if (s.backpack.length) {
+              extracted = [...extracted, ...s.backpack.flatMap((item) => expandPackedWeapon(item, newUid))];
+              s.backpack = [];
+            }
+            s.recovered = [...s.recovered, ...extracted];
+            const departingIds = new Set(present.map((t) => t.id));
+            s.towers = s.towers.filter((t) => !departingIds.has(t.id));
+            if (s.selectedId != null && departingIds.has(s.selectedId)) s.selectedId = null;
+            s.floats.push({ x: zx, y: zy - 18, life: 1.4, text: "EXTRACTED", color: "#8fbf4a" });
+            const names = present.map((t) => {
+              if (t.pmc) return metaRef.current.pmc.name;
+              if (t.operatorId) return findOperator(metaRef.current, t.operatorId)?.name ?? "Operator";
+              return "Hired gun";
+            });
+            pushLog(`${present.length} operator${present.length > 1 ? "s" : ""} extracted: ${names.join(", ")}.`);
+            rerender();
+          }
+        } else if (zone.progress > 0) {
+          zone.progress = Math.max(0, zone.progress - dt / (EXTRACTION_TIME * 2));
+        }
+      }
+
       // towers move, then fire (moving operators cannot shoot)
       for (const t of s.towers) {
         const wasMoving = isOperatorMoving(t);
@@ -1797,6 +1886,11 @@ export default function TarkovTD() {
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
         t.hurt = Math.max(0, t.hurt - dt);
+        if (t.healing) {
+          const healed = tickHealing(t.healing, dt * 1000);
+          t.hp = Math.min(t.maxHp, t.hp + healed.healedThisTick);
+          t.healing = healed.state;
+        }
         const pos = towerPos(t);
         const cx = pos.x;
         const cy = pos.y;
@@ -2245,6 +2339,22 @@ export default function TarkovTD() {
         pushLog(`Wave ${s.wave} cleared. Pick your find.`);
         rerender();
       }
+
+      // Raid ends once every operator has either extracted or died. PMC death
+      // (the catastrophic-loss path) always returns immediately at the point
+      // of death elsewhere in this function, so phase here is never "dead".
+      if (s.towers.length === 0) {
+        const items: { itemId: string; count: number }[] = [];
+        const counts = new Map<string, number>();
+        for (const it of s.recovered) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
+        for (const [itemId, count] of counts) items.push({ itemId, count });
+        noteQuestTestEvent({ type: "EXTRACT", mapId, items });
+        s.phase = "extracted";
+        setSellValuableUids(new Set());
+        setLeaveUids(new Set());
+        pushLog(`Raid over — everyone's out. Recovered ${s.recovered.length} item(s).`);
+        rerender();
+      }
     };
 
     const render = () => {
@@ -2261,6 +2371,7 @@ export default function TarkovTD() {
       ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
 
       for (const c of s.crates) drawCrate(ctx, c.tx, c.ty, c.progress, c.opened);
+      for (const z of s.extractionZones) drawExtractionZone(ctx, z.tx, z.ty, z.progress);
       for (const o of s.obstacles)
         drawObstacle(ctx, o.tx, o.ty, o.kind, o.hp / o.maxHp, o.level, o.edge ?? "N");
 
@@ -2613,7 +2724,7 @@ export default function TarkovTD() {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [addToBackpack, pushLog, rerender]);
+  }, [H, W, addToBackpack, pushLog, rerender]);
 
   /* ---------------- input ---------------- */
   const toWorld = (ev: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }) => {
@@ -3000,6 +3111,9 @@ export default function TarkovTD() {
   const startWave = useCallback(() => {
     const s = gs.current;
     if (s.phase !== "prep") return;
+    // Cleared unconditionally (even on an early return below) so an auto-fired
+    // trigger with no towers deployed logs once instead of retrying every frame.
+    s.prepTimer = null;
     if (!s.towers.length) return pushLog("Hire at least one operator first.");
     s.wave += 1;
     const wave = effectiveWave(mapRef.current.def, s.wave);
@@ -3149,6 +3263,7 @@ export default function TarkovTD() {
     setSwapUid(null);
     setChoices([]);
     gs.current.phase = "prep";
+    gs.current.prepTimer = randomPrepDelayMs();
     pushLog(`Secured ${item.name}.`);
     rerender();
   };
@@ -3166,6 +3281,7 @@ export default function TarkovTD() {
     setSwapUid(null);
     setChoices([]);
     gs.current.phase = "prep";
+    gs.current.prepTimer = randomPrepDelayMs();
     rerender();
   };
 
@@ -3183,29 +3299,6 @@ export default function TarkovTD() {
       else next.add(uid);
       return next;
     });
-  };
-
-  const doExtract = () => {
-    if (s.phase !== "prep") return pushLog("Extract only between waves.");
-    // Persistent kit (PMC / crew) is retained via writeback — never mint into haul.
-    // Only mid-raid hired operators contribute recovered equipped gear.
-    const carried = recoveredLootFromSurvivingTowers(s.towers, newUid);
-    s.recovered = carried;
-    s.backpack = s.backpack.flatMap((item) => expandPackedWeapon(item, newUid));
-    const haul = buildExtractHaul(s.backpack, carried);
-    const value = haul.reduce((a, i) => a + (i.kind === "valuable" ? saleValueOf(i) : 0), 0);
-    s.payout = value;
-    setSellValuableUids(new Set());
-    setLeaveUids(new Set());
-    const items: { itemId: string; count: number }[] = [];
-    const counts = new Map<string, number>();
-    for (const it of haul) counts.set(it.id, (counts.get(it.id) ?? 0) + 1);
-    for (const [itemId, count] of counts) items.push({ itemId, count });
-    noteQuestTestEvent({ type: "EXTRACT", mapId, items });
-    // Extract count for quest trackers is applied in toHideout via applyRaidQuestProgress.
-    s.phase = "extracted";
-    pushLog(`Extracted with ${haul.length} item(s). Decide what to keep.`);
-    rerender();
   };
 
   const doDismiss = () => {
@@ -4296,6 +4389,11 @@ export default function TarkovTD() {
                       ? "Choose your find."
                       : "Raid over."}
               </p>
+              {s.phase === "prep" && s.prepTimer != null && (
+                <p className="mt-1 font-mono text-[11px] text-primary" data-testid="prep-timer">
+                  Auto-starts in {(s.prepTimer / 1000).toFixed(1)}s
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap gap-1">
                 <button
                   type="button"
@@ -4304,18 +4402,28 @@ export default function TarkovTD() {
                   disabled={s.phase !== "prep"}
                   className="pixel-btn pixel-btn-primary px-2 py-1 text-[10px] disabled:opacity-40"
                 >
-                  START
-                </button>
-                <button
-                  type="button"
-                  data-testid="raid-extract"
-                  onClick={doExtract}
-                  disabled={s.phase !== "prep"}
-                  className="pixel-btn px-2 py-1 text-[10px] disabled:opacity-40"
-                >
-                  EXTRACT
+                  {s.phase === "prep" && s.prepTimer != null ? "START NOW" : "START"}
                 </button>
               </div>
+              {s.extractionZones.some((z) => z.progress > 0) && (
+                <div className="mt-2 space-y-1" data-testid="extraction-status">
+                  {s.extractionZones
+                    .filter((z) => z.progress > 0)
+                    .map((z, i) => (
+                      <div key={i}>
+                        <p className="font-mono text-[10px] text-primary">
+                          EXTRACTING · {Math.round(z.progress * 100)}%
+                        </p>
+                        <div className="h-1 border border-border bg-transparent">
+                          <div
+                            className="h-full bg-primary"
+                            style={{ width: `${Math.round(z.progress * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
 
             {selected ? (
@@ -4370,6 +4478,28 @@ export default function TarkovTD() {
                             {Math.round((effectiveArmor(selected.armor)?.reductionNormal ?? 0) * 100)}% ·{" "}
                             {Math.round(selected.armorHp ?? 0)}/
                             {effectiveArmor(selected.armor)?.durability ?? 0}
+                          </div>
+                        ) : null}
+                        {selected.healing ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-primary">
+                              <span>
+                                TREATING · {Math.ceil(healingSecondsRemaining(selected.healing))}s · CAN'T FIRE
+                              </span>
+                              <button
+                                type="button"
+                                className="pixel-btn px-1 py-0 text-[9px] text-muted-foreground"
+                                onClick={() => cancelHealing(selected.id)}
+                              >
+                                CANCEL
+                              </button>
+                            </div>
+                            <div className="h-1 border border-border bg-transparent">
+                              <div
+                                className="h-full bg-primary"
+                                style={{ width: `${Math.round(healingProgress(selected.healing) * 100)}%` }}
+                              />
+                            </div>
                           </div>
                         ) : null}
                         {sum ? <div className="text-[9px] text-primary">{sum}</div> : null}

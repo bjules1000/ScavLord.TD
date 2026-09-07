@@ -67,6 +67,7 @@ import {
 import type { EditorMapDoc, TerrainKind } from "./schema";
 import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
+import { listAllEnemyKinds } from "../dev/waveLabCore";
 import { lockDoc } from "./document";
 import { bridgeAt, hasBridge, inferBridgeOrientation, toggleBridgeOrientation } from "./bridges";
 import {
@@ -178,6 +179,8 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       | "prop"
       | "cover"
       | "crate"
+      | "extraction"
+      | "sentry"
       | "checkpoint"
       | "spawn"
       | "end"
@@ -195,6 +198,8 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       invalid = tool.id === "edge" ? false : !canPlaceOccupant(doc, hover.tx, hover.ty);
       if (tool.id === "cover") ghostItem = "cover";
       else if (tool.id === "crate") ghostItem = "crate";
+      else if (tool.id === "extraction") ghostItem = "extraction";
+      else if (tool.id === "sentry") ghostItem = "sentry";
       else if (tool.id === "checkpoint") ghostItem = "checkpoint";
       else ghostItem = "prop";
     }
@@ -259,6 +264,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             ghostProp: tool.id === "prop" ? tool.type : null,
             ghostCover: tool.id === "cover" ? tool.type : null,
             ghostCheckpoint: tool.id === "checkpoint" ? tool.type : null,
+            ghostSentry: tool.id === "sentry" ? String(tool.kind) : null,
             ...(pathPreview ? { pathPreview } : {}),
             ...(edge ? { edge } : {}),
             ...(portPreview ? { portPreview } : {}),
@@ -660,6 +666,9 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               <Chip active={tool.id === "crate"} onClick={() => setTool({ id: "crate" })}>
                 LOOT CRATE
               </Chip>
+              <Chip active={tool.id === "extraction"} onClick={() => setTool({ id: "extraction" })}>
+                EXTRACTION
+              </Chip>
               {CHECKPOINT_TYPES.map((c) => (
                 <Chip key={c} active={tool.id === "checkpoint" && tool.type === c} onClick={() => setTool({ id: "checkpoint", type: c })}>
                   {c}
@@ -674,6 +683,14 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
                 ERASE PROP
               </Chip>
+            </Section>
+            <Section title="HOSTILE SENTRIES">
+              {listAllEnemyKinds().map((kind) => (
+                <Chip key={kind} active={tool.id === "sentry" && tool.kind === kind} onClick={() => setTool({ id: "sentry", kind })}>
+                  {kind === "sniperScav" ? "SNIPER SCAV" : kind.toUpperCase()}
+                </Chip>
+              ))}
+              <div className="w-full text-muted-foreground">Placed defenders begin on the map and hold their position while normal waves still use authored lanes.</div>
             </Section>
             <Section title="COLLISION / BARRIERS">
               <Chip active={isMovementWallMode(tool)} onClick={() => setTool(selectCollisionWallTool())}>
@@ -1011,12 +1028,14 @@ function Inspector({
   const prop = doc.props.find((p) => p.id === selected?.id);
   const cover = doc.cover.find((p) => p.id === selected?.id);
   const crate = doc.crates.find((p) => p.id === selected?.id);
+  const extraction = doc.extraction.find((p) => p.id === selected?.id);
   const cp = doc.checkpoints.find((p) => p.id === selected?.id);
   const zone = doc.zones.find((p) => p.id === selected?.id);
   const gate = doc.gates.find((p) => p.id === selected?.id);
   if (prop) return <div>PROP {prop.type} · X {prop.tx} Y {prop.ty}</div>;
   if (cover) return <div>COVER {cover.type} · X {cover.tx} Y {cover.ty}</div>;
   if (crate) return <div>CRATE · X {crate.tx} Y {crate.ty}</div>;
+  if (extraction) return <div>EXTRACTION · X {extraction.tx} Y {extraction.ty}</div>;
   if (cp) return <div>CHECKPOINT {cp.type} · X {cp.tx} Y {cp.ty}</div>;
   if (zone) return <div>ZONE {zone.type} · {zone.name} · {zone.cells.length} tiles</div>;
   if (gate) return <div>GATE {gate.id} · LANE {gate.laneId} · X {gate.tx} Y {gate.ty} · {gate.edge}</div>;

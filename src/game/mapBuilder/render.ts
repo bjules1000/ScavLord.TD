@@ -1,5 +1,5 @@
 import { TILE } from "../data";
-import { drawCheckpoint, drawCover, drawCrate, drawProp } from "../draw";
+import { drawCheckpoint, drawCover, drawCrate, drawExtractionZone, drawProp } from "../draw";
 import type { CheckpointPart, CoverType, PropType } from "../map";
 import { hasBridge } from "./bridges";
 import { inBounds, terrainAt } from "./document";
@@ -137,6 +137,8 @@ export function drawEditorMap(
       | "prop"
       | "cover"
       | "crate"
+      | "extraction"
+      | "sentry"
       | "checkpoint"
       | "spawn"
       | "end"
@@ -150,6 +152,7 @@ export function drawEditorMap(
     ghostProp?: PropType | null;
     ghostCover?: CoverType | null;
     ghostCheckpoint?: CheckpointPart["type"] | null;
+    ghostSentry?: string | null;
     pathPreview?: Array<[number, number]>;
     portPreview?: BoundaryPort | null;
     wallPreview?: CollisionWall | null;
@@ -242,6 +245,8 @@ export function drawEditorMap(
     for (const p of doc.props) drawProp(ctx, p.tx * TILE, p.ty * TILE, p.type);
     for (const c of doc.checkpoints) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
     for (const c of doc.crates) drawCrate(ctx, c.tx, c.ty, 0, false);
+    for (const z of doc.extraction) drawExtractionZone(ctx, z.tx, z.ty, 0);
+    for (const s of doc.sentries) drawMarker(ctx, s.tx, s.ty, "#ff5a3c", String(s.kind).startsWith("sniper") ? "SN" : "EN");
     for (const e of doc.edges) drawEdgeMark(ctx, e.tx, e.ty, e.edge, e.type === "wall" ? "#8a8c80" : "#c9c2a6");
   }
 
@@ -358,9 +363,17 @@ export function drawEditorMap(
         ctx.globalAlpha = 0.55;
         drawCrate(ctx, hover.tx, hover.ty, 0, false);
       }
+      if (!hover.invalid && hover.ghostItem === "extraction") {
+        ctx.globalAlpha = 0.55;
+        drawExtractionZone(ctx, hover.tx, hover.ty, 0);
+      }
       if (!hover.invalid && hover.ghostItem === "checkpoint" && hover.ghostCheckpoint) {
         ctx.globalAlpha = 0.55;
         drawCheckpoint(ctx, hover.tx * TILE, hover.ty * TILE, hover.ghostCheckpoint);
+      }
+      if (!hover.invalid && hover.ghostItem === "sentry") {
+        ctx.globalAlpha = 0.75;
+        drawMarker(ctx, hover.tx, hover.ty, "#ff5a3c", hover.ghostSentry?.startsWith("sniper") ? "SN" : "EN");
       }
       if (hover.edge) drawEdgeMark(ctx, hover.tx, hover.ty, hover.edge, hover.invalid ? "#c23b2c" : "#f0b400");
       ctx.restore();
@@ -540,6 +553,10 @@ export function hitObject(
   if (cover) return { kind: "cover", id: cover.id };
   const crate = doc.crates.find((p) => p.tx === tx && p.ty === ty);
   if (crate) return { kind: "crate", id: crate.id };
+  const extraction = doc.extraction.find((p) => p.tx === tx && p.ty === ty);
+  if (extraction) return { kind: "extraction", id: extraction.id };
+  const sentry = doc.sentries.find((p) => p.tx === tx && p.ty === ty);
+  if (sentry) return { kind: "sentry", id: sentry.id };
   const cp = doc.checkpoints.find((p) => p.tx === tx && p.ty === ty);
   if (cp) return { kind: "checkpoint", id: cp.id };
   const gate = doc.gates.find((p) => p.tx === tx && p.ty === ty);

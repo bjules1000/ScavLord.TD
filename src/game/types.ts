@@ -88,6 +88,8 @@ export interface Tower {
   holdAnglePoint?: { x: number; y: number } | null;
   /** Improvised Bench visual/build state carried into raid. */
   scavMods?: import("./weaponVisuals").WeaponVisualState | null;
+  /** In-progress heal-over-time channel. Null/absent = not healing. */
+  healing?: import("./healing").HealingState | null;
 }
 
 export type BuiltinEnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";
@@ -144,6 +146,8 @@ export interface Enemy {
   t: number;
   x: number;
   y: number;
+  /** Authored map defender: fights normally but never advances along a wave lane. */
+  sentry?: boolean;
   /** Authored lane traffic stays GROUND even under a suspended bridge. */
   surface?: SurfaceLevel;
   /** Live wire currently occupying this enemy; null when off wire. */

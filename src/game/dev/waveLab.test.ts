@@ -226,7 +226,7 @@ describe("Wave Lab enemies", () => {
 
 describe("Wave Lab waves", () => {
   it("canonical maps/waves populate WAVES view", () => {
-    expect(MAP_DEFS.map((m) => m.id)).toEqual(["woods", "kolkhoz", "factory"]);
+    expect(MAP_DEFS.map((m) => m.id)).toEqual(["woods", "woods-v2", "kolkhoz", "factory"]);
     expect(WAVE_CATALOG_MAX).toBe(20);
     expect(canonicalWave(woods, 3).groups.length).toBeGreaterThan(0);
     expect(canonicalWave(woods, 10).groups.some((g) => g.kind === "boss")).toBe(true);

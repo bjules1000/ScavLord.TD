@@ -10,7 +10,7 @@
  *
  * Browser never writes repo files. Export is the handoff boundary.
  *
- * Main MapDef stores `path` (MAIN), optional extra `lanes`, optional `water`,
+ * Main MapDef stores `path` (MAIN), optional extra `lanes`, authored `road`, optional `water`,
  * `mountain`, `highGround`, `collisionWalls`, `bridges`, `zones`,
  * plus props/cover/crates/checkpoints.
  * Combat gates and visual edge objects remain editor-native / future-compatible.
@@ -33,8 +33,8 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     ...createBlankMap({
       displayName: def.name,
       id: `draft-${def.id}`,
-      width: COLS,
-      height: ROWS,
+      width: def.width ?? COLS,
+      height: def.height ?? ROWS,
     }),
     sourceMapId: def.id,
     displayName: def.name,
@@ -47,20 +47,25 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     waveMods: def.waveMods ? { ...def.waveMods } : null,
     sector: def.sector,
     geo: { ...def.geo },
-    lanes: mapLaneDefs(def).map((l) => peelLaneFromWaypoints(l.id, l.path, COLS, ROWS)),
+    lanes: mapLaneDefs(def).map((l) => peelLaneFromWaypoints(l.id, l.path, def.width ?? COLS, def.height ?? ROWS)),
   };
-  const terrain = emptyTerrain(COLS, ROWS);
+  const width = def.width ?? COLS;
+  const height = def.height ?? ROWS;
+  const terrain = emptyTerrain(width, height);
   for (const [x, y] of def.highGround ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) terrain[y]![x] = "HIGH_GROUND";
+    if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "HIGH_GROUND";
   }
   for (const [x, y] of def.mountain ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) terrain[y]![x] = "MOUNTAIN";
+    if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "MOUNTAIN";
   }
   for (const lane of mapLaneDefs(def)) {
-    for (const [x, y] of onMapCells(pathCells(lane.path), COLS, ROWS)) terrain[y]![x] = "ROAD";
+    for (const [x, y] of onMapCells(pathCells(lane.path), width, height)) terrain[y]![x] = "ROAD";
+  }
+  for (const [x, y] of def.road ?? []) {
+    if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "ROAD";
   }
   for (const [x, y] of def.water ?? []) {
-    if (x >= 0 && y >= 0 && x < COLS && y < ROWS) terrain[y]![x] = "WATER";
+    if (x >= 0 && y >= 0 && x < width && y < height) terrain[y]![x] = "WATER";
   }
   doc.terrain = terrain;
   doc.props = def.props.map((p, i) => ({
@@ -76,6 +81,8 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
     ty,
   }));
   doc.crates = def.crates.map(([tx, ty], i) => ({ id: `crate-${i + 1}`, tx, ty }));
+  doc.extraction = (def.extraction ?? []).map(([tx, ty], i) => ({ id: `extraction-${i + 1}`, tx, ty }));
+  doc.sentries = (def.sentries ?? []).map((s, i) => ({ id: `sentry-${i + 1}`, ...s, facing: s.facing ?? Math.PI }));
   doc.checkpoints = def.checkpoint.map((c, i) => ({
     id: `cp-${i + 1}`,
     type: c.type,
@@ -121,12 +128,6 @@ export interface IntegrationNote {
  */
 export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
   const notes: IntegrationNote[] = [];
-  if (doc.width !== COLS || doc.height !== ROWS) {
-    notes.push({
-      code: "SIZE",
-      message: `Export is ${doc.width}×${doc.height}; production grid is ${COLS}×${ROWS}.`,
-    });
-  }
   if (doc.lanes.length > 1) {
     notes.push({
       code: "LANES",
@@ -137,9 +138,6 @@ export function integrationNotes(doc: EditorMapDoc): IntegrationNote[] {
   for (const row of doc.terrain) for (const cell of row) kinds.add(cell);
   if (kinds.has("WATER")) {
     notes.push({ code: "WATER", message: "Water tiles exist; production MapDef.water must keep them." });
-  }
-  if (doc.zones.length) {
-    notes.push({ code: "ZONES", message: "Special zones exist; raid gameplay does not consume them yet." });
   }
   if (doc.gates.length) {
     notes.push({
@@ -175,6 +173,8 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
   const def: MapDef = {
     id: doc.sourceMapId ?? doc.id.replace(/^(draft|import)-/, ""),
     name: doc.displayName,
+    width: doc.width,
+    height: doc.height,
     threat: doc.threat,
     threatLabel: doc.threatLabel,
     desc: doc.desc,
@@ -195,7 +195,13 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
     crates: [...doc.crates]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx)
       .map((c) => [c.tx, c.ty] as [number, number]),
+    extraction: [...doc.extraction]
+      .sort((a, b) => a.ty - b.ty || a.tx - b.tx)
+      .map((c) => [c.tx, c.ty] as [number, number]),
     palette: { ...doc.palette },
+    sentries: [...doc.sentries]
+      .sort((a, b) => a.ty - b.ty || a.tx - b.tx || String(a.kind).localeCompare(String(b.kind)))
+      .map(({ kind, tx, ty, facing }) => ({ kind, tx, ty, facing })),
   };
   if (doc.waveMods) def.waveMods = { ...doc.waveMods };
   if (doc.lanes.length > 1) {
@@ -214,6 +220,12 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
   if (mountain) def.mountain = mountain;
   const highGround = tilesOf(doc, "HIGH_GROUND");
   if (highGround) def.highGround = highGround;
+  const laneRoad = new Set(
+    doc.lanes.flatMap((entry) => onMapCells(pathCells(productionPathFromLane(entry)), doc.width, doc.height))
+      .map(([x, y]) => `${x},${y}`),
+  );
+  const road = tilesOf(doc, "ROAD")?.filter(([x, y]) => !laneRoad.has(`${x},${y}`));
+  if (road?.length) def.road = road;
   if (doc.collisionWalls.length) {
     def.collisionWalls = [...doc.collisionWalls]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.edge.localeCompare(b.edge))

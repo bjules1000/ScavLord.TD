@@ -17,7 +17,7 @@ import {
   pathStepValid,
 } from "./author";
 import { canRedo, canUndo, commit, commitStroke, redo, sessionFrom, undo } from "./history";
-import { clientToTile, DEFAULT_LAYERS, pathStrokeStyle, visibleLanePortMarkers, visiblePathOverlays } from "./render";
+import { clientToTile, DEFAULT_LAYERS, hitObject, pathStrokeStyle, visibleLanePortMarkers, visiblePathOverlays } from "./render";
 import {
   isInspectMode,
   isPathMode,
@@ -43,6 +43,7 @@ import {
   eraseTiles,
   paintTiles,
   paintZoneCells,
+  placeExtraction,
   placeProp,
   removeObject,
   setLaneWaypoints,
@@ -80,6 +81,7 @@ function validDraft() {
   doc = setLaneWaypoints(doc, "MAIN", tiles);
   doc = applySpawn(doc, "MAIN", { tx: 0, ty: 2, edge: "W" });
   doc = applyEndpoint(doc, "MAIN", { tx: 19, ty: 2, edge: "E" });
+  doc = placeExtraction(doc, 0, 5);
   return doc;
 }
 
@@ -765,6 +767,70 @@ describe("map builder props and gameplay", () => {
     expect(exp.props.some((p) => p.type === "tree")).toBe(true);
     expect(exp.gates.some((g) => g.id === "WEST")).toBe(true);
     expect(stringifyExport(painted).length).toBeGreaterThan(10);
+  });
+});
+
+describe("map builder extraction zones", () => {
+  it("clicking places an extraction zone and preview does not commit until applyAuthor", () => {
+    const start = createBlankMap({ displayName: "E", id: "extract-place", width: 12, height: 10 });
+    expect(start.extraction.length).toBe(0);
+    const preview = placeExtraction(start, 3, 3);
+    expect(start.extraction.length).toBe(0);
+    expect(preview.extraction[0]).toMatchObject({ tx: 3, ty: 3 });
+    const committed = applyAuthor(start, { id: "extraction" }, cell(3, 3), ctx());
+    expect(committed.extraction.some((z) => z.tx === 3 && z.ty === 3)).toBe(true);
+  });
+
+  it("duplicate hover/place on the same tile does not add a second zone", () => {
+    let doc = createBlankMap({ displayName: "E", id: "extract-dup", width: 12, height: 10 });
+    doc = placeExtraction(doc, 2, 2);
+    const again = placeExtraction(doc, 2, 2);
+    expect(again).toBe(doc);
+    expect(again.extraction.length).toBe(1);
+  });
+
+  it("erase-prop removes an extraction zone like any other occupant", () => {
+    let doc = validDraft();
+    doc = placeExtraction(doc, 5, 5);
+    const erased = erasePropAt(doc, 5, 5);
+    expect(erased.extraction.some((z) => z.tx === 5 && z.ty === 5)).toBe(false);
+    // The map's originally authored zone (from validDraft) is untouched.
+    expect(erased.extraction.length).toBe(1);
+  });
+
+  it("clicking an extraction zone selects it via hitObject", () => {
+    const doc = validDraft();
+    const zone = doc.extraction[0]!;
+    expect(hitObject(doc, zone.tx, zone.ty)).toEqual({ kind: "extraction", id: zone.id });
+  });
+
+  it("survives export -> import round trip", () => {
+    const doc = validDraft();
+    const exported = toExport(doc);
+    expect(exported.extraction).toEqual([{ tx: doc.extraction[0]!.tx, ty: doc.extraction[0]!.ty }]);
+    const reimported = importedToDoc(exported, "reimport-test");
+    expect(reimported.extraction).toHaveLength(1);
+    expect(reimported.extraction[0]).toMatchObject({ tx: doc.extraction[0]!.tx, ty: doc.extraction[0]!.ty });
+  });
+
+  it("survives the production MapDef round trip (fromProductionMap <-> toProductionMapDef)", () => {
+    const woods = MAP_BY_ID["woods"]!;
+    expect(woods.extraction.length).toBeGreaterThan(0);
+    const draft = fromProductionMap(woods);
+    expect(draft.extraction).toEqual(
+      woods.extraction.map(([tx, ty], i) => ({ id: `extraction-${i + 1}`, tx, ty })),
+    );
+    const backToProd = toProductionMapDef(draft);
+    expect(backToProd.extraction).toEqual(woods.extraction);
+  });
+
+  it("a draft with zero extraction zones fails validation", () => {
+    const doc = validDraft();
+    expect(validateMap(doc).ok).toBe(true);
+    const stripped = { ...doc, extraction: [] };
+    const result = validateMap(stripped);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.code === "EXTRACTION")).toBe(true);
   });
 });
 
