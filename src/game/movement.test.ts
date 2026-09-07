@@ -601,11 +601,13 @@ describe("movement runtime", () => {
 });
 
 describe("combat integration", () => {
-  it("moving operator cannot fire", () => {
+  it("a walking operator can still fire; only a sprint order blocks it", () => {
     const map = testMap();
     const t = op({ tx: 4, ty: 4, cd: 0 });
     expect(operatorCanFire(t)).toBe(true);
     issueOperatorMove(map, [t], t, 7, 4);
+    expect(operatorCanFire(t)).toBe(true);
+    issueOperatorMove(map, [t], t, 8, 4, true);
     expect(operatorCanFire(t)).toBe(false);
   });
 

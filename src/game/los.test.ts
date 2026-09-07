@@ -31,7 +31,7 @@ import {
 } from "./movement";
 import { applyHighGroundCombat, grantsHighGroundCombatBonus } from "./surfaces";
 import { pickAutoTarget, pickManualTarget, selectTarget, type Targetable } from "./targeting";
-import type { SurfaceLevel, Tower } from "./types";
+import type { SurfaceLevel } from "./types";
 
 const pal = MAP_BY_ID["woods"]!.palette;
 
@@ -477,10 +477,16 @@ describe("combat integration with LOS", () => {
     expect(prot).toBeGreaterThan(0);
   });
 
-  it("moving operators still cannot fire", () => {
-    const moving = { move: { x: 0, y: 0, path: [{ tx: 1, ty: 1, surface: "GROUND" as const }], dest: { tx: 1, ty: 1, surface: "GROUND" as const }, pendingDest: null } };
-    expect(operatorCanFire(moving as Pick<Tower, "move">)).toBe(false);
-    expect(operatorCanFire({ move: null })).toBe(true);
+  it("walking operators can fire now; only sprinting blocks it", () => {
+    const walking = {
+      move: { x: 0, y: 0, path: [{ tx: 1, ty: 1, surface: "GROUND" as const }], dest: { tx: 1, ty: 1, surface: "GROUND" as const }, pendingDest: null, sprint: false },
+      healing: null,
+      stamina: 100,
+    };
+    expect(operatorCanFire(walking)).toBe(true);
+    const sprinting = { ...walking, move: { ...walking.move, sprint: true } };
+    expect(operatorCanFire(sprinting)).toBe(false);
+    expect(operatorCanFire({ move: null, healing: null, stamina: 100 })).toBe(true);
   });
 
   it("HIGH_GROUND keeps +12% range and +0.05 accuracy", () => {

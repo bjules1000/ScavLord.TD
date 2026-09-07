@@ -62,8 +62,14 @@ export function isOperatorMoving(t: Pick<Tower, "move">): boolean {
   return !!t.move && t.move.path.length > 0;
 }
 
-export function operatorCanFire(t: Pick<Tower, "move" | "healing">): boolean {
-  return !isOperatorMoving(t) && !t.healing;
+/**
+ * Walking no longer blocks fire (only a real speed-boosted sprint does — see
+ * isOperatorSprinting). A hard-dropped-to-walk sprint order (stamina ran out)
+ * can fire again immediately, same as any other walk.
+ */
+export function operatorCanFire(t: Pick<Tower, "move" | "healing" | "stamina">): boolean {
+  if (t.healing) return false;
+  return !isOperatorSprinting(t);
 }
 
 /** Sprint fuel, 0..STAMINA_MAX. */
@@ -76,6 +82,11 @@ export const STAMINA_REGEN_PER_SEC = 12;
 /** A healing operator is passive (no sprint, same rule as no fire/no items). */
 export function canSprint(t: Pick<Tower, "healing" | "stamina">): boolean {
   return !t.healing && t.stamina > 0;
+}
+
+/** True only while a sprint-tagged move order is actually getting the speed boost (order-driven movement only — direct/WASD control tracks its own live sprint state from held keys). */
+export function isOperatorSprinting(t: Pick<Tower, "move" | "healing" | "stamina">): boolean {
+  return isOperatorMoving(t) && t.move?.sprint === true && canSprint(t);
 }
 
 /** Drains while sprinting, regenerates otherwise. Hard drop to walk speed at 0 — see canSprint. */

@@ -37,6 +37,7 @@ import {
   operatorMoveSpeedPx,
   operatorWorldPos,
   getOperatorMoveSpeed,
+  isOperatorSprinting,
   resolveMoveDestination,
   SPRINT_SPEED_MULT,
   stepDirectMove,
@@ -568,7 +569,7 @@ function coverList(map: GameMap, s: GameState): CoverPiece[] {
   ];
 }
 
-export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Meta) {
+export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Meta, firingOnTheMove = false) {
   const w = weaponDef(t.weapon);
   const fitted = fittedWeaponStats(t.weapon, t.attachments, t.scavMods);
   let damage = fitted.damage;
@@ -591,6 +592,10 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
   if (operatorMods) {
     accuracy += operatorAccuracyBonus(operatorMods);
     reloadMs *= operatorReloadMult(operatorMods);
+  }
+  if (firingOnTheMove) {
+    range *= MOVING_FIRE_RANGE_MULT;
+    accuracy -= MOVING_FIRE_ACCURACY_PENALTY;
   }
   if (map) {
     const boosted = applyHighGroundCombat(range, accuracy, map, t.tx, t.ty);
@@ -641,6 +646,14 @@ const HEAL_MOVE_MULT = 0.1;
 
 /** Direct-control G key: shorter than this is a tap (cycle kind); at/above this is a hold (throw on release). */
 const GRENADE_HOLD_THRESHOLD_MS = 220;
+
+/**
+ * Firing while walking (not sprinting — that still blocks fire outright) narrows
+ * engagement rather than spraying: range takes the real hit, accuracy only a little,
+ * so a moving operator reads as "focused but short-ranged," not "wasting ammo wildly."
+ */
+const MOVING_FIRE_RANGE_MULT = 0.65;
+const MOVING_FIRE_ACCURACY_PENALTY = 0.06;
 
 function towerMoveSpeedPx(t: Tower, meta?: Meta, sprinting = false): number {
   const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
@@ -1887,10 +1900,12 @@ export default function TarkovTD() {
         }
       }
 
-      // towers move, then fire (moving operators cannot shoot — except the
-      // directly-controlled one, which is a live strafe-and-shoot unit)
+      // towers move, then fire — walking narrows engagement (range/accuracy penalty
+      // below) but doesn't block it; sprinting still does, for everyone
       for (const t of s.towers) {
         const isDirect = t.id === s.selectedId && directControlActive();
+        let isMoving = false;
+        let isSprinting = false;
         if (isDirect) {
           if (!t.freeMove) {
             const startPos = operatorWorldPos(t);
@@ -1898,8 +1913,8 @@ export default function TarkovTD() {
             t.move = null; // direct control overrides any queued path order
           }
           const keys = directHeldKeysRef.current;
-          const moving = keys.has("w") || keys.has("a") || keys.has("s") || keys.has("d");
-          const sprinting = moving && keys.has("shift") && canSprint(t);
+          isMoving = keys.has("w") || keys.has("a") || keys.has("s") || keys.has("d");
+          isSprinting = isMoving && keys.has("shift") && canSprint(t);
           const result = stepDirectMove(
             t.freeMove.x,
             t.freeMove.y,
@@ -1907,26 +1922,29 @@ export default function TarkovTD() {
             { up: keys.has("w"), down: keys.has("s"), left: keys.has("a"), right: keys.has("d") },
             dt,
             mapRef.current,
-            towerMoveSpeedPx(t, metaRef.current, sprinting),
+            towerMoveSpeedPx(t, metaRef.current, isSprinting),
           );
           t.freeMove = { x: result.x, y: result.y };
           t.tx = result.tx;
           t.ty = result.ty;
           t.surface = result.surface;
-          t.stamina = tickStamina(t.stamina, sprinting, dt);
+          t.stamina = tickStamina(t.stamina, isSprinting, dt);
         } else {
           if (t.freeMove) t.freeMove = null; // direct control just ended — settle onto the tile grid
-          const wasMoving = isOperatorMoving(t);
-          const sprinting = wasMoving && t.move?.sprint === true && canSprint(t);
-          if (wasMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current, sprinting));
-          t.stamina = tickStamina(t.stamina, sprinting, dt);
+          isMoving = isOperatorMoving(t);
+          isSprinting = isOperatorSprinting(t);
+          if (isMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current, isSprinting));
+          t.stamina = tickStamina(t.stamina, isSprinting, dt);
           const plan = planBookRef.current.get(t.id);
           if (plan) {
-            const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers, throwGrenade }, wasMoving);
+            const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers, throwGrenade }, isMoving);
             if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
           }
         }
-        const st = towerStats(t, mods, mapRef.current, metaRef.current);
+        // Walking narrows engagement (range down, aim slightly off) rather than blocking fire outright —
+        // sprinting still blocks fire entirely (isSprinting, checked below at the fire gate).
+        const firingOnTheMove = isMoving && !isSprinting;
+        const st = towerStats(t, mods, mapRef.current, metaRef.current, firingOnTheMove);
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
         t.hurt = Math.max(0, t.hurt - dt);
@@ -2032,9 +2050,9 @@ export default function TarkovTD() {
         });
 
         const canFire = isDirect
-          // No !isOperatorMoving check here (strafe-and-shoot is the point) —
-          // but a healing operator still can't fire, same rule as everyone else.
-          ? directTriggerHeldRef.current && !t.healing && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft)
+          // Walking (strafe-and-shoot) is fine; sprinting isn't — no shots while sprinting,
+          // same rule as everyone else (operatorCanFire enforces it on the order-driven path).
+          ? directTriggerHeldRef.current && !t.healing && !isSprinting && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft)
           : (holding ? holdAngleCanFire : !!best || !!locked) &&
             t.cd <= 0 &&
             canShoot(t.ammo, t.reloadLeft) &&
