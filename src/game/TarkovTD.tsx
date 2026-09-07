@@ -572,6 +572,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
   let range = fitted.range * SCALE;
   let cooldown = fitted.cooldown;
   let accuracy = fitted.accuracy;
+  let reloadMs = fitted.reloadMs;
   let pen = applyAttachmentMods(w, t.attachments, attachmentDef).pen;
   const splash = w.splash * SCALE;
   const operatorMods = t.operatorId && meta ? resolveCombatMods(findOperator(meta, t.operatorId) ?? { stats: { aim: 50, toughness: 50, handling: 50, mobility: 50 }, traitIds: [], perkIds: [] }) : null;
@@ -586,7 +587,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
   }
   if (operatorMods) {
     accuracy += operatorAccuracyBonus(operatorMods);
-    cooldown *= operatorReloadMult(operatorMods);
+    reloadMs *= operatorReloadMult(operatorMods);
   }
   if (map) {
     const boosted = applyHighGroundCombat(range, accuracy, map, t.tx, t.ty);
@@ -605,7 +606,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
     splash,
     slots: w.slots,
     magSize: fitted.magSize,
-    reloadMs: fitted.reloadMs,
+    reloadMs,
     reloadType: w.reloadType,
     spread: fitted.spread,
   };
@@ -2427,10 +2428,13 @@ export default function TarkovTD() {
       const enemiesByY = [...s.enemies].sort((a, b) => a.y - b.y);
       const towersBySurface = partitionBySurface(towersByY);
       const enemiesBySurface = partitionBySurface(enemiesByY);
-      for (const t of towersBySurface.low) drawTower(ctx, t, now);
+      // Only towers actively reloading pay for the operator-mod stats lookup.
+      const reloadMsFor = (t: Tower) =>
+        t.reloadLeft > 0 ? towerStats(t, undefined, mapRef.current, metaRef.current).reloadMs : undefined;
+      for (const t of towersBySurface.low) drawTower(ctx, t, now, reloadMsFor(t));
       for (const e of enemiesBySurface.low) drawEnemy(ctx, e);
       drawElevatedSurfaces(ctx, mapRef.current);
-      for (const t of towersBySurface.high) drawTower(ctx, t, now);
+      for (const t of towersBySurface.high) drawTower(ctx, t, now, reloadMsFor(t));
       for (const e of enemiesBySurface.high) drawEnemy(ctx, e);
 
       if (s.place === "operator") {

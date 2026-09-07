@@ -1,4 +1,4 @@
-import type { BuiltinEnemyKind, EnemyDef, EnemyKind, Perk, TowerDef, TowerKind } from "./types";
+import type { BuiltinEnemyKind, EnemyDef, EnemyKind, Perk } from "./types";
 import type { EnemyHitZone } from "./enemyHitZones";
 import { builtinBehaviorForKind } from "./enemyBehavior";
 
@@ -45,63 +45,6 @@ export const PATH: Array<[number, number]> = [
   [16, 9],
   [20, 9],
 ];
-
-export const TOWERS: Record<TowerKind, TowerDef> = {
-  scout: {
-    kind: "scout",
-    name: "SCOUT",
-    role: "SKS / fast",
-    cost: 120,
-    damage: 9,
-    range: 84,
-    cooldown: 380,
-    splash: 0,
-    color: "#7d8c5c",
-    accent: "#d9e07a",
-    desc: "Cheap rifleman. High rate of fire, low punch.",
-  },
-  sniper: {
-    kind: "sniper",
-    name: "SNIPER",
-    role: "bolt / long",
-    cost: 260,
-    damage: 46,
-    range: 190,
-    cooldown: 1450,
-    splash: 0,
-    color: "#5c6b4a",
-    accent: "#f0b400",
-    desc: "Extreme range, shreds armor. Slow cycle.",
-  },
-  gunner: {
-    kind: "gunner",
-    name: "GUNNER",
-    role: "lmg / suppress",
-    cost: 320,
-    damage: 14,
-    range: 105,
-    cooldown: 150,
-    splash: 0,
-    color: "#4d5a63",
-    accent: "#ff7a2f",
-    desc: "Belt-fed wall of lead. Melts light scavs.",
-  },
-  grenadier: {
-    kind: "grenadier",
-    name: "GRENADIER",
-    role: "GP-25 / splash",
-    cost: 400,
-    damage: 34,
-    range: 130,
-    cooldown: 1700,
-    splash: 44,
-    color: "#6b4f3a",
-    accent: "#ff4a30",
-    desc: "Frag rounds. Area damage on impact.",
-  },
-};
-
-export const TOWER_ORDER: TowerKind[] = ["scout", "sniper", "gunner", "grenadier"];
 
 export const ENEMIES: Record<BuiltinEnemyKind, EnemyDef> & Record<string, EnemyDef> = {
   scav: {

@@ -9,6 +9,7 @@ import { drawGear, drawSprite, floorImage } from "./sprites";
 import type { GearFrameName } from "./sprites";
 import type { WeaponClass } from "./gear";
 import { obstacleDrawAlpha, type BarricadeEdge } from "./defenses";
+import { reloadProgress } from "./weapons";
 
 /** Map a weapon class to the pixel gun art in the gear atlas. */
 function gunFrame(cls: WeaponClass, firing: boolean): GearFrameName {
@@ -691,9 +692,25 @@ export function drawOperator(
   ctx.restore();
 }
 
-export function drawTower(ctx: CanvasRenderingContext2D, t: Tower, time: number) {
+export function drawTower(ctx: CanvasRenderingContext2D, t: Tower, time: number, reloadMs?: number) {
   const { x: cx, y: cy } = operatorWorldPos(t);
   drawOperator(ctx, t, cx, cy, SCALE, time);
+
+  if (t.reloadLeft > 0 && reloadMs) {
+    const w = 22;
+    const bx = cx - w / 2;
+    const by = cy - TILE / 2 - 9;
+    ctx.save();
+    ctx.font = "7px monospace";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#000";
+    ctx.fillText("RLD", cx + 1, by - 1);
+    ctx.fillStyle = "#f0b400";
+    ctx.fillText("RLD", cx, by - 2);
+    ctx.restore();
+    px(ctx, "#140f0d", bx, by, w, 4);
+    px(ctx, "#f0b400", bx + 1, by + 1, (w - 2) * reloadProgress(t.reloadLeft, reloadMs), 2);
+  }
 
   // attachment pips
   for (let i = 0; i < t.attachments.length; i++)

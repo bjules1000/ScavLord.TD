@@ -4,22 +4,6 @@ import type { AmmoTier } from "./gear";
 /** Two tactical surfaces. Not a 3D Z stack. */
 export type SurfaceLevel = "GROUND" | "HIGH";
 
-export type TowerKind = "scout" | "sniper" | "gunner" | "grenadier";
-
-export interface TowerDef {
-  kind: TowerKind;
-  name: string;
-  role: string;
-  cost: number;
-  damage: number;
-  range: number;
-  cooldown: number; // ms
-  splash: number;
-  color: string;
-  accent: string;
-  desc: string;
-}
-
 export interface MoveNode {
   tx: number;
   ty: number;
