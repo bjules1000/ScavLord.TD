@@ -4,8 +4,22 @@ import type { CheckpointPart, CoverType, PropType } from "../map";
 import { hasBridge } from "./bridges";
 import { inBounds, terrainAt } from "./document";
 import { laneLabelShort, pathCells } from "./pathing";
-import { EDITOR_GUTTER, canvasPixelSize, hitLanePort, overlayPathCells, portOutsideCell } from "./ports";
-import type { BoundaryPort, BridgeOrientation, CollisionWall, EditorMapDoc, TerrainKind, TileEdge } from "./schema";
+import {
+  EDITOR_GUTTER,
+  canvasPixelSize,
+  hitLanePort,
+  overlayPathCells,
+  portOutsideCell,
+} from "./ports";
+import type {
+  BoundaryPort,
+  BridgeOrientation,
+  CollisionWall,
+  EditorMapDoc,
+  TerrainKind,
+  TileEdge,
+  VisualLayerId,
+} from "./schema";
 import { collisionWallColor, collisionWallId, hitCollisionWall, wallEdgeNearCursor } from "./walls";
 
 export interface LayerFlags {
@@ -18,6 +32,10 @@ export interface LayerFlags {
   paths: boolean;
   walls: boolean;
   bridges: boolean;
+  visualGround: boolean;
+  visualDetail: boolean;
+  visualObjects: boolean;
+  visualForeground: boolean;
 }
 
 export const DEFAULT_LAYERS: LayerFlags = {
@@ -30,6 +48,10 @@ export const DEFAULT_LAYERS: LayerFlags = {
   paths: true,
   walls: true,
   bridges: true,
+  visualGround: true,
+  visualDetail: true,
+  visualObjects: true,
+  visualForeground: true,
 };
 
 export const PATH_ACTIVE_COLOR = "#f0b400";
@@ -57,7 +79,8 @@ export function visibleLanePortMarkers(
   const out: Array<{ kind: "spawn" | "endpoint"; laneId: string; cell: [number, number] }> = [];
   for (const lane of doc.lanes) {
     if (lane.spawn) out.push({ kind: "spawn", laneId: lane.id, cell: portOutsideCell(lane.spawn) });
-    if (lane.endpoint) out.push({ kind: "endpoint", laneId: lane.id, cell: portOutsideCell(lane.endpoint) });
+    if (lane.endpoint)
+      out.push({ kind: "endpoint", laneId: lane.id, cell: portOutsideCell(lane.endpoint) });
   }
   return out;
 }
@@ -85,7 +108,11 @@ const TERRAIN_FILL: Record<TerrainKind, string> = {
   HIGH_GROUND: "#6a5430",
 };
 
-export function tileAt(px: number, py: number, doc: EditorMapDoc): { tx: number; ty: number } | null {
+export function tileAt(
+  px: number,
+  py: number,
+  doc: EditorMapDoc,
+): { tx: number; ty: number } | null {
   const tx = Math.floor(px / TILE);
   const ty = Math.floor(py / TILE);
   if (!inBounds(doc, tx, ty)) return null;
@@ -157,8 +184,11 @@ export function drawEditorMap(
     portPreview?: BoundaryPort | null;
     wallPreview?: CollisionWall | null;
     bridgePreview?: { tx: number; ty: number; orientation: BridgeOrientation } | null;
+    visualTile?: number | null;
+    visualLayerId?: VisualLayerId | null;
   } | null,
   activeLaneId: string,
+  tilesetImage?: CanvasImageSource | null,
 ) {
   const gutter = EDITOR_GUTTER;
   const { w: canvasW, h: canvasH } = canvasPixelSize(doc.width, doc.height);
@@ -176,8 +206,10 @@ export function drawEditorMap(
       for (let x = 0; x < doc.width; x++) {
         const kind = terrainAt(doc, x, y) ?? "GROUND";
         const n = ((x * 17 + y * 31) % 10) / 10;
-        const ground = n > 0.7 ? doc.palette.grassA : n > 0.35 ? doc.palette.grassB : doc.palette.grassC;
-        ctx.fillStyle = kind === "GROUND" || kind === "ROAD" ? ground : TERRAIN_FILL[kind] || ground;
+        const ground =
+          n > 0.7 ? doc.palette.grassA : n > 0.35 ? doc.palette.grassB : doc.palette.grassC;
+        ctx.fillStyle =
+          kind === "GROUND" || kind === "ROAD" ? ground : TERRAIN_FILL[kind] || ground;
         if (kind === "HIGH_GROUND") ctx.fillStyle = TERRAIN_FILL.HIGH_GROUND;
         ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
         if (kind === "WATER") {
@@ -223,6 +255,9 @@ export function drawEditorMap(
     }
   }
 
+  if (layers.visualGround) drawVisualLayer(ctx, doc, "GROUND", tilesetImage);
+  if (layers.visualDetail) drawVisualLayer(ctx, doc, "DETAIL", tilesetImage);
+
   if (layers.extras) {
     ctx.save();
     ctx.strokeStyle = "rgba(240, 180, 0, 0.55)";
@@ -246,13 +281,19 @@ export function drawEditorMap(
     for (const c of doc.checkpoints) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
     for (const c of doc.crates) drawCrate(ctx, c.tx, c.ty, 0, false);
     for (const z of doc.extraction) drawExtractionZone(ctx, z.tx, z.ty, 0);
-    for (const s of doc.sentries) drawMarker(ctx, s.tx, s.ty, "#ff5a3c", String(s.kind).startsWith("sniper") ? "SN" : "EN");
-    for (const e of doc.edges) drawEdgeMark(ctx, e.tx, e.ty, e.edge, e.type === "wall" ? "#8a8c80" : "#c9c2a6");
+    for (const s of doc.sentries)
+      drawMarker(ctx, s.tx, s.ty, "#ff5a3c", String(s.kind).startsWith("sniper") ? "SN" : "EN");
+    for (const e of doc.edges)
+      drawEdgeMark(ctx, e.tx, e.ty, e.edge, e.type === "wall" ? "#8a8c80" : "#c9c2a6");
   }
+
+  if (layers.visualObjects) drawVisualLayer(ctx, doc, "OBJECTS", tilesetImage);
 
   if (layers.bridges) {
     for (const b of doc.bridges) drawBridgeOverlay(ctx, b.tx, b.ty, b.orientation, 0.92);
   }
+
+  if (layers.visualForeground) drawVisualLayer(ctx, doc, "FOREGROUND", tilesetImage);
 
   if (layers.paths) {
     const overlays = visiblePathOverlays(doc, layers, activeLaneId);
@@ -265,9 +306,17 @@ export function drawEditorMap(
 
   if (layers.paths || layers.markers) {
     for (const lane of doc.lanes) {
-      const firstOnMap = lane.waypoints.find(([x, y]) => x >= 0 && y >= 0 && x < doc.width && y < doc.height);
+      const firstOnMap = lane.waypoints.find(
+        ([x, y]) => x >= 0 && y >= 0 && x < doc.width && y < doc.height,
+      );
       if (!firstOnMap) continue;
-      drawLaneLabel(ctx, firstOnMap[0], firstOnMap[1], laneLabelShort(lane.id), lane.id === activeLaneId);
+      drawLaneLabel(
+        ctx,
+        firstOnMap[0],
+        firstOnMap[1],
+        laneLabelShort(lane.id),
+        lane.id === activeLaneId,
+      );
     }
   }
 
@@ -308,19 +357,38 @@ export function drawEditorMap(
   }
 
   if (layers.walls) {
-    for (const wall of doc.collisionWalls) drawCollisionWall(ctx, wall, collisionWallColor(wall), 1);
+    for (const wall of doc.collisionWalls)
+      drawCollisionWall(ctx, wall, collisionWallColor(wall), 1);
   }
 
   if (hover) {
+    if (hover.visualTile != null && hover.visualLayerId && tilesetImage && doc.tileset) {
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      drawVisualTile(ctx, doc, tilesetImage, hover.visualTile, hover.tx, hover.ty);
+      ctx.restore();
+    }
     if (hover.ghostItem === "path" && hover.pathPreview && hover.pathPreview.length) {
-      drawPathPolyline(ctx, hover.pathPreview, hover.invalid ? "#c23b2c" : PATH_ACTIVE_COLOR, 3, 0.55);
+      drawPathPolyline(
+        ctx,
+        hover.pathPreview,
+        hover.invalid ? "#c23b2c" : PATH_ACTIVE_COLOR,
+        3,
+        0.55,
+      );
     }
     const portPreview = hover.portPreview;
     if (portPreview && (hover.ghostItem === "spawn" || hover.ghostItem === "end")) {
       ctx.save();
       ctx.globalAlpha = hover.invalid ? 0.35 : 0.55;
       const [mx, my] = portOutsideCell(portPreview);
-      drawMarker(ctx, mx, my, hover.ghostItem === "spawn" ? "#4dd36a" : "#f0b400", hover.ghostItem === "spawn" ? "S" : "E");
+      drawMarker(
+        ctx,
+        mx,
+        my,
+        hover.ghostItem === "spawn" ? "#4dd36a" : "#f0b400",
+        hover.ghostItem === "spawn" ? "S" : "E",
+      );
       ctx.restore();
       ctx.strokeStyle = hover.invalid ? "#c23b2c" : "#f0b400";
       ctx.lineWidth = 2;
@@ -336,7 +404,11 @@ export function drawEditorMap(
         );
       }
     } else if (hover.ghostItem === "bridge" || hover.ghostItem === "erase-bridge") {
-      const preview = hover.bridgePreview ?? { tx: hover.tx, ty: hover.ty, orientation: "H" as const };
+      const preview = hover.bridgePreview ?? {
+        tx: hover.tx,
+        ty: hover.ty,
+        orientation: "H" as const,
+      };
       if (hover.ghostItem === "erase-bridge") {
         ctx.save();
         ctx.globalAlpha = 0.45;
@@ -349,7 +421,7 @@ export function drawEditorMap(
     } else {
       ctx.save();
       ctx.globalAlpha = hover.invalid ? 0.45 : 0.4;
-      ctx.fillStyle = hover.invalid ? "#c23b2c" : hover.ghost ?? "#f0b400";
+      ctx.fillStyle = hover.invalid ? "#c23b2c" : (hover.ghost ?? "#f0b400");
       ctx.fillRect(hover.tx * TILE, hover.ty * TILE, TILE, TILE);
       if (!hover.invalid && hover.ghostItem === "prop" && hover.ghostProp) {
         ctx.globalAlpha = 0.55;
@@ -373,17 +445,56 @@ export function drawEditorMap(
       }
       if (!hover.invalid && hover.ghostItem === "sentry") {
         ctx.globalAlpha = 0.75;
-        drawMarker(ctx, hover.tx, hover.ty, "#ff5a3c", hover.ghostSentry?.startsWith("sniper") ? "SN" : "EN");
+        drawMarker(
+          ctx,
+          hover.tx,
+          hover.ty,
+          "#ff5a3c",
+          hover.ghostSentry?.startsWith("sniper") ? "SN" : "EN",
+        );
       }
-      if (hover.edge) drawEdgeMark(ctx, hover.tx, hover.ty, hover.edge, hover.invalid ? "#c23b2c" : "#f0b400");
+      if (hover.edge)
+        drawEdgeMark(ctx, hover.tx, hover.ty, hover.edge, hover.invalid ? "#c23b2c" : "#f0b400");
       ctx.restore();
-      ctx.strokeStyle = hover.invalid ? "#c23b2c" : hover.ghostItem === "erase" ? "#c23b2c" : "#f0b400";
+      ctx.strokeStyle = hover.invalid
+        ? "#c23b2c"
+        : hover.ghostItem === "erase"
+          ? "#c23b2c"
+          : "#f0b400";
       ctx.lineWidth = 2;
       ctx.strokeRect(hover.tx * TILE + 1, hover.ty * TILE + 1, TILE - 2, TILE - 2);
     }
   }
 
   ctx.restore();
+}
+
+function drawVisualLayer(
+  ctx: CanvasRenderingContext2D,
+  doc: EditorMapDoc,
+  layerId: VisualLayerId,
+  image: CanvasImageSource | null | undefined,
+) {
+  if (!image || !doc.tileset) return;
+  for (const placement of doc.visualLayers[layerId]) {
+    drawVisualTile(ctx, doc, image, placement.tile, placement.tx, placement.ty);
+  }
+}
+
+function drawVisualTile(
+  ctx: CanvasRenderingContext2D,
+  doc: EditorMapDoc,
+  image: CanvasImageSource,
+  tile: number,
+  tx: number,
+  ty: number,
+) {
+  const atlas = doc.tileset;
+  if (!atlas || tile < 0 || tile >= atlas.columns * atlas.rows) return;
+  const sx = (tile % atlas.columns) * atlas.tileWidth;
+  const sy = Math.floor(tile / atlas.columns) * atlas.tileHeight;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, sx, sy, atlas.tileWidth, atlas.tileHeight, tx * TILE, ty * TILE, TILE, TILE);
 }
 
 function drawPathPolyline(
@@ -431,7 +542,13 @@ function drawPathPolyline(
   ctx.restore();
 }
 
-function drawLaneLabel(ctx: CanvasRenderingContext2D, tx: number, ty: number, label: string, active: boolean) {
+function drawLaneLabel(
+  ctx: CanvasRenderingContext2D,
+  tx: number,
+  ty: number,
+  label: string,
+  active: boolean,
+) {
   const x = tx * TILE + 6;
   const y = ty * TILE + 8;
   ctx.save();
@@ -445,7 +562,13 @@ function drawLaneLabel(ctx: CanvasRenderingContext2D, tx: number, ty: number, la
   ctx.restore();
 }
 
-function drawMarker(ctx: CanvasRenderingContext2D, tx: number, ty: number, color: string, tag: string) {
+function drawMarker(
+  ctx: CanvasRenderingContext2D,
+  tx: number,
+  ty: number,
+  color: string,
+  tag: string,
+) {
   const x = tx * TILE + TILE / 2;
   const y = ty * TILE + TILE / 2;
   ctx.save();
@@ -460,7 +583,13 @@ function drawMarker(ctx: CanvasRenderingContext2D, tx: number, ty: number, color
   ctx.restore();
 }
 
-function drawEdgeMark(ctx: CanvasRenderingContext2D, tx: number, ty: number, edge: TileEdge, color: string) {
+function drawEdgeMark(
+  ctx: CanvasRenderingContext2D,
+  tx: number,
+  ty: number,
+  edge: TileEdge,
+  color: string,
+) {
   const x = tx * TILE;
   const y = ty * TILE;
   ctx.fillStyle = color;
@@ -470,7 +599,12 @@ function drawEdgeMark(ctx: CanvasRenderingContext2D, tx: number, ty: number, edg
   if (edge === "E") ctx.fillRect(x + TILE - 6, y + 4, 5, TILE - 8);
 }
 
-function drawCollisionWall(ctx: CanvasRenderingContext2D, wall: CollisionWall, color: string, alpha: number) {
+function drawCollisionWall(
+  ctx: CanvasRenderingContext2D,
+  wall: CollisionWall,
+  color: string,
+  alpha: number,
+) {
   const x = wall.tx * TILE;
   const y = wall.ty * TILE;
   ctx.save();

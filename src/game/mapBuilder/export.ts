@@ -1,11 +1,29 @@
-import { MAP_BUILDER_SCHEMA_VERSION, isTerrainKind, type EditorMapDoc, type TerrainKind, type TileEdge } from "./schema";
+import {
+  MAP_BUILDER_SCHEMA_VERSION,
+  isTerrainKind,
+  type EditorMapDoc,
+  type TerrainKind,
+  type TileEdge,
+} from "./schema";
 import { validateNewMapInput } from "./document";
-import { GATE_IDS, SPECIAL_ZONE_TYPES, TILE_EDGES, BRIDGE_ORIENTATIONS, isCollisionWallKind } from "./schema";
+import {
+  GATE_IDS,
+  SPECIAL_ZONE_TYPES,
+  TILE_EDGES,
+  BRIDGE_ORIENTATIONS,
+  isCollisionWallKind,
+} from "./schema";
 import type { PropType } from "../map";
 import { PROP_TYPES } from "./schema";
 import { emptyLane, exportPort, importPort, peelLaneFromWaypoints } from "./ports";
 import { sortBridges } from "./bridges";
-import { collisionWallKind, normalizeCollisionWalls, sortCollisionWalls, withCollisionWallKind } from "./walls";
+import {
+  collisionWallKind,
+  normalizeCollisionWalls,
+  sortCollisionWalls,
+  withCollisionWallKind,
+} from "./walls";
+import { normalizeVisualTileLayers, tilesetTileCount } from "./visualTiles";
 
 export interface ExportedMap {
   schemaVersion: 1;
@@ -36,17 +54,41 @@ export interface ExportedMap {
   cover: Array<{ type: EditorMapDoc["cover"][number]["type"]; tx: number; ty: number }>;
   crates: Array<{ tx: number; ty: number }>;
   extraction: Array<{ tx: number; ty: number }>;
-  sentries: Array<{ kind: EditorMapDoc["sentries"][number]["kind"]; tx: number; ty: number; facing: number }>;
+  sentries: Array<{
+    kind: EditorMapDoc["sentries"][number]["kind"];
+    tx: number;
+    ty: number;
+    facing: number;
+  }>;
   checkpoints: Array<{ type: EditorMapDoc["checkpoints"][number]["type"]; tx: number; ty: number }>;
-  edges: Array<{ type: EditorMapDoc["edges"][number]["type"]; tx: number; ty: number; edge: EditorMapDoc["edges"][number]["edge"] }>;
-  gates: Array<{ id: EditorMapDoc["gates"][number]["id"]; laneId: string; tx: number; ty: number; edge: EditorMapDoc["gates"][number]["edge"] }>;
-  zones: Array<{ type: EditorMapDoc["zones"][number]["type"]; name: string; cells: Array<[number, number]> }>;
+  edges: Array<{
+    type: EditorMapDoc["edges"][number]["type"];
+    tx: number;
+    ty: number;
+    edge: EditorMapDoc["edges"][number]["edge"];
+  }>;
+  gates: Array<{
+    id: EditorMapDoc["gates"][number]["id"];
+    laneId: string;
+    tx: number;
+    ty: number;
+    edge: EditorMapDoc["gates"][number]["edge"];
+  }>;
+  zones: Array<{
+    type: EditorMapDoc["zones"][number]["type"];
+    name: string;
+    cells: Array<[number, number]>;
+  }>;
   collisionWalls: Array<{ tx: number; ty: number; edge: TileEdge; kind: "MOVEMENT" | "SOLID" }>;
   bridges: Array<{ tx: number; ty: number; orientation: "H" | "V" }>;
+  tileset?: EditorMapDoc["tileset"];
+  visualLayers?: EditorMapDoc["visualLayers"];
 }
 
 function sortCells(cells: Array<[number, number]>): Array<[number, number]> {
-  return [...cells].sort((a, b) => a[1] - b[1] || a[0] - b[0]).map(([x, y]) => [x, y] as [number, number]);
+  return [...cells]
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])
+    .map(([x, y]) => [x, y] as [number, number]);
 }
 
 /** Stable payload: same locked map → identical JSON. No timestamps or editor history. */
@@ -97,7 +139,13 @@ export function toExport(doc: EditorMapDoc): ExportedMap {
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.type.localeCompare(b.type))
       .map((c) => ({ type: c.type, tx: c.tx, ty: c.ty })),
     edges: [...doc.edges]
-      .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.edge.localeCompare(b.edge) || a.type.localeCompare(b.type))
+      .sort(
+        (a, b) =>
+          a.ty - b.ty ||
+          a.tx - b.tx ||
+          a.edge.localeCompare(b.edge) ||
+          a.type.localeCompare(b.type),
+      )
       .map((e) => ({ type: e.type, tx: e.tx, ty: e.ty, edge: e.edge })),
     gates: [...doc.gates]
       .sort((a, b) => a.id.localeCompare(b.id))
@@ -105,13 +153,26 @@ export function toExport(doc: EditorMapDoc): ExportedMap {
     zones: [...doc.zones]
       .sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name))
       .map((z) => ({ type: z.type, name: z.name, cells: sortCells(z.cells) })),
-    collisionWalls: sortCollisionWalls(doc.collisionWalls.map((w) => withCollisionWallKind(w))).map((w) => ({
-      tx: w.tx,
-      ty: w.ty,
-      edge: w.edge,
-      kind: collisionWallKind(w),
+    collisionWalls: sortCollisionWalls(doc.collisionWalls.map((w) => withCollisionWallKind(w))).map(
+      (w) => ({
+        tx: w.tx,
+        ty: w.ty,
+        edge: w.edge,
+        kind: collisionWallKind(w),
+      }),
+    ),
+    bridges: sortBridges(doc.bridges).map((b) => ({
+      tx: b.tx,
+      ty: b.ty,
+      orientation: b.orientation,
     })),
-    bridges: sortBridges(doc.bridges).map((b) => ({ tx: b.tx, ty: b.ty, orientation: b.orientation })),
+    tileset: doc.tileset ? { ...doc.tileset } : null,
+    visualLayers: normalizeVisualTileLayers(
+      doc.visualLayers,
+      doc.width,
+      doc.height,
+      tilesetTileCount(doc),
+    ),
   };
 }
 
@@ -129,16 +190,20 @@ export function exportFilename(doc: EditorMapDoc): string {
   return `${id}.map.json`;
 }
 
-export function parseImport(raw: string): { ok: true; payload: ExportedMap } | { ok: false; error: string } {
+export function parseImport(
+  raw: string,
+): { ok: true; payload: ExportedMap } | { ok: false; error: string } {
   let data: unknown;
   try {
     data = JSON.parse(raw);
   } catch {
     return { ok: false, error: "Import is not valid JSON." };
   }
-  if (!data || typeof data !== "object") return { ok: false, error: "Import must be a JSON object." };
+  if (!data || typeof data !== "object")
+    return { ok: false, error: "Import must be a JSON object." };
   const o = data as Record<string, unknown>;
-  if (o["schemaVersion"] !== 1) return { ok: false, error: "Unsupported or missing schemaVersion." };
+  if (o["schemaVersion"] !== 1)
+    return { ok: false, error: "Unsupported or missing schemaVersion." };
   if (typeof o["id"] !== "string" || typeof o["displayName"] !== "string") {
     return { ok: false, error: "Import is missing id or displayName." };
   }
@@ -157,12 +222,44 @@ export function parseImport(raw: string): { ok: true; payload: ExportedMap } | {
     return { ok: false, error: "Terrain grid does not match height." };
   }
   for (const row of terrain) {
-    if (!Array.isArray(row) || row.length !== o["width"]) return { ok: false, error: "Terrain row width mismatch." };
+    if (!Array.isArray(row) || row.length !== o["width"])
+      return { ok: false, error: "Terrain row width mismatch." };
     for (const cell of row) {
       if (!isTerrainKind(cell)) return { ok: false, error: "Terrain contains an unknown type." };
     }
   }
   if (!Array.isArray(o["lanes"])) return { ok: false, error: "Import is missing lanes." };
+  if (o["tileset"] != null) {
+    const tileset = o["tileset"] as Record<string, unknown>;
+    const imageWidth = Number(tileset["imageWidth"]);
+    const imageHeight = Number(tileset["imageHeight"]);
+    const tileWidth = Number(tileset["tileWidth"]);
+    const tileHeight = Number(tileset["tileHeight"]);
+    const columns = Number(tileset["columns"]);
+    const rows = Number(tileset["rows"]);
+    if (
+      typeof tileset !== "object" ||
+      typeof tileset["name"] !== "string" ||
+      typeof tileset["imageDataUrl"] !== "string" ||
+      !tileset["imageDataUrl"].startsWith("data:image/png;base64,") ||
+      !Number.isInteger(imageWidth) ||
+      imageWidth <= 0 ||
+      !Number.isInteger(imageHeight) ||
+      imageHeight <= 0 ||
+      !Number.isInteger(tileWidth) ||
+      tileWidth <= 0 ||
+      !Number.isInteger(tileHeight) ||
+      tileHeight <= 0 ||
+      !Number.isInteger(columns) ||
+      columns <= 0 ||
+      !Number.isInteger(rows) ||
+      rows <= 0 ||
+      tileWidth * columns !== imageWidth ||
+      tileHeight * rows !== imageHeight
+    ) {
+      return { ok: false, error: "Tileset metadata is invalid." };
+    }
+  }
   return { ok: true, payload: o as unknown as ExportedMap };
 }
 
@@ -174,7 +271,9 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
   const width = payload.width;
   const height = payload.height;
   const lanes = payload.lanes.map((l) => {
-    const waypoints = (l.waypoints ?? []).map((w) => [Number(w[0]), Number(w[1])] as [number, number]);
+    const waypoints = (l.waypoints ?? []).map(
+      (w) => [Number(w[0]), Number(w[1])] as [number, number],
+    );
     const spawn = importPort(l.spawn, width, height);
     const endpoint = importPort(l.endpoint, width, height);
     if (spawn || endpoint) {
@@ -208,10 +307,25 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
     terrain: payload.terrain.map((row) => row.slice() as TerrainKind[]),
     lanes: lanes.length ? lanes : [emptyLane("MAIN")],
     props: payload.props.map((p, i) => ({ id: `prop-${i + 1}`, type: p.type, tx: p.tx, ty: p.ty })),
-    cover: payload.cover.map((c, i) => ({ id: `cover-${i + 1}`, type: c.type, tx: c.tx, ty: c.ty })),
+    cover: payload.cover.map((c, i) => ({
+      id: `cover-${i + 1}`,
+      type: c.type,
+      tx: c.tx,
+      ty: c.ty,
+    })),
     crates: payload.crates.map((c, i) => ({ id: `crate-${i + 1}`, tx: c.tx, ty: c.ty })),
-    extraction: (payload.extraction ?? []).map((c, i) => ({ id: `extraction-${i + 1}`, tx: c.tx, ty: c.ty })),
-    sentries: (payload.sentries ?? []).map((s, i) => ({ id: `sentry-${i + 1}`, kind: s.kind, tx: s.tx, ty: s.ty, facing: Number(s.facing) || 0 })),
+    extraction: (payload.extraction ?? []).map((c, i) => ({
+      id: `extraction-${i + 1}`,
+      tx: c.tx,
+      ty: c.ty,
+    })),
+    sentries: (payload.sentries ?? []).map((s, i) => ({
+      id: `sentry-${i + 1}`,
+      kind: s.kind,
+      tx: s.tx,
+      ty: s.ty,
+      facing: Number(s.facing) || 0,
+    })),
     checkpoints: payload.checkpoints.map((c, i) => ({
       id: `cp-${i + 1}`,
       type: c.type,
@@ -239,7 +353,9 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
           tx: Number(w.tx),
           ty: Number(w.ty),
           edge: w.edge,
-          kind: isCollisionWallKind((w as { kind?: unknown }).kind) ? (w as { kind: "MOVEMENT" | "SOLID" }).kind : "MOVEMENT",
+          kind: isCollisionWallKind((w as { kind?: unknown }).kind)
+            ? (w as { kind: "MOVEMENT" | "SOLID" }).kind
+            : "MOVEMENT",
         })),
       width,
       height,
@@ -256,13 +372,20 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
           out.push({
             tx: Number(b.tx),
             ty: Number(b.ty),
-            orientation: ((BRIDGE_ORIENTATIONS as readonly string[]).includes(b.orientation) ? b.orientation : "H") as
-              | "H"
-              | "V",
+            orientation: ((BRIDGE_ORIENTATIONS as readonly string[]).includes(b.orientation)
+              ? b.orientation
+              : "H") as "H" | "V",
           });
         }
         return out;
       })(),
+    ),
+    tileset: payload.tileset ? { ...payload.tileset } : null,
+    visualLayers: normalizeVisualTileLayers(
+      payload.visualLayers,
+      width,
+      height,
+      payload.tileset ? payload.tileset.columns * payload.tileset.rows : 0,
     ),
   };
 }

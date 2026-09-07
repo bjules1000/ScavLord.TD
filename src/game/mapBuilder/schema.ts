@@ -142,6 +142,29 @@ export interface BridgeTile {
 
 export type SurfaceLevel = "GROUND" | "HIGH";
 
+export const VISUAL_LAYER_IDS = ["GROUND", "DETAIL", "OBJECTS", "FOREGROUND"] as const;
+export type VisualLayerId = (typeof VISUAL_LAYER_IDS)[number];
+
+export interface EditorTileset {
+  name: string;
+  /** Embedded PNG data URL so a map JSON remains portable. */
+  imageDataUrl: string;
+  imageWidth: number;
+  imageHeight: number;
+  tileWidth: number;
+  tileHeight: number;
+  columns: number;
+  rows: number;
+}
+
+export interface VisualTilePlacement {
+  tx: number;
+  ty: number;
+  tile: number;
+}
+
+export type VisualTileLayers = Record<VisualLayerId, VisualTilePlacement[]>;
+
 export interface EditorMapDoc {
   schemaVersion: typeof MAP_BUILDER_SCHEMA_VERSION;
   id: string;
@@ -175,6 +198,9 @@ export interface EditorMapDoc {
   collisionWalls: CollisionWall[];
   /** Suspended-bridge overlay tiles. Empty until authored. Independent of base terrain. */
   bridges: BridgeTile[];
+  /** Optional visual atlas and sparse, editor-painted tile layers. Gameplay data remains independent. */
+  tileset: EditorTileset | null;
+  visualLayers: VisualTileLayers;
 }
 
 export interface EditorStoreV1 {

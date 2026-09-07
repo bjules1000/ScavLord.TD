@@ -18,11 +18,12 @@
  */
 import { COLS, ROWS } from "../data";
 import { mapLaneDefs } from "../lanes";
-import { MAP_BY_ID, MAP_DEFS, type CoverType, type MapDef } from "../map";
+import { MAP_BY_ID, MAP_DEFS, MAP_VISUAL_LAYER_IDS, type CoverType, type MapDef } from "../map";
 import { createBlankMap, emptyTerrain } from "./document";
 import { onMapCells, pathCells } from "./pathing";
 import { peelLaneFromWaypoints, productionPathFromLane } from "./ports";
 import { MAP_BUILDER_SCHEMA_VERSION, type EditorMapDoc, type TerrainKind } from "./schema";
+import { normalizeVisualTileLayers, tilesetTileCount } from "./visualTiles";
 
 export function productionMaps(): MapDef[] {
   return MAP_DEFS;
@@ -107,6 +108,19 @@ export function fromProductionMap(def: MapDef): EditorMapDoc {
       name: z.name,
       cells: z.cells.map(([x, y]) => [x, y] as [number, number]),
     }));
+  }
+  if (def.tileset) {
+    doc.tileset = {
+      name: `${def.id}-tileset`,
+      imageDataUrl: def.tileset.imageDataUrl,
+      imageWidth: def.tileset.tileWidth * def.tileset.columns,
+      imageHeight: def.tileset.tileHeight * def.tileset.rows,
+      tileWidth: def.tileset.tileWidth,
+      tileHeight: def.tileset.tileHeight,
+      columns: def.tileset.columns,
+      rows: def.tileset.rows,
+    };
+    doc.visualLayers = normalizeVisualTileLayers(def.visualLayers, width, height, tilesetTileCount(doc));
   }
   return doc;
 }
@@ -248,6 +262,23 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
         name: z.name,
         cells: [...z.cells].sort((a, b) => a[1] - b[1] || a[0] - b[0]).map(([x, y]) => [x, y] as [number, number]),
       }));
+  }
+  if (doc.tileset) {
+    def.tileset = {
+      imageDataUrl: doc.tileset.imageDataUrl,
+      tileWidth: doc.tileset.tileWidth,
+      tileHeight: doc.tileset.tileHeight,
+      columns: doc.tileset.columns,
+      rows: doc.tileset.rows,
+    };
+    if (MAP_VISUAL_LAYER_IDS.some((id) => doc.visualLayers[id].length > 0)) {
+      def.visualLayers = {
+        GROUND: doc.visualLayers.GROUND.map((p) => ({ ...p })),
+        DETAIL: doc.visualLayers.DETAIL.map((p) => ({ ...p })),
+        OBJECTS: doc.visualLayers.OBJECTS.map((p) => ({ ...p })),
+        FOREGROUND: doc.visualLayers.FOREGROUND.map((p) => ({ ...p })),
+      };
+    }
   }
   return def;
 }

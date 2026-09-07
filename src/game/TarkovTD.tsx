@@ -173,6 +173,7 @@ import {
   drawOperator,
   drawTerrain,
   drawTower,
+  drawVisualTileLayer,
 } from "./draw";
 import type { Bullet, Enemy, EnemyKind, FloatText, Particle, Tower } from "./types";
 import {
@@ -710,10 +711,21 @@ function spawnPersistentOperatorTower(
   });
 }
 
+/** Decodes a map's embedded tileset data URL. Data URLs decode fast, but Image.onload is still async. */
+function loadTilesetImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not decode map tileset."));
+    image.src = dataUrl;
+  });
+}
 
 export default function TarkovTD() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const terrainRef = useRef<HTMLCanvasElement | null>(null);
+  /** Decoded tileset image for the current map's Aseprite-authored tiles, if any. */
+  const tilesetImageRef = useRef<HTMLImageElement | null>(null);
   const metaRef = useRef<Meta>(loadMeta());
   const uidRef = useRef(1);
   const [mapId, setMapId] = useState<string>("kolkhoz");
@@ -872,22 +884,46 @@ export default function TarkovTD() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const def = MAP_BY_ID[mapId] ?? MAP_DEFS[1]!;
     mapRef.current = buildMap(def);
-    const c = document.createElement("canvas");
-    c.width = W;
-    c.height = H;
-    const ctx = c.getContext("2d")!;
-    ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = "#0a0c08";
-    ctx.fillRect(0, 0, W, H);
-    ctx.save();
-    ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
-    drawTerrain(ctx, mapRef.current);
-    ctx.restore();
-    terrainRef.current = c;
+    tilesetImageRef.current = null;
+
+    const bakeTerrain = () => {
+      const c = document.createElement("canvas");
+      c.width = W;
+      c.height = H;
+      const ctx = c.getContext("2d")!;
+      ctx.imageSmoothingEnabled = false;
+      ctx.fillStyle = "#0a0c08";
+      ctx.fillRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
+      drawTerrain(ctx, mapRef.current, { tilesetImage: tilesetImageRef.current });
+      ctx.restore();
+      terrainRef.current = c;
+    };
+
+    bakeTerrain();
     if (gs.current.phase === "hideout") gs.current = freshState([], "hideout", mapRef.current);
     rerender();
+
+    if (def.tileset) {
+      void loadTilesetImage(def.tileset.imageDataUrl)
+        .then((image) => {
+          if (cancelled) return;
+          tilesetImageRef.current = image;
+          bakeTerrain();
+          rerender();
+        })
+        .catch(() => {
+          // No tileset art this raid — the procedural terrain already baked above stands.
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [mapId, rerender]);
 
   /* ---------------- hideout ---------------- */
@@ -2450,6 +2486,9 @@ export default function TarkovTD() {
 
       for (const d of s.drops) drawDropBag(ctx, d.tx, d.ty, performance.now());
 
+      // Above crates/extraction markers, below every entity — matches the Map Builder preview.
+      drawVisualTileLayer(ctx, mapRef.current, "OBJECTS", tilesetImageRef.current);
+
       const now = performance.now();
       const towersByY = [...s.towers].sort((a, b) => a.ty - b.ty);
       const enemiesByY = [...s.enemies].sort((a, b) => a.y - b.y);
@@ -2463,6 +2502,9 @@ export default function TarkovTD() {
       drawElevatedSurfaces(ctx, mapRef.current);
       for (const t of towersBySurface.high) drawTower(ctx, t, now, reloadMsFor(t));
       for (const e of enemiesBySurface.high) drawEnemy(ctx, e);
+
+      // Above every entity — canopy/overhang art reads as genuinely in front, not just decoration.
+      drawVisualTileLayer(ctx, mapRef.current, "FOREGROUND", tilesetImageRef.current);
 
       if (s.place === "operator") {
         const seen = new Set<string>();

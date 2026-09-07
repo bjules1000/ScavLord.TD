@@ -24,6 +24,7 @@ import type { EditorMapDoc, TileEdge } from "./schema";
 import type { EditorTool } from "./tools";
 import { isDragPlaceProp } from "./tools";
 import { eraseCollisionWall, placeCollisionWall } from "./walls";
+import { eraseVisualTile, paintVisualTile } from "./visualTiles";
 
 export interface AuthorCell {
   tx: number;
@@ -54,7 +55,12 @@ export function applyAuthor(
   switch (tool.id) {
     case "select":
     case "los-probe":
+    case "visual-pick":
       return doc;
+    case "visual-tile":
+      return paintVisualTile(doc, tool.layerId, cell.tx, cell.ty, tool.tile);
+    case "visual-erase":
+      return eraseVisualTile(doc, tool.layerId, cell.tx, cell.ty);
     case "terrain":
       return paintTiles(doc, [pos], tool.terrain);
     case "eraser":
@@ -78,12 +84,28 @@ export function applyAuthor(
     case "path":
       return applyPathClick(doc, ctx.laneId, pos);
     case "spawn": {
-      const edge = portEdgeFromCursor(cell.tx, cell.ty, cell.localX, cell.localY, doc.width, doc.height, tile);
+      const edge = portEdgeFromCursor(
+        cell.tx,
+        cell.ty,
+        cell.localX,
+        cell.localY,
+        doc.width,
+        doc.height,
+        tile,
+      );
       if (!edge) return doc;
       return applySpawn(doc, ctx.laneId, { tx: cell.tx, ty: cell.ty, edge });
     }
     case "end": {
-      const edge = portEdgeFromCursor(cell.tx, cell.ty, cell.localX, cell.localY, doc.width, doc.height, tile);
+      const edge = portEdgeFromCursor(
+        cell.tx,
+        cell.ty,
+        cell.localX,
+        cell.localY,
+        doc.width,
+        doc.height,
+        tile,
+      );
       if (!edge) return doc;
       return applyEndpoint(doc, ctx.laneId, { tx: cell.tx, ty: cell.ty, edge });
     }
@@ -135,7 +157,12 @@ export function isSinglePlaceTool(tool: EditorTool): boolean {
   return tool.id === "spawn" || tool.id === "end" || tool.id === "gate" || tool.id === "edge";
 }
 
-export function erasePropAt(doc: EditorMapDoc, tx: number, ty: number, edge?: TileEdge): EditorMapDoc {
+export function erasePropAt(
+  doc: EditorMapDoc,
+  tx: number,
+  ty: number,
+  edge?: TileEdge,
+): EditorMapDoc {
   if (doc.status === "locked") return doc;
   const edgeHit = edge
     ? doc.edges.find((e) => e.tx === tx && e.ty === ty && e.edge === edge)
@@ -155,7 +182,12 @@ export function erasePropAt(doc: EditorMapDoc, tx: number, ty: number, edge?: Ti
 }
 
 /** Truncate the active lane from the hit cell onward. Clicking the tip backtracks one cell. */
-export function erasePathAt(doc: EditorMapDoc, laneId: string, tx: number, ty: number): EditorMapDoc {
+export function erasePathAt(
+  doc: EditorMapDoc,
+  laneId: string,
+  tx: number,
+  ty: number,
+): EditorMapDoc {
   if (doc.status === "locked") return doc;
   const lane = doc.lanes.find((l) => l.id === laneId);
   if (!lane || !lane.waypoints.length) return doc;
@@ -207,7 +239,10 @@ export function eraseZoneAt(doc: EditorMapDoc, tx: number, ty: number): EditorMa
   const zones = doc.zones
     .map((z) => ({ ...z, cells: z.cells.filter(([x, y]) => !(x === tx && y === ty)) }))
     .filter((z) => z.cells.length > 0);
-  if (zones.length === doc.zones.length && zones.every((z, i) => z.cells.length === doc.zones[i]!.cells.length)) {
+  if (
+    zones.length === doc.zones.length &&
+    zones.every((z, i) => z.cells.length === doc.zones[i]!.cells.length)
+  ) {
     return doc;
   }
   return { ...doc, zones };
@@ -219,12 +254,18 @@ export function eraseGateAt(doc: EditorMapDoc, tx: number, ty: number): EditorMa
   return { ...doc, gates: doc.gates.filter((g) => !(g.tx === tx && g.ty === ty)) };
 }
 
-export function eraseGameplayAt(doc: EditorMapDoc, laneId: string, tx: number, ty: number): EditorMapDoc {
+export function eraseGameplayAt(
+  doc: EditorMapDoc,
+  laneId: string,
+  tx: number,
+  ty: number,
+): EditorMapDoc {
   const hit = hitLanePort(doc, tx, ty, laneId);
   if (hit?.kind === "spawn") return eraseSpawn(doc, laneId);
   if (hit?.kind === "endpoint") return eraseEndpoint(doc, laneId);
   if (doc.gates.some((g) => g.tx === tx && g.ty === ty)) return eraseGateAt(doc, tx, ty);
-  if (doc.zones.some((z) => z.cells.some(([x, y]) => x === tx && y === ty))) return eraseZoneAt(doc, tx, ty);
+  if (doc.zones.some((z) => z.cells.some(([x, y]) => x === tx && y === ty)))
+    return eraseZoneAt(doc, tx, ty);
   const lane = doc.lanes.find((l) => l.id === laneId);
   if (lane && pathCells(lane.waypoints).some((c) => c[0] === tx && c[1] === ty)) {
     return erasePathAt(doc, laneId, tx, ty);
@@ -277,4 +318,3 @@ export function propAt(doc: EditorMapDoc, tx: number, ty: number): boolean {
     doc.edges.some((p) => p.tx === tx && p.ty === ty)
   );
 }
-

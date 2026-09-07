@@ -1,6 +1,6 @@
 import { SCALE, TILE } from "./data";
 import { shouldDrawLanePortMarkers } from "./lanePortsView";
-import { extractMarkerCenter, type GameMap } from "./map";
+import { extractMarkerCenter, type GameMap, type MapTileset, type MapVisualLayerId } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
 import type { Enemy, Tower } from "./types";
 import { operatorWorldPos, STAMINA_MAX } from "./movement";
@@ -57,7 +57,11 @@ const rnd = (seed: number) => {
   };
 };
 
-export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: { lanePorts?: boolean }) {
+export function drawTerrain(
+  ctx: CanvasRenderingContext2D,
+  map: GameMap,
+  opts?: { lanePorts?: boolean; tilesetImage?: HTMLImageElement | null },
+) {
   // Base terrain only. Suspended bridges are drawn later via drawElevatedSurfaces
   // so LOW entities can pass underneath the deck.
   const pal = map.def.palette;
@@ -183,11 +187,48 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
     }
   }
 
+  // Aseprite-authored tile art, if this map has any — sits above the procedural base,
+  // below the gameplay markers drawn next (matches the Map Builder preview's own order).
+  drawVisualTileLayer(ctx, map, "GROUND", opts?.tilesetImage);
+  drawVisualTileLayer(ctx, map, "DETAIL", opts?.tilesetImage);
+
   for (const c of map.COVER) drawCover(ctx, c.tx * TILE, c.ty * TILE, c.type);
   for (const p of map.PROPS) drawProp(ctx, p.tx * TILE, p.ty * TILE, p.type);
   for (const c of map.CHECKPOINT) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
 
   if (shouldDrawLanePortMarkers("raid", opts?.lanePorts)) drawLanePortMarkers(ctx, map);
+}
+
+/**
+ * OBJECTS/FOREGROUND aren't baked into the static terrain — OBJECTS sits above the
+ * per-frame gameplay markers (crates, extraction zones) and FOREGROUND above every
+ * entity, so both need a live draw call at the right point in the render loop.
+ * GROUND/DETAIL are baked once via drawTerrain instead, since nothing draws below them.
+ */
+export function drawVisualTileLayer(
+  ctx: CanvasRenderingContext2D,
+  map: GameMap,
+  layerId: MapVisualLayerId,
+  image: HTMLImageElement | null | undefined,
+) {
+  const tileset = map.def.tileset;
+  const placements = map.def.visualLayers?.[layerId];
+  if (!tileset || !image || !placements?.length) return;
+  for (const placement of placements) drawVisualTile(ctx, tileset, image, placement);
+}
+
+function drawVisualTile(
+  ctx: CanvasRenderingContext2D,
+  tileset: MapTileset,
+  image: HTMLImageElement,
+  placement: { tx: number; ty: number; tile: number },
+) {
+  const { tile, tx, ty } = placement;
+  if (tile < 0 || tile >= tileset.columns * tileset.rows) return;
+  const sx = (tile % tileset.columns) * tileset.tileWidth;
+  const sy = Math.floor(tile / tileset.columns) * tileset.tileHeight;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, sx, sy, tileset.tileWidth, tileset.tileHeight, tx * TILE, ty * TILE, TILE, TILE);
 }
 
 /** HIGH overlay pass. Drawn after LOW entities so the deck occludes the road underneath. */

@@ -339,7 +339,10 @@ describe("LOS probe visibility", () => {
   it("diagnostic result matches canonical hasLineOfSight", () => {
     const map = testMap({
       mountain: [[5, 2]],
-      highGround: [[8, 4], [9, 4]],
+      highGround: [
+        [8, 4],
+        [9, 4],
+      ],
     });
     const origin = resolveProbePoint(map, 3, 2);
     const samples = sampleLanePath([
@@ -348,7 +351,9 @@ describe("LOS probe visibility", () => {
     ]);
     const sweep = evaluatePathSweep(map, origin, samples);
     for (const r of sweep.results) {
-      expect(probeHitMatchesGameplay(map, origin, { x: r.x, y: r.y, surface: r.surface }, r.hit)).toBe(true);
+      expect(
+        probeHitMatchesGameplay(map, origin, { x: r.x, y: r.y, surface: r.surface }, r.hit),
+      ).toBe(true);
       expect(r.hit.clear).toBe(hasLineOfSight(map, origin, { x: r.x, y: r.y, surface: r.surface }));
     }
   });
@@ -471,6 +476,8 @@ describe("LOS probe tool state", () => {
         "zones",
         "collisionWalls",
         "bridges",
+        "tileset",
+        "visualLayers",
       ].sort(),
     );
   });

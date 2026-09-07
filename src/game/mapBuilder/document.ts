@@ -9,6 +9,7 @@ import {
   type TerrainKind,
 } from "./schema";
 import { emptyLane } from "./ports";
+import { emptyVisualTileLayers, normalizeVisualTileLayers, tilesetTileCount } from "./visualTiles";
 
 export const DEFAULT_EDITOR_PALETTE: Palette = {
   grassA: "#2e3a24",
@@ -22,7 +23,11 @@ export const DEFAULT_EDITOR_PALETTE: Palette = {
   roadLine: "#6d6250",
 };
 
-export function emptyTerrain(width: number, height: number, fill: TerrainKind = "GROUND"): TerrainKind[][] {
+export function emptyTerrain(
+  width: number,
+  height: number,
+  fill: TerrainKind = "GROUND",
+): TerrainKind[][] {
   return Array.from({ length: height }, () => Array.from({ length: width }, () => fill));
 }
 
@@ -106,10 +111,16 @@ export function createBlankMap(input: {
     zones: [],
     collisionWalls: [],
     bridges: [],
+    tileset: null,
+    visualLayers: emptyVisualTileLayers(),
   };
 }
 
-export function inBounds(doc: Pick<EditorMapDoc, "width" | "height">, tx: number, ty: number): boolean {
+export function inBounds(
+  doc: Pick<EditorMapDoc, "width" | "height">,
+  tx: number,
+  ty: number,
+): boolean {
   return tx >= 0 && ty >= 0 && tx < doc.width && ty < doc.height;
 }
 
@@ -169,5 +180,12 @@ export function normalizeEditorDoc(doc: EditorMapDoc): EditorMapDoc {
     })),
     bridges: Array.isArray(doc.bridges) ? doc.bridges : [],
     sentries: Array.isArray(doc.sentries) ? doc.sentries : [],
+    tileset: doc.tileset ?? null,
+    visualLayers: normalizeVisualTileLayers(
+      doc.visualLayers,
+      doc.width,
+      doc.height,
+      tilesetTileCount(doc),
+    ),
   };
 }
