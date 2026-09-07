@@ -94,7 +94,7 @@ import {
   type WheelActionId,
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
-import { GRENADE_DEFS, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
+import { GRENADE_DEFS, carriedGrenadeKinds, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, nextGrenadeKind, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
 import { raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { selectDeploymentTiles } from "./mapDeployment";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
@@ -635,6 +635,9 @@ function pmcSpawnTile(map: GameMap, s: GameState) {
 /** Move speed while treating a wound — a crawl, not a full stop. */
 const HEAL_MOVE_MULT = 0.1;
 
+/** Direct-control G key: shorter than this is a tap (cycle kind); at/above this is a hold (throw on release). */
+const GRENADE_HOLD_THRESHOLD_MS = 220;
+
 function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
   const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
   const scav = scavVisualMods(t.weapon, t.scavMods);
@@ -748,6 +751,9 @@ export default function TarkovTD() {
   const directHeldKeysRef = useRef<Set<string>>(new Set());
   const directMouseWorldRef = useRef<{ x: number; y: number } | null>(null);
   const directTriggerHeldRef = useRef(false);
+  /** Grenade quick-select: tap G to cycle carried kinds, hold+release G to throw the armed one at the cursor. */
+  const directGrenadeKindRef = useRef<GrenadeKind | null>(null);
+  const directGrenadeHoldStartRef = useRef<number | null>(null);
   const [battleTimeMode, setBattleTimeModeUi] = useState<BattleTimeMode>("NORMAL");
   const syncBattleTimeUi = useCallback(() => {
     setBattleTimeModeUi(battleTimeRef.current.mode);
@@ -2587,6 +2593,27 @@ export default function TarkovTD() {
           ctx.stroke();
           ctx.setLineDash([]);
         }
+        // Direct control: G held past the tap threshold — show what will land where on release.
+        if (directControlActive() && directGrenadeHoldStartRef.current != null) {
+          const held = performance.now() - directGrenadeHoldStartRef.current;
+          const armed = directGrenadeKindRef.current;
+          const kind = armed && carriedGrenadeKinds(s.backpack).includes(armed) ? armed : carriedGrenadeKinds(s.backpack)[0];
+          const aimPoint = directMouseWorldRef.current;
+          if (held >= GRENADE_HOLD_THRESHOLD_MS && kind && aimPoint) {
+            const def = grenadeDef(kind);
+            const target = clampGrenadeTarget(kind, pos, aimPoint);
+            ctx.strokeStyle = "rgba(255,179,71,0.9)";
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            ctx.lineTo(target.x, target.y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(target.x, target.y, def.radius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
       }
 
       // Squad order-plan overlays — detailed while PAUSED; selected subtle while live
@@ -3261,14 +3288,53 @@ export default function TarkovTD() {
     const onKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       if (WASD.has(key)) directHeldKeysRef.current.add(key);
+      if (key === "g" && !e.repeat) {
+        const s = gs.current;
+        const sel = s.towers.find((t) => t.id === s.selectedId);
+        if (sel && !sel.healing && directControlActive()) {
+          directGrenadeHoldStartRef.current = performance.now();
+        }
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       if (WASD.has(key)) directHeldKeysRef.current.delete(key);
+      if (key === "g") {
+        const start = directGrenadeHoldStartRef.current;
+        directGrenadeHoldStartRef.current = null;
+        if (start == null) return;
+        const s = gs.current;
+        const sel = s.towers.find((t) => t.id === s.selectedId);
+        if (!sel || sel.healing || !directControlActive()) return;
+        const held = performance.now() - start;
+        if (held < GRENADE_HOLD_THRESHOLD_MS) {
+          // Tap — cycle to the next carried kind, don't throw.
+          const next = nextGrenadeKind(s.backpack, directGrenadeKindRef.current);
+          directGrenadeKindRef.current = next;
+          pushLog(next ? `${grenadeDef(next).label} ARMED` : "NO GRENADES");
+          rerender();
+          return;
+        }
+        // Hold past the threshold, then release — throw whatever's armed at the cursor.
+        const armed = directGrenadeKindRef.current;
+        const kind =
+          armed && carriedGrenadeKinds(s.backpack).includes(armed) ? armed : nextGrenadeKind(s.backpack, null);
+        directGrenadeKindRef.current = kind;
+        const point = directMouseWorldRef.current;
+        if (!kind || !point) {
+          if (!kind) pushLog("NO GRENADES");
+          rerender();
+          return;
+        }
+        const r = throwGrenade(sel, kind, point);
+        pushLog(r.ok ? r.message : r.reason);
+        rerender();
+      }
     };
     const onBlur = () => {
       directHeldKeysRef.current.clear();
       directTriggerHeldRef.current = false;
+      directGrenadeHoldStartRef.current = null;
     };
     // Safety net: release the trigger even if mouseup lands outside the canvas.
     const onWindowMouseUp = () => {
@@ -4594,6 +4660,26 @@ export default function TarkovTD() {
                                 style={{ width: `${Math.round(healingProgress(selected.healing) * 100)}%` }}
                               />
                             </div>
+                          </div>
+                        ) : null}
+                        {directControlActive() ? (
+                          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                            <span>
+                              GRENADE ·{" "}
+                              {directGrenadeKindRef.current ? (
+                                <span className="text-primary">
+                                  {grenadeDef(directGrenadeKindRef.current).label} x
+                                  {
+                                    s.backpack.filter(
+                                      (i) => i.id === GRENADE_DEFS[directGrenadeKindRef.current!].itemId,
+                                    ).length
+                                  }
+                                </span>
+                              ) : (
+                                "TAP G TO ARM"
+                              )}
+                            </span>
+                            <span>HOLD G TO THROW</span>
                           </div>
                         ) : null}
                         {sum ? <div className="text-[9px] text-primary">{sum}</div> : null}

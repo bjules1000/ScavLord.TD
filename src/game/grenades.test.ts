@@ -8,7 +8,9 @@ import {
   clampGrenadeTarget,
   consumeFragItem,
   consumeGrenadeItem,
+  carriedGrenadeKinds,
   fragDamageAt,
+  nextGrenadeKind,
   spawnFragGrenade,
   smokeBlocksSight,
   tickFragGrenade,
@@ -51,5 +53,32 @@ describe("frag grenades", () => {
     const cloud = [{ id: 1, kind: "smoke" as const, x: 50, y: 0, radius: 20, left: 5 }];
     expect(smokeBlocksSight(cloud, { x: 0, y: 0 }, { x: 100, y: 0 })).toBe(true);
     expect(smokeBlocksSight(cloud, { x: 0, y: 50 }, { x: 100, y: 50 })).toBe(false);
+  });
+});
+
+describe("direct-control grenade quick-select", () => {
+  it("lists only carried kinds, in fixed cycle order regardless of backpack order", () => {
+    const backpack = [{ id: "g_stun" }, { id: "g_frag" }, { id: "v_bolts" }];
+    expect(carriedGrenadeKinds(backpack)).toEqual(["frag", "stun"]);
+  });
+
+  it("returns nothing carried as an empty list", () => {
+    expect(carriedGrenadeKinds([{ id: "v_bolts" }])).toEqual([]);
+  });
+
+  it("advances to the next carried kind and wraps around", () => {
+    const backpack = [{ id: "g_frag" }, { id: "g_flash" }, { id: "g_stun" }];
+    expect(nextGrenadeKind(backpack, null)).toBe("frag");
+    expect(nextGrenadeKind(backpack, "frag")).toBe("flash");
+    expect(nextGrenadeKind(backpack, "stun")).toBe("frag");
+  });
+
+  it("falls back to the first carried kind if the current one ran out", () => {
+    const backpack = [{ id: "g_smoke" }];
+    expect(nextGrenadeKind(backpack, "frag")).toBe("smoke");
+  });
+
+  it("returns null when nothing is carried", () => {
+    expect(nextGrenadeKind([], "frag")).toBeNull();
   });
 });
