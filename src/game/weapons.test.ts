@@ -24,7 +24,7 @@ describe("starter weapon identities", () => {
     expect(initAmmo("pm")).toBe(7);
     expect(WEAPONS["pm"]?.damage).toBe(10);
     expect(WEAPONS["pm"]?.range).toBe(100);
-    expect(WEAPONS["pm"]?.cooldown).toBe(550);
+    expect(WEAPONS["pm"]?.cooldown).toBe(600);
   });
 
   it("gives the sawed-off interruptible per-round loading", () => {

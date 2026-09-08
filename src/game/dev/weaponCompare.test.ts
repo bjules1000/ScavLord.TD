@@ -110,23 +110,23 @@ describe("weapon compare derived combat metrics", () => {
   });
 
   it("RPM is 60000 / cycle ms", () => {
-    expect(weaponRpm(pm)).toBeCloseTo(60000 / 550);
-    expect(weaponRpm(ak74)).toBeCloseTo(60000 / 420);
+    expect(weaponRpm(pm)).toBeCloseTo(60000 / 600);
+    expect(weaponRpm(ak74)).toBeCloseTo(60000 / 200);
     expect(weaponRpm(toz)).toBeCloseTo(60000 / 810);
   });
 
   it("burst DPS is raw-per-shot / cycle seconds", () => {
-    expect(burstDps(pm)).toBeCloseTo(10 * 1000 / 550);
+    expect(burstDps(pm)).toBeCloseTo(10 * 1000 / 600);
     expect(burstDps(toz)).toBeCloseTo(56 * 1000 / 810);
-    expect(burstDps(ak74)).toBeCloseTo(21 * 1000 / 420);
+    expect(burstDps(ak74)).toBeCloseTo(21 * 1000 / 200);
   });
 
   it("magazine weapon sustained DPS includes overlapping reload", () => {
     const cycle = magazineSustainedCycleMs(pm);
-    expect(cycle).toBe((7 - 1) * 550 + 1700);
+    expect(cycle).toBe((7 - 1) * 600 + 1700);
     expect(sustainedDps(pm)).toBeCloseTo((7 * 10 * 1000) / cycle);
     const akCycle = magazineSustainedCycleMs(ak74);
-    expect(akCycle).toBe(29 * 420 + 2500);
+    expect(akCycle).toBe(29 * 200 + 2500);
     expect(sustainedDps(ak74)).toBeCloseTo((30 * 21 * 1000) / akCycle);
   });
 
@@ -142,7 +142,7 @@ describe("weapon compare derived combat metrics", () => {
     const over = setOverrideField(emptyBalanceOverrides(), "weapon", "ak74", "damage", 24, 21);
     const test = mergeWeaponDef(ak74, over.weapons["ak74"]);
     expect(damagePerShot(test)).toBe(24);
-    expect(burstDps(test)).toBeCloseTo(24 * 1000 / 420);
+    expect(burstDps(test)).toBeCloseTo(24 * 1000 / 200);
     expect(damagePerShot(ak74)).toBe(21);
   });
 
@@ -176,7 +176,7 @@ describe("weapon compare ranking and scales", () => {
     const rpm = buildCompareRows(all, (w) => w, "rpm").ranksTest;
     expect(acc.get("dvl10")!).toBeLessThan(acc.get("pkm")!);
     expect(range.get("dvl10")).toBe(1);
-    expect(rpm.get("pkm")).toBe(1);
+    expect(rpm.get("m4")).toBe(1);
   });
 
   it("lower reload and weight rank better", () => {
