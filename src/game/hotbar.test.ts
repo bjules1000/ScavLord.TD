@@ -61,6 +61,20 @@ describe("hotbar slot binding", () => {
     expect(bindHotbarSlot(hotbar, 99, { kind: "meds", medId: "m_ifak" })).toEqual(hotbar);
   });
 
+  it("moves an item rather than duplicating it across two slots", () => {
+    let hotbar = emptyHotbar();
+    hotbar = bindHotbarSlot(hotbar, 1, { kind: "grenade", grenade: "frag" });
+    hotbar = bindHotbarSlot(hotbar, 4, { kind: "grenade", grenade: "frag" });
+    expect(hotbar[1]).toBeNull();
+    expect(hotbar[4]).toEqual({ kind: "grenade", grenade: "frag" });
+    expect(hotbar.filter((s) => s?.kind === "grenade" && s.grenade === "frag")).toHaveLength(1);
+  });
+
+  it("does not let two empty slots collide with each other", () => {
+    const hotbar = emptyHotbar();
+    expect(bindHotbarSlot(hotbar, 3, null)).toEqual(hotbar);
+  });
+
   it("resolves a dragged backpack item to its slot, or null for non-consumables", () => {
     expect(hotbarSlotFromItem(item("g_flash"))).toEqual({ kind: "grenade", grenade: "flash" });
     expect(hotbarSlotFromItem(item("m_grizzly", "meds"))).toEqual({ kind: "meds", medId: "m_grizzly" });

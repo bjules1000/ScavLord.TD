@@ -35,21 +35,25 @@ export function hotbarSlotFromItem(item: Pick<Item, "id" | "kind">): HotbarSlot 
   return null;
 }
 
+/** Item id a slot resolves to, for counting how many are left in the backpack. */
+export function hotbarSlotItemId(slot: HotbarSlot): string | null {
+  if (!slot) return null;
+  return slot.kind === "meds" ? slot.medId : GRENADE_DEFS[slot.grenade].itemId;
+}
+
+/** Binding the same item to a second slot moves it there rather than duplicating the key. */
 export function bindHotbarSlot(hotbar: readonly HotbarSlot[], index: number, slot: HotbarSlot): HotbarSlot[] {
   if (index < 0 || index >= hotbar.length) return [...hotbar];
-  const next = [...hotbar];
+  const itemId = hotbarSlotItemId(slot);
+  const next = hotbar.map((existing, i) =>
+    i !== index && itemId != null && hotbarSlotItemId(existing) === itemId ? null : existing,
+  );
   next[index] = slot;
   return next;
 }
 
 export function clearHotbarSlot(hotbar: readonly HotbarSlot[], index: number): HotbarSlot[] {
   return bindHotbarSlot(hotbar, index, null);
-}
-
-/** Item id a slot resolves to, for counting how many are left in the backpack. */
-export function hotbarSlotItemId(slot: HotbarSlot): string | null {
-  if (!slot) return null;
-  return slot.kind === "meds" ? slot.medId : GRENADE_DEFS[slot.grenade].itemId;
 }
 
 export function hotbarSlotCount(slot: HotbarSlot, backpack: readonly Pick<Item, "id">[]): number {

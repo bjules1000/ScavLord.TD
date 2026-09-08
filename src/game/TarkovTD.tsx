@@ -845,6 +845,8 @@ export default function TarkovTD() {
   });
   const [log, setLog] = useState<string[]>(["Prep your kit in the hideout, then deploy."]);
   const dragUid = useRef<number | null>(null);
+  /** Backpack item currently under the cursor — lets a number-key press bind it, no drag needed. */
+  const hoveredBackpackUidRef = useRef<number | null>(null);
 
   const pushLog = useCallback((msg: string) => setLog((l) => [msg, ...l].slice(0, 6)), []);
   const mods = skillMods(metaRef.current.skills);
@@ -1535,20 +1537,24 @@ export default function TarkovTD() {
         applyMedToTower(slot.medId, s.selectedId);
         return;
       }
+      // Grenades throw immediately at the live mouse-aim point — meds are instant-use
+      // too, so this stays symmetric. G's own hold/release/cycle flow is unaffected;
+      // this just also updates what it considers "armed."
       if (!directControlActive()) return;
+      const sel = s.towers.find((t) => t.id === s.selectedId);
+      const point = directMouseWorldRef.current;
+      if (!sel || !point) return;
       directGrenadeKindRef.current = slot.grenade;
-      pushLog(`${grenadeDef(slot.grenade).label} ARMED`);
+      const r = throwGrenade(sel, slot.grenade, point);
+      pushLog(r.ok ? r.message : r.reason);
       rerender();
     },
     [applyMedToTower, pushLog, rerender],
   );
 
-  /** Drop a dragged BackpackCell onto a hotbar slot to bind it (reuses the existing dragUid ref). */
-  const bindHotbarSlotFromDrag = useCallback(
-    (index: number) => {
-      const uid = dragUid.current;
-      dragUid.current = null;
-      if (uid == null) return;
+  /** Shared by drag-drop and hover+number-key binding. */
+  const bindHotbarSlotToUid = useCallback(
+    (index: number, uid: number) => {
       const s = gs.current;
       const item = s.backpack.find((i) => i.uid === uid);
       if (!item) return;
@@ -1558,6 +1564,17 @@ export default function TarkovTD() {
       rerender();
     },
     [pushLog, rerender],
+  );
+
+  /** Drop a dragged BackpackCell onto a hotbar slot to bind it (reuses the existing dragUid ref). */
+  const bindHotbarSlotFromDrag = useCallback(
+    (index: number) => {
+      const uid = dragUid.current;
+      dragUid.current = null;
+      if (uid == null) return;
+      bindHotbarSlotToUid(index, uid);
+    },
+    [bindHotbarSlotToUid],
   );
 
   const clearHotbarSlotAt = useCallback(
@@ -3442,9 +3459,16 @@ export default function TarkovTD() {
           directGrenadeHoldStartRef.current = performance.now();
         }
       }
-      // Hotbar: 1..HOTBAR_SIZE, same effect as clicking the cell.
+      // Hotbar: 1..HOTBAR_SIZE, same effect as clicking the cell — unless a backpack
+      // item is currently hovered, in which case the press binds it there instead.
       if (!e.repeat && e.key >= "1" && e.key <= String(HOTBAR_SIZE)) {
-        activateHotbarSlot(Number(e.key) - 1);
+        const index = Number(e.key) - 1;
+        const hoveredUid = hoveredBackpackUidRef.current;
+        if (hoveredUid != null) {
+          bindHotbarSlotToUid(index, hoveredUid);
+        } else {
+          activateHotbarSlot(index);
+        }
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -4683,6 +4707,10 @@ export default function TarkovTD() {
                             else pushLog("Select an operator first, or drag the item onto him.");
                           }}
                           onContext={() => scrapInRaid(item.uid)}
+                          onHoverChange={(hovering) => {
+                            if (hovering) hoveredBackpackUidRef.current = item.uid;
+                            else if (hoveredBackpackUidRef.current === item.uid) hoveredBackpackUidRef.current = null;
+                          }}
                         />
                       );
                     })}
@@ -5435,7 +5463,8 @@ function RegionMap({
 
 /**
  * Quick-use strip along the bottom of the canvas — meds/grenade slots, numbered 1..HOTBAR_SIZE.
- * Click or press the number to activate; drag a backpack item on to bind; right-click to clear.
+ * Click or press the number to activate; drag a backpack item on (or hover it and press the
+ * number) to bind; the small x, or right-click, clears a bound slot.
  */
 function HotbarStrip({
   hotbar,
@@ -5456,36 +5485,53 @@ function HotbarStrip({
         const count = hotbarSlotCount(slot, backpack);
         const depleted = !!slot && count === 0;
         return (
-          <button
+          <div
             key={i}
-            type="button"
-            className={`pointer-events-auto flex h-10 w-9 flex-col items-center justify-center border font-mono text-[8px] leading-tight ${
-              !slot
-                ? "border-dashed border-border/50 text-muted-foreground"
-                : depleted
-                  ? "border-border/40 text-muted-foreground opacity-50"
-                  : "border-primary/70 bg-background/80 text-primary"
-            }`}
-            onClick={() => onActivate(i)}
+            className="pointer-events-auto relative"
             onDragOver={(ev) => ev.preventDefault()}
             onDrop={(ev) => {
               ev.preventDefault();
               onDrop(i);
             }}
-            onContextMenu={(ev) => {
-              ev.preventDefault();
-              if (slot) onClear(i);
-            }}
-            title={slot ? `${hotbarSlotLabel(slot)} · right-click to clear` : "Drag a med or grenade here"}
           >
-            <span className="text-[7px] text-muted-foreground">{i + 1}</span>
+            <button
+              type="button"
+              className={`flex h-10 w-9 flex-col items-center justify-center border font-mono text-[8px] leading-tight ${
+                !slot
+                  ? "border-dashed border-border/50 text-muted-foreground"
+                  : depleted
+                    ? "border-border/40 text-muted-foreground opacity-50"
+                    : "border-primary/70 bg-background/80 text-primary"
+              }`}
+              onClick={() => onActivate(i)}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                if (slot) onClear(i);
+              }}
+              title={slot ? hotbarSlotLabel(slot) : "Drag a med or grenade here, or hover it and press the number"}
+            >
+              <span className="text-[7px] text-muted-foreground">{i + 1}</span>
+              {slot && (
+                <>
+                  <span className="w-full truncate text-center">{hotbarSlotLabel(slot)}</span>
+                  <span className={depleted ? "text-destructive" : ""}>{count}</span>
+                </>
+              )}
+            </button>
             {slot && (
-              <>
-                <span className="w-full truncate text-center">{hotbarSlotLabel(slot)}</span>
-                <span className={depleted ? "text-destructive" : ""}>{count}</span>
-              </>
+              <button
+                type="button"
+                className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center border border-border bg-background text-[8px] leading-none text-muted-foreground hover:text-destructive"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  onClear(i);
+                }}
+                title="Clear this slot"
+              >
+                x
+              </button>
             )}
-          </button>
+          </div>
         );
       })}
     </div>
@@ -5497,17 +5543,21 @@ function BackpackCell({
   onClick,
   onContext,
   onDragStart,
+  onHoverChange,
 }: {
   item: Item;
   onClick: () => void;
   onContext: () => void;
   onDragStart: () => void;
+  onHoverChange?: (hovering: boolean) => void;
 }) {
   const lp = useLongPress(onContext);
   return (
     <button
       draggable
       onDragStart={onDragStart}
+      onMouseEnter={() => onHoverChange?.(true)}
+      onMouseLeave={() => onHoverChange?.(false)}
       {...lp.handlers}
       onClick={() => {
         if (lp.firedRef.current) {
@@ -5520,7 +5570,7 @@ function BackpackCell({
         ev.preventDefault();
         onContext();
       }}
-      title={`${item.desc} · tap to equip, hold to scrap for raid funds`}
+      title={`${item.desc} · tap to equip, hold to scrap for raid funds · hover + press 1-${HOTBAR_SIZE} to hotbar it`}
       className="h-[46px] touch-none select-none border-2 bg-background/70 p-1 text-left font-mono text-[9px] leading-tight hover:-translate-y-[2px]"
       style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}
     >
