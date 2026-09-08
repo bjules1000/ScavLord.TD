@@ -99,6 +99,16 @@ import {
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { GRENADE_DEFS, carriedGrenadeKinds, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, nextGrenadeKind, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
+import {
+  autoPopulateHotbar,
+  bindHotbarSlot,
+  clearHotbarSlot,
+  hotbarSlotCount,
+  hotbarSlotFromItem,
+  hotbarSlotLabel,
+  HOTBAR_SIZE,
+  type HotbarSlot,
+} from "./hotbar";
 import { raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { selectDeploymentTiles } from "./mapDeployment";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
@@ -460,6 +470,8 @@ interface GameState {
   recovered: Item[];
   pmcDown: boolean;
   newDebuff: string | null;
+  /** Quick-use meds/grenade bindings, keys 1..HOTBAR_SIZE. Raid-scoped, not saved to Meta. */
+  hotbar: HotbarSlot[];
 }
 
 function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = START_ROUBLES): GameState {
@@ -499,6 +511,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     recovered: [],
     pmcDown: false,
     newDebuff: null,
+    hotbar: autoPopulateHotbar(loadout),
   };
 }
 
@@ -1497,6 +1510,63 @@ export default function TarkovTD() {
       rerender();
     },
     [addToBackpack, pushLog, rerender],
+  );
+
+  /** Hotbar meds slots bind a kind, not a specific item instance — resolve to the first matching uid. */
+  const applyMedToTower = useCallback(
+    (medId: string, towerId: number) => {
+      const item = gs.current.backpack.find((i) => i.id === medId && i.kind === "meds");
+      if (!item) return pushLog("No supply of that kit left.");
+      equipOnTower(item.uid, towerId);
+    },
+    [equipOnTower, pushLog],
+  );
+
+  /**
+   * Shared by the number-key press and clicking a hotbar cell. Meds apply instantly
+   * (any mode); grenades just arm the kind for G to throw, they don't throw on their own.
+   */
+  const activateHotbarSlot = useCallback(
+    (index: number) => {
+      const s = gs.current;
+      const slot = s.hotbar[index];
+      if (!slot || s.selectedId == null) return;
+      if (slot.kind === "meds") {
+        applyMedToTower(slot.medId, s.selectedId);
+        return;
+      }
+      if (!directControlActive()) return;
+      directGrenadeKindRef.current = slot.grenade;
+      pushLog(`${grenadeDef(slot.grenade).label} ARMED`);
+      rerender();
+    },
+    [applyMedToTower, pushLog, rerender],
+  );
+
+  /** Drop a dragged BackpackCell onto a hotbar slot to bind it (reuses the existing dragUid ref). */
+  const bindHotbarSlotFromDrag = useCallback(
+    (index: number) => {
+      const uid = dragUid.current;
+      dragUid.current = null;
+      if (uid == null) return;
+      const s = gs.current;
+      const item = s.backpack.find((i) => i.uid === uid);
+      if (!item) return;
+      const slot = hotbarSlotFromItem(item);
+      if (!slot) return pushLog("Only meds and grenades can go on the hotbar.");
+      s.hotbar = bindHotbarSlot(s.hotbar, index, slot);
+      rerender();
+    },
+    [pushLog, rerender],
+  );
+
+  const clearHotbarSlotAt = useCallback(
+    (index: number) => {
+      const s = gs.current;
+      s.hotbar = clearHotbarSlot(s.hotbar, index);
+      rerender();
+    },
+    [rerender],
   );
 
   /** Stop an in-progress heal early. Whatever HP already ticked in stays — no rollback. */
@@ -3372,6 +3442,10 @@ export default function TarkovTD() {
           directGrenadeHoldStartRef.current = performance.now();
         }
       }
+      // Hotbar: 1..HOTBAR_SIZE, same effect as clicking the cell.
+      if (!e.repeat && e.key >= "1" && e.key <= String(HOTBAR_SIZE)) {
+        activateHotbarSlot(Number(e.key) - 1);
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
@@ -3680,6 +3754,7 @@ export default function TarkovTD() {
                   }}
                 />
               ) : (
+                <>
                 <canvas
                   ref={canvasRef}
                   width={W}
@@ -3792,6 +3867,14 @@ export default function TarkovTD() {
                   className={`block w-full ${directControlActive() ? "cursor-crosshair" : "cursor-default"}`}
                   style={{ imageRendering: "pixelated", aspectRatio: `${W} / ${H}` }}
                 />
+                <HotbarStrip
+                  hotbar={s.hotbar}
+                  backpack={s.backpack}
+                  onActivate={activateHotbarSlot}
+                  onDrop={bindHotbarSlotFromDrag}
+                  onClear={clearHotbarSlotAt}
+                />
+                </>
               )}
 
               {s.phase === "hideout" && screen === "skills" && (
@@ -5346,6 +5429,65 @@ function RegionMap({
           BACK TO CAMP
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Quick-use strip along the bottom of the canvas — meds/grenade slots, numbered 1..HOTBAR_SIZE.
+ * Click or press the number to activate; drag a backpack item on to bind; right-click to clear.
+ */
+function HotbarStrip({
+  hotbar,
+  backpack,
+  onActivate,
+  onDrop,
+  onClear,
+}: {
+  hotbar: HotbarSlot[];
+  backpack: Item[];
+  onActivate: (index: number) => void;
+  onDrop: (index: number) => void;
+  onClear: (index: number) => void;
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-1 flex justify-center gap-1 px-2">
+      {hotbar.map((slot, i) => {
+        const count = hotbarSlotCount(slot, backpack);
+        const depleted = !!slot && count === 0;
+        return (
+          <button
+            key={i}
+            type="button"
+            className={`pointer-events-auto flex h-10 w-9 flex-col items-center justify-center border font-mono text-[8px] leading-tight ${
+              !slot
+                ? "border-dashed border-border/50 text-muted-foreground"
+                : depleted
+                  ? "border-border/40 text-muted-foreground opacity-50"
+                  : "border-primary/70 bg-background/80 text-primary"
+            }`}
+            onClick={() => onActivate(i)}
+            onDragOver={(ev) => ev.preventDefault()}
+            onDrop={(ev) => {
+              ev.preventDefault();
+              onDrop(i);
+            }}
+            onContextMenu={(ev) => {
+              ev.preventDefault();
+              if (slot) onClear(i);
+            }}
+            title={slot ? `${hotbarSlotLabel(slot)} · right-click to clear` : "Drag a med or grenade here"}
+          >
+            <span className="text-[7px] text-muted-foreground">{i + 1}</span>
+            {slot && (
+              <>
+                <span className="w-full truncate text-center">{hotbarSlotLabel(slot)}</span>
+                <span className={depleted ? "text-destructive" : ""}>{count}</span>
+              </>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
