@@ -496,8 +496,10 @@ describe("LOS probe tool state", () => {
     ]);
     const west = evaluatePathSweep(map, resolveProbePoint(map, 1, 5), samples);
     const east = evaluatePathSweep(map, resolveProbePoint(map, 7, 5), samples);
+    // The two origins block a different set of samples around the mountain (the real
+    // property under test) — their *counts* can coincidentally match even so, so assert
+    // on the pattern, not the aggregate.
     expect(west.results.map((r) => r.hit.clear)).not.toEqual(east.results.map((r) => r.hit.clear));
-    expect(west.visible).not.toBe(east.visible);
   });
 
   it("changing active lane recomputes targets", () => {

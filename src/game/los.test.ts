@@ -107,6 +107,20 @@ describe("LOS geometry", () => {
     expect(crossedTileEdges(at(1, 2).x, at(1, 2).y, at(6, 2).x, at(6, 2).y).length).toBeGreaterThan(1);
   });
 
+  it("a segment ending within float noise of an exact tile-boundary multiple still crosses it", () => {
+    // Regression: floor((x1 + noise) / tile) used to land back in the start tile when
+    // the true destination was a hair under an exact multiple of TILE, silently
+    // dropping the crossing (and any wall on it). Reproduces the real failure mode:
+    // a per-frame projectile step (18 tiles/sec / 60fps = 9.6px) accumulated over 4
+    // steps from a tile center lands at 127.99999999999997, just under 128 = 4*TILE.
+    const x0 = 118.39999999999998;
+    const x1 = 127.99999999999997;
+    const edges = crossedTileEdges(x0, 80, x1, 80);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]!.from).toEqual([3, 2]);
+    expect(edges[0]!.to).toEqual([4, 2]);
+  });
+
   it("multi-tile ray through MOUNTAIN is blocked", () => {
     const map = testMap({ mountain: [[3, 2]] });
     expect(hasLineOfSight(map, at(1, 2), at(6, 2))).toBe(false);

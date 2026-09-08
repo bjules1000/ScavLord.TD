@@ -19,6 +19,14 @@ import type { SurfaceLevel } from "./types";
 /** Centralized grid/corner tolerance. World units. */
 export const LOS_EPS = 1e-9;
 
+/**
+ * Tolerance for snapping a segment endpoint that lands within floating-point noise of
+ * an exact tile-multiple boundary into the tile it actually arrived at. Far larger than
+ * LOS_EPS (needs to absorb ~1e-13-scale accumulated drift) but still many orders below
+ * any real gameplay distance, so it never masks a genuine near-miss.
+ */
+const EDGE_ARRIVAL_EPS = 1e-6;
+
 export type LosBlocker = "MOUNTAIN" | "RIDGE" | "BRIDGE_DECK" | "SOLID_WALL";
 
 export interface WorldPos {
@@ -119,8 +127,13 @@ export function crossedTileEdges(
 
   let gx = Math.floor(x0 / tile);
   let gy = Math.floor(y0 / tile);
-  const gx1 = Math.floor(x1 / tile);
-  const gy1 = Math.floor(y1 / tile);
+  // Bias the destination floor a hair in the direction of travel: a step landing within
+  // floating-point noise of an exact tile-multiple boundary (routine once speed/60fps
+  // happens to divide evenly — e.g. 18 tiles/sec at 32px tiles and 60fps is exactly
+  // 9.6px/frame) must floor into the tile it actually arrived at, not fall back into
+  // the tile it started from and silently drop the crossing (and any wall on it).
+  const gx1 = Math.floor((x1 + Math.sign(dx) * EDGE_ARRIVAL_EPS) / tile);
+  const gy1 = Math.floor((y1 + Math.sign(dy) * EDGE_ARRIVAL_EPS) / tile);
   if (gx === gx1 && gy === gy1) return [];
 
   const stepX = stepOf(dx);
