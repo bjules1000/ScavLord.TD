@@ -1947,6 +1947,10 @@ export default function TarkovTD() {
             const startPos = operatorWorldPos(t);
             t.freeMove = { x: startPos.x, y: startPos.y };
             t.move = null; // direct control overrides any queued path order
+            // ...and any queued plan — otherwise it sits in the UI forever, never
+            // executing (onMoveStepComplete only runs for order-driven movement)
+            // and never clearing, since nothing here ever advances or cancels it.
+            clearPlan(planBookRef.current, t.id);
           }
           const keys = directHeldKeysRef.current;
           isMoving = keys.has("w") || keys.has("a") || keys.has("s") || keys.has("d");
@@ -3695,7 +3699,20 @@ export default function TarkovTD() {
                   }}
                   onMouseDown={(ev) => {
                     if (ev.button !== 0) return;
-                    if (directControlActive()) directTriggerHeldRef.current = true;
+                    if (!directControlActive()) return;
+                    // A click landing on a different squadmate switches control to them instead
+                    // of firing — without this, clicking to swap operators always fired a shot
+                    // in whatever direction you were aiming (a real friendly-fire risk later).
+                    const s = gs.current;
+                    const [tx, ty] = toTile(ev);
+                    const hit = towerAtTile(s.towers, tx, ty);
+                    if (hit && hit.id !== s.selectedId) {
+                      directTriggerHeldRef.current = false;
+                      s.selectedId = hit.id;
+                      rerender();
+                      return;
+                    }
+                    directTriggerHeldRef.current = true;
                   }}
                   onMouseUp={(ev) => {
                     if (ev.button !== 0) return;
