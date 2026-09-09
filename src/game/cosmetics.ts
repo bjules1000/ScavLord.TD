@@ -25,7 +25,7 @@ export type PlaceholderRect = { x: number; y: number; w: number; h: number };
  */
 export const COSMETIC_FIGURE = {
   width: 32,
-  height: 64,
+  height: 32,
   /** Back-to-front paint order. */
   layerOrder: ["legs", "torso", "head", "hat"] as const satisfies readonly CosmeticSlot[],
   /**
@@ -34,10 +34,10 @@ export const COSMETIC_FIGURE = {
    * place actual PNGs.
    */
   placeholderRects: {
-    legs: { x: 8, y: 40, w: 16, h: 24 },
-    torso: { x: 6, y: 20, w: 20, h: 22 },
-    head: { x: 10, y: 6, w: 12, h: 16 },
-    hat: { x: 8, y: 0, w: 16, h: 10 },
+    hat: { x: 8, y: 0, w: 16, h: 5 },
+    head: { x: 10, y: 5, w: 12, h: 8 },
+    torso: { x: 6, y: 13, w: 20, h: 11 },
+    legs: { x: 8, y: 24, w: 16, h: 8 },
   } satisfies Record<CosmeticSlot, PlaceholderRect>,
 };
 

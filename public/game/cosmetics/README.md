@@ -17,8 +17,7 @@ public/game/cosmetics/<slot>/<option-id>-shading.png   (optional)
 ## Sizing — no scaling, no per-part anchors
 
 Every part is exported at the **exact same canvas size** — `COSMETIC_FIGURE.width x height`
-in `cosmetics.ts` (32x64 by default; change that constant to match your real Aseprite
-canvas). Draw the whole figure once across aligned layers (legs, torso, head, hat) the way
+in `cosmetics.ts`, currently 32x32 to match the Aseprite canvas. Draw the whole figure once across aligned layers (legs, torso, head, hat) the way
 you already do, and export each layer as its own PNG at that full canvas size, transparent
 everywhere except that part's own pixels. The game draws each layer at native size, at
 (0, 0), stacked in order — nothing is scaled or repositioned, since your layers are already
