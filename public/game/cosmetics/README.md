@@ -16,9 +16,9 @@ public/game/cosmetics/<slot>/<option-id>-shading.png   (optional)
 - `public/game/cosmetics/arms/`
 - `public/game/cosmetics/armor/`
 
-Layer order (back to front): legs, torso, head, hat, arms, armor. Arms sit above hat/head
-because they swing forward to aim; armor sits above everything since it's worn over the
-whole assembled figure.
+Layer order (back to front): legs, torso, head, hat, armor, arms. Armor sits above hat/head
+since it's worn over the whole assembled figure, but arms are drawn last of all so hands
+stay visible over a vest/helmet — they're holding whatever weapon the figure is aiming.
 
 ## Sizing — no scaling, no per-part anchors
 

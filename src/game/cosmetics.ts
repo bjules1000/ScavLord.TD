@@ -34,16 +34,17 @@ export const COSMETIC_FIGURE = {
   width: 32,
   height: 32,
   /**
-   * Back-to-front paint order. Arms sit above hat/head (they swing forward to aim) and
-   * armor sits above everything (it's worn over the whole assembled figure).
+   * Back-to-front paint order. Armor sits above hat/head (worn over the assembled figure)
+   * but arms are drawn last of all, on top of armor — hands stay visible over a vest/helmet
+   * since they hold whatever weapon the figure is aiming.
    */
   layerOrder: [
     "legs",
     "torso",
     "head",
     "hat",
-    "arms",
     "armor",
+    "arms",
   ] as const satisfies readonly CosmeticSlot[],
   /**
    * ONLY used to size/position the flat-color fallback box before a slot has real art.
