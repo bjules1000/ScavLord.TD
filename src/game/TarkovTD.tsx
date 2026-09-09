@@ -3771,6 +3771,13 @@ export default function TarkovTD() {
                 <CampHub
                   editMode={editMode}
                   controlsEnabled={editMode && screen === "hideout"}
+                  walkable={!editMode && screen === "hideout"}
+                  player={{
+                    weapon: meta.pmc.weapon,
+                    armor: meta.pmc.armor ?? null,
+                    attachments: meta.pmc.attachments,
+                    level: meta.pmc.level,
+                  }}
                   onAction={(action: HubAction) => {
                     if (action === "supplies") setSuppliesTab("stash");
                     if (action === "skills") setScavTab("overview");

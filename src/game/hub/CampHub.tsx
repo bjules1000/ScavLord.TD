@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import PlacementLayer from "../dev/PlacementLayer";
 import { type PlacementOffset } from "../dev/placement";
+import { drawOperator, type DrawableOperator } from "../draw";
+import { nearestStation, stepCampMove, type CampMoveInput } from "./campMovement";
 import {
   FIRE_FRAME_MS,
   campPlateSrc,
@@ -17,6 +19,18 @@ import {
 } from "./hotspots";
 
 const LABEL_DELAY_MS = 180;
+/** Image-pixel units/sec — tuned against the 1448x1086 camp scene, needs a real playtest. */
+const PLAYER_SPEED_PX = 220;
+const INTERACT_RADIUS_PX = 90;
+const PLAYER_CANVAS_PX = 80;
+const PLAYER_DRAW_SCALE = 2;
+
+export interface CampPlayerGear {
+  weapon: string;
+  armor: string | null;
+  attachments: string[];
+  level: number;
+}
 
 function useFireStep(intervalMs: number, running: boolean): number {
   const [step, setStep] = useState(0);
@@ -39,10 +53,15 @@ export default function CampHub({
   onAction,
   editMode = false,
   controlsEnabled = false,
+  walkable = true,
+  player,
 }: {
   onAction: (action: HubAction) => void;
   editMode?: boolean;
   controlsEnabled?: boolean;
+  /** False while a station's menu is open on top of the scene — movement/interact pause. */
+  walkable?: boolean;
+  player: CampPlayerGear;
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [debug, setDebug] = useState(false);
@@ -53,6 +72,13 @@ export default function CampHub({
   const fireRunning = shouldAnimateFire(reducedMotion, editMode);
   const fireStep = useFireStep(FIRE_FRAME_MS, fireRunning);
   const fireObjects = fireVisibleObjects(fireStep, reducedMotion);
+
+  const playerPosRef = useRef({ x: CAMP_IMAGE_W / 2, y: CAMP_IMAGE_H * 0.7 });
+  const facingRef = useRef(-Math.PI / 2);
+  const heldKeysRef = useRef<Set<string>>(new Set());
+  const playerCanvasRef = useRef<HTMLCanvasElement>(null);
+  const nearStationRef = useRef<HubHotspot | null>(null);
+  const [nearStationId, setNearStationId] = useState<string | null>(null);
 
   useEffect(() => {
     setDebug(readDebugHub());
@@ -67,6 +93,97 @@ export default function CampHub({
   const onOffsetChange = useCallback((id: string, offset: PlacementOffset) => {
     setOffsets((prev) => ({ ...prev, [id]: offset }));
   }, []);
+
+  /** WASD held-state + the E interact key. Paused while a station's menu is open. */
+  useEffect(() => {
+    if (!walkable) return;
+    const TRACKED = new Set(["w", "a", "s", "d"]);
+    const onKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (TRACKED.has(key)) heldKeysRef.current.add(key);
+      if (key === "e" && !e.repeat) {
+        const action = nearStationRef.current?.action;
+        if (action) onAction(action);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (TRACKED.has(key)) heldKeysRef.current.delete(key);
+    };
+    const onBlur = () => heldKeysRef.current.clear();
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+      heldKeysRef.current.clear();
+    };
+  }, [walkable, onAction]);
+
+  /** Movement + station proximity + player sprite redraw. Paused (frozen in place) while !walkable. */
+  useEffect(() => {
+    if (!walkable) return;
+    let raf = 0;
+    let last = performance.now();
+
+    const loop = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      const keys = heldKeysRef.current;
+      const input: CampMoveInput = {
+        up: keys.has("w"),
+        down: keys.has("s"),
+        left: keys.has("a"),
+        right: keys.has("d"),
+      };
+      if (input.up || input.down || input.left || input.right) {
+        playerPosRef.current = stepCampMove(playerPosRef.current.x, playerPosRef.current.y, input, dt, PLAYER_SPEED_PX, {
+          width: CAMP_IMAGE_W,
+          height: CAMP_IMAGE_H,
+        });
+        const dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+        const dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+        if (dx !== 0 || dy !== 0) facingRef.current = Math.atan2(dy, dx);
+      }
+
+      const pos = playerPosRef.current;
+      const station = nearestStation(pos.x, pos.y, HUB_HOTSPOTS, CAMP_IMAGE_W, CAMP_IMAGE_H, INTERACT_RADIUS_PX);
+      nearStationRef.current = station;
+      setNearStationId((prev) => {
+        const nextId = station?.id ?? null;
+        return prev === nextId ? prev : nextId;
+      });
+
+      const canvas = playerCanvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (canvas && ctx) {
+        canvas.style.left = `${(pos.x / CAMP_IMAGE_W) * 100}%`;
+        canvas.style.top = `${(pos.y / CAMP_IMAGE_H) * 100}%`;
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const sprite: DrawableOperator = {
+          id: 0,
+          weapon: player.weapon,
+          armor: player.armor,
+          attachments: player.attachments,
+          hurt: 0,
+          angle: facingRef.current,
+          pmc: true,
+          level: player.level,
+          flash: 0,
+        };
+        drawOperator(ctx, sprite, canvas.width / 2, canvas.height / 2, PLAYER_DRAW_SCALE, now, { pad: false });
+      }
+
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [walkable, player.weapon, player.armor, player.attachments, player.level]);
+
+  const promptSpot = nearStationId ? HUB_HOTSPOTS.find((s) => s.id === nearStationId) : undefined;
 
   return (
     <div
@@ -113,6 +230,37 @@ export default function CampHub({
           onAction={onAction}
         />
       ))}
+
+      {walkable && (
+        <canvas
+          ref={playerCanvasRef}
+          width={PLAYER_CANVAS_PX}
+          height={PLAYER_CANVAS_PX}
+          className="pointer-events-none absolute z-[5]"
+          style={{
+            width: `${PLAYER_CANVAS_PX}px`,
+            height: `${PLAYER_CANVAS_PX}px`,
+            left: `${(playerPosRef.current.x / CAMP_IMAGE_W) * 100}%`,
+            top: `${(playerPosRef.current.y / CAMP_IMAGE_H) * 100}%`,
+            transform: "translate(-50%, -50%)",
+            imageRendering: "pixelated",
+          }}
+        />
+      )}
+
+      {walkable && promptSpot && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute z-[6] whitespace-nowrap rounded border border-primary/60 bg-black/70 px-2 py-1 font-display text-[8px] tracking-wide text-primary sm:text-[9px]"
+          style={{
+            left: `${promptSpot.xPercent + promptSpot.widthPercent / 2}%`,
+            top: `${promptSpot.yPercent}%`,
+            transform: "translate(-50%, calc(-100% - 6px))",
+          }}
+        >
+          E · {promptSpot.label}
+        </div>
+      )}
     </div>
   );
 }

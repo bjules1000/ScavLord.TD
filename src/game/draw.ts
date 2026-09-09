@@ -593,9 +593,14 @@ export function drawDropBag(ctx: CanvasRenderingContext2D, tx: number, ty: numbe
 }
 
 /** Core operator sprite. Drawn in the 32px art grid around (cx, cy) at `scale`. */
+export type DrawableOperator = Pick<
+  Tower,
+  "id" | "weapon" | "armor" | "armorHp" | "attachments" | "hurt" | "angle" | "pmc" | "level" | "flash"
+>;
+
 export function drawOperator(
   ctx: CanvasRenderingContext2D,
-  t: Tower,
+  t: DrawableOperator,
   cx: number,
   cy: number,
   scale: number,
