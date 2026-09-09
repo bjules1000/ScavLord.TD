@@ -16,6 +16,8 @@ const SLOT_COLOR: Record<string, string> = {
   torso: "#5a6a4a",
   legs: "#3a3a4a",
   hat: "#8a4a3a",
+  arms: "#c9a56a",
+  armor: "#4a4a4a",
 };
 
 const imageCache = new Map<string, HTMLImageElement>();

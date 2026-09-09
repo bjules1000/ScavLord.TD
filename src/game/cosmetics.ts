@@ -9,10 +9,17 @@
  * pixel-level swap — this file only resolves *which* colors apply, as pure data.
  */
 
-export type CosmeticSlot = "head" | "torso" | "legs" | "hat";
+export type CosmeticSlot = "head" | "torso" | "legs" | "hat" | "arms" | "armor";
 
 /** UI cycling order. */
-export const COSMETIC_SLOTS: readonly CosmeticSlot[] = ["hat", "head", "torso", "legs"];
+export const COSMETIC_SLOTS: readonly CosmeticSlot[] = [
+  "hat",
+  "head",
+  "torso",
+  "legs",
+  "arms",
+  "armor",
+];
 
 export type PlaceholderRect = { x: number; y: number; w: number; h: number };
 
@@ -26,8 +33,18 @@ export type PlaceholderRect = { x: number; y: number; w: number; h: number };
 export const COSMETIC_FIGURE = {
   width: 32,
   height: 32,
-  /** Back-to-front paint order. */
-  layerOrder: ["legs", "torso", "head", "hat"] as const satisfies readonly CosmeticSlot[],
+  /**
+   * Back-to-front paint order. Arms sit above hat/head (they swing forward to aim) and
+   * armor sits above everything (it's worn over the whole assembled figure).
+   */
+  layerOrder: [
+    "legs",
+    "torso",
+    "head",
+    "hat",
+    "arms",
+    "armor",
+  ] as const satisfies readonly CosmeticSlot[],
   /**
    * ONLY used to size/position the flat-color fallback box before a slot has real art.
    * Real sprites ignore this entirely (see the contract above) — never used to scale or
@@ -38,6 +55,8 @@ export const COSMETIC_FIGURE = {
     head: { x: 10, y: 5, w: 12, h: 8 },
     torso: { x: 6, y: 13, w: 20, h: 11 },
     legs: { x: 8, y: 24, w: 16, h: 8 },
+    arms: { x: 2, y: 13, w: 28, h: 11 },
+    armor: { x: 6, y: 4, w: 20, h: 20 },
   } satisfies Record<CosmeticSlot, PlaceholderRect>,
 };
 
@@ -108,21 +127,37 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
     { id: "head-a", slot: "head", name: "GRUNT", paintRegions: { hair: "#ff00ff", skin: "#00ffff" } },
     { id: "head-b", slot: "head", name: "BALACLAVA", paintRegions: { skin: "#00ffff" } },
     { id: "head-c", slot: "head", name: "VISOR" },
+    { id: "head-wolf", slot: "head", name: "WOLF", spriteKey: "/game/cosmetics/head/wolf.png" },
   ],
   torso: [
     { id: "torso-a", slot: "torso", name: "FIELD JACKET", paintRegions: { fabric: "#ff00ff" } },
     { id: "torso-b", slot: "torso", name: "PLATE CARRIER" },
     { id: "torso-c", slot: "torso", name: "RAIN SLICKER", paintRegions: { fabric: "#ff00ff" } },
+    { id: "torso-wolf", slot: "torso", name: "WOLF", spriteKey: "/game/cosmetics/torso/wolf.png" },
   ],
   legs: [
     { id: "legs-a", slot: "legs", name: "FATIGUES", paintRegions: { fabric: "#ff00ff" } },
     { id: "legs-b", slot: "legs", name: "CARGO PANTS", paintRegions: { fabric: "#ff00ff" } },
     { id: "legs-c", slot: "legs", name: "WADERS" },
+    { id: "legs-wolf", slot: "legs", name: "WOLF", spriteKey: "/game/cosmetics/legs/wolf.png" },
   ],
   hat: [
     { id: "hat-none", slot: "hat", name: "NONE", empty: true },
     { id: "hat-a", slot: "hat", name: "BOONIE", paintRegions: { trim: "#ff00ff" } },
-    { id: "hat-b", slot: "hat", name: "USHANKA", paintRegions: { trim: "#ff00ff" } },
+    { id: "hat-b", slot: "hat", name: "USHANKA", spriteKey: "/game/cosmetics/hat/ushanka.png" },
+    { id: "hat-wolf-cap", slot: "hat", name: "WOLF CAP", spriteKey: "/game/cosmetics/hat/wolf-cap.png" },
+    { id: "hat-cap-forward", slot: "hat", name: "FORWARD CAP", spriteKey: "/game/cosmetics/hat/cap-forward.png" },
+    { id: "hat-cap-backward", slot: "hat", name: "BACKWARD CAP", spriteKey: "/game/cosmetics/hat/cap-backward.png" },
+    { id: "hat-beanie", slot: "hat", name: "BEANIE", spriteKey: "/game/cosmetics/hat/beanie.png" },
+    { id: "hat-beanie-pompon", slot: "hat", name: "BEANIE (POMPON)", spriteKey: "/game/cosmetics/hat/beanie-pompon.png" },
+  ],
+  arms: [{ id: "arms-wolf", slot: "arms", name: "WOLF", spriteKey: "/game/cosmetics/arms/wolf.png" }],
+  armor: [
+    { id: "armor-none", slot: "armor", name: "NONE", empty: true },
+    { id: "armor-paca", slot: "armor", name: "PACA", spriteKey: "/game/cosmetics/armor/paca.png" },
+    { id: "armor-slick", slot: "armor", name: "SLICK", spriteKey: "/game/cosmetics/armor/slick.png" },
+    { id: "armor-6b23", slot: "armor", name: "6B23", spriteKey: "/game/cosmetics/armor/6b23.png" },
+    { id: "armor-zbralo", slot: "armor", name: "ZBRALO", spriteKey: "/game/cosmetics/armor/zbralo.png" },
   ],
 };
 
@@ -131,6 +166,8 @@ export interface CosmeticLoadout {
   torso: string;
   legs: string;
   hat: string;
+  arms: string;
+  armor: string;
   /** Swatch id per global region (currently just "skin"). */
   globalPaint: Record<PaintRegionId, string>;
   /** Swatch id per region, scoped to the slot — everything not in GLOBAL_PAINT_REGIONS. */
