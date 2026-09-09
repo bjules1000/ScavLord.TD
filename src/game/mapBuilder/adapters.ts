@@ -18,7 +18,7 @@
  */
 import { COLS, ROWS } from "../data";
 import { mapLaneDefs } from "../lanes";
-import { MAP_BY_ID, MAP_DEFS, MAP_VISUAL_LAYER_IDS, type CoverType, type MapDef } from "../map";
+import { MAP_BY_ID, MAP_DEFS, MAP_VISUAL_LAYER_IDS, type CoverType, type MapDef, type PropType } from "../map";
 import { createBlankMap, emptyTerrain } from "./document";
 import { onMapCells, pathCells } from "./pathing";
 import { peelLaneFromWaypoints, productionPathFromLane } from "./ports";
@@ -199,7 +199,7 @@ export function toProductionMapDef(doc: EditorMapDoc): MapDef {
     path,
     props: [...doc.props]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.type.localeCompare(b.type))
-      .map((p) => ({ tx: p.tx, ty: p.ty, type: p.type })),
+      .map((p) => ({ tx: p.tx, ty: p.ty, type: p.type as PropType })),
     checkpoint: [...doc.checkpoints]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.type.localeCompare(b.type))
       .map((c) => ({ tx: c.tx, ty: c.ty, type: c.type })),

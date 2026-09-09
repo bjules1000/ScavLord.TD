@@ -14,6 +14,7 @@ import {
 import type {
   BoundaryPort,
   BridgeOrientation,
+  CampPropType,
   CollisionWall,
   EditorMapDoc,
   TerrainKind,
@@ -176,7 +177,7 @@ export function drawEditorMap(
       | "erase-wall"
       | "erase-bridge"
       | null;
-    ghostProp?: PropType | null;
+    ghostProp?: PropType | CampPropType | null;
     ghostCover?: CoverType | null;
     ghostCheckpoint?: CheckpointPart["type"] | null;
     ghostSentry?: string | null;

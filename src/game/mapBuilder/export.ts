@@ -122,7 +122,7 @@ export function toExport(doc: EditorMapDoc): ExportedMap {
       })),
     props: [...doc.props]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.type.localeCompare(b.type))
-      .map((p) => ({ type: p.type, tx: p.tx, ty: p.ty })),
+      .map((p) => ({ type: p.type as PropType, tx: p.tx, ty: p.ty })),
     cover: [...doc.cover]
       .sort((a, b) => a.ty - b.ty || a.tx - b.tx || a.type.localeCompare(b.type))
       .map((c) => ({ type: c.type, tx: c.tx, ty: c.ty })),
@@ -288,6 +288,7 @@ export function importedToDoc(payload: ExportedMap, draftId: string): EditorMapD
   });
   return {
     schemaVersion: MAP_BUILDER_SCHEMA_VERSION,
+    mapType: "raid",
     id: draftId,
     displayName: payload.displayName,
     width: payload.width,

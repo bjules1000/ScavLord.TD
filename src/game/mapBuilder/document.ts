@@ -82,6 +82,7 @@ export function createBlankMap(input: {
   if (err) throw new Error(err);
   return {
     schemaVersion: MAP_BUILDER_SCHEMA_VERSION,
+    mapType: "raid",
     id: input.id,
     displayName: input.displayName.trim(),
     width,
@@ -172,6 +173,7 @@ export function normalizeEditorDoc(doc: EditorMapDoc): EditorMapDoc {
   const walls = Array.isArray(doc.collisionWalls) ? doc.collisionWalls : [];
   return {
     ...doc,
+    mapType: doc.mapType === "camp" ? "camp" : "raid",
     collisionWalls: walls.map((w) => ({
       tx: w.tx,
       ty: w.ty,

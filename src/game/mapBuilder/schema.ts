@@ -1,10 +1,18 @@
 import type { CheckpointPart, CoverType, Palette, PropType, WaveMods } from "../map";
 import type { EnemyKind } from "../types";
+import type { HubAction } from "../campActions";
 
 /** Dev-only authoring schema. Gameplay saves use `kolkhoz-meta-v5`. */
 export const MAP_BUILDER_SCHEMA_VERSION = 1;
 export const MAP_BUILDER_STORAGE_KEY = "scavlord.dev.mapBuilder.v1";
 export const HISTORY_LIMIT = 80;
+
+export const MAP_TYPES = ["raid", "camp"] as const;
+export type MapType = (typeof MAP_TYPES)[number];
+
+/** Camp-only decorative/interactive objects. Kept separate from raid's PropType. */
+export const CAMP_PROP_TYPES = ["tent", "fire", "ops-table", "gun-bench", "map-table", "radio"] as const;
+export type CampPropType = (typeof CAMP_PROP_TYPES)[number];
 
 export const TERRAIN_KINDS = ["GROUND", "ROAD", "WATER", "MOUNTAIN", "HIGH_GROUND"] as const;
 export type TerrainKind = (typeof TERRAIN_KINDS)[number];
@@ -51,9 +59,11 @@ export interface EditorLane {
 
 export interface EditorProp {
   id: string;
-  type: PropType;
+  type: PropType | CampPropType;
   tx: number;
   ty: number;
+  /** Camp-only: which hub screen this prop opens when interacted with. Undefined = decorative. */
+  hubAction?: HubAction;
 }
 
 export interface EditorCover {
@@ -167,6 +177,7 @@ export type VisualTileLayers = Record<VisualLayerId, VisualTilePlacement[]>;
 
 export interface EditorMapDoc {
   schemaVersion: typeof MAP_BUILDER_SCHEMA_VERSION;
+  mapType: MapType;
   id: string;
   displayName: string;
   width: number;

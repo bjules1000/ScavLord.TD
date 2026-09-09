@@ -1,10 +1,12 @@
 /** Percent boxes relative to public/game/hub/camp-base.png (1448×1086). Tune here, not in JSX. */
 
+import { HUB_ACTIONS, type HubAction } from "../campActions";
+
 export const CAMP_IMAGE_SRC = "/game/hub/camp-base.png";
 export const CAMP_IMAGE_W = 1448;
 export const CAMP_IMAGE_H = 1086;
 
-export type HubAction = "supplies" | "region" | "gear" | "skills" | "radio";
+export { HUB_ACTIONS, type HubAction };
 export type HubStationId = HubAction | "radio";
 
 /** Visual cue region as % of the interaction box — not the hitbox itself. */

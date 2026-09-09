@@ -1,5 +1,5 @@
 import type { CheckpointPart, CoverType, PropType } from "../map";
-import type { GateId, TerrainKind, VisualLayerId } from "./schema";
+import type { CampPropType, GateId, TerrainKind, VisualLayerId } from "./schema";
 import type { EnemyKind } from "../types";
 
 export type EditorTool =
@@ -11,7 +11,7 @@ export type EditorTool =
   | { id: "end" }
   | { id: "gate"; gateId: GateId }
   | { id: "zone" }
-  | { id: "prop"; type: PropType }
+  | { id: "prop"; type: PropType | CampPropType }
   | { id: "cover"; type: CoverType }
   | { id: "crate" }
   | { id: "extraction" }
@@ -48,7 +48,7 @@ export function selectLosProbeTool(): EditorTool {
   return { id: "los-probe" };
 }
 
-export function selectPropTool(type: PropType): EditorTool {
+export function selectPropTool(type: PropType | CampPropType): EditorTool {
   return { id: "prop", type };
 }
 
@@ -156,7 +156,7 @@ export function isVisualTileTool(tool: EditorTool): boolean {
   return tool.id === "visual-tile" || tool.id === "visual-erase" || tool.id === "visual-pick";
 }
 
-export function isDragPlaceProp(type: PropType): boolean {
+export function isDragPlaceProp(type: PropType | CampPropType): boolean {
   return type === "tree" || type === "rock" || type === "barrel";
 }
 
