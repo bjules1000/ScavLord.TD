@@ -3768,10 +3768,8 @@ export default function TarkovTD() {
             >
 
               {s.phase === "hideout" ? (
-                /* M2A camp home. Pre-M2A box-menu dashboard is replaced by hotspots + the overlays below. */
+                /* M2A camp home: a tile-drawn scene authored in the map editor's camp mode. */
                 <CampHub
-                  editMode={editMode}
-                  controlsEnabled={editMode && screen === "hideout"}
                   walkable={!editMode && screen === "hideout"}
                   player={{
                     weapon: meta.pmc.weapon,

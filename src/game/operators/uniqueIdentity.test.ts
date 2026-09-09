@@ -18,7 +18,8 @@ import {
   syncUniqueEligibility,
   type UniqueOperatorDefinition,
 } from "./uniqueOperators";
-import { HUB_HOTSPOTS } from "../hub/hotspots";
+import { HUB_ACTIONS } from "../campActions";
+import { CAMP_MAP_DEF } from "../hub/campMaps/campMain";
 
 function viperOverlay(base: UniqueOperatorDefinition): UniqueOperatorDefinition {
   return {
@@ -111,10 +112,10 @@ describe("leader / branding identity", () => {
     expect(row?.roleLabel).toBe("LEADER");
   });
 
-  it("camp hotspot no longer labels the character station SCAVLORD", () => {
-    const skills = HUB_HOTSPOTS.find((h) => h.id === "skills");
-    expect(skills?.label).toBe("OPERATOR");
-    expect(skills?.label).not.toBe("SCAVLORD");
+  it("camp's character station is tagged 'skills', not branded SCAVLORD", () => {
+    const skillsStation = CAMP_MAP_DEF.props.find((p) => p.hubAction === "skills");
+    expect(skillsStation).toBeTruthy();
+    expect(HUB_ACTIONS).not.toContain("scavlord");
   });
 
   it("project branding scavlord namespaces remain for DEV storage / assets", () => {

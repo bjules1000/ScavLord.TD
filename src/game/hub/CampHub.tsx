@@ -52,22 +52,14 @@ function findSpawnPoint(): { x: number; y: number } {
 
 export default function CampHub({
   onAction,
-  editMode = false,
-  controlsEnabled = false,
   walkable = true,
   player,
 }: {
   onAction: (action: HubAction) => void;
-  /** Unused since the switch to a tile-drawn scene; kept for call-site compatibility until the dev placement tool is retired. */
-  editMode?: boolean;
-  controlsEnabled?: boolean;
   /** False while a station's menu is open on top of the scene — movement/interact pause. */
   walkable?: boolean;
   player: CampPlayerGear;
 }) {
-  void editMode;
-  void controlsEnabled;
-
   const sceneCanvasRef = useRef<HTMLCanvasElement>(null);
   const playerCanvasRef = useRef<HTMLCanvasElement>(null);
   const reducedMotion = usePrefersReducedMotion();
