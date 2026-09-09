@@ -1,14 +1,15 @@
 import { SCALE, TILE } from "./data";
 import { shouldDrawLanePortMarkers } from "./lanePortsView";
-import { extractMarkerCenter, type GameMap } from "./map";
+import { extractMarkerCenter, type GameMap, type MapTileset, type MapVisualLayerId } from "./map";
 import { ARMORS, WEAPONS } from "./gear";
 import type { Enemy, Tower } from "./types";
-import { operatorWorldPos } from "./movement";
+import { operatorWorldPos, STAMINA_MAX } from "./movement";
 import { effectiveEnemy } from "./dev/waveLabCore";
 import { drawGear, drawSprite, floorImage } from "./sprites";
 import type { GearFrameName } from "./sprites";
 import type { WeaponClass } from "./gear";
 import { obstacleDrawAlpha, type BarricadeEdge } from "./defenses";
+import { reloadProgress } from "./weapons";
 
 /** Map a weapon class to the pixel gun art in the gear atlas. */
 function gunFrame(cls: WeaponClass, firing: boolean): GearFrameName {
@@ -56,7 +57,11 @@ const rnd = (seed: number) => {
   };
 };
 
-export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: { lanePorts?: boolean }) {
+export function drawTerrain(
+  ctx: CanvasRenderingContext2D,
+  map: GameMap,
+  opts?: { lanePorts?: boolean; tilesetImage?: HTMLImageElement | null },
+) {
   // Base terrain only. Suspended bridges are drawn later via drawElevatedSurfaces
   // so LOW entities can pass underneath the deck.
   const pal = map.def.palette;
@@ -182,11 +187,48 @@ export function drawTerrain(ctx: CanvasRenderingContext2D, map: GameMap, opts?: 
     }
   }
 
+  // Aseprite-authored tile art, if this map has any — sits above the procedural base,
+  // below the gameplay markers drawn next (matches the Map Builder preview's own order).
+  drawVisualTileLayer(ctx, map, "GROUND", opts?.tilesetImage);
+  drawVisualTileLayer(ctx, map, "DETAIL", opts?.tilesetImage);
+
   for (const c of map.COVER) drawCover(ctx, c.tx * TILE, c.ty * TILE, c.type);
   for (const p of map.PROPS) drawProp(ctx, p.tx * TILE, p.ty * TILE, p.type);
   for (const c of map.CHECKPOINT) drawCheckpoint(ctx, c.tx * TILE, c.ty * TILE, c.type);
 
   if (shouldDrawLanePortMarkers("raid", opts?.lanePorts)) drawLanePortMarkers(ctx, map);
+}
+
+/**
+ * OBJECTS/FOREGROUND aren't baked into the static terrain — OBJECTS sits above the
+ * per-frame gameplay markers (crates, extraction zones) and FOREGROUND above every
+ * entity, so both need a live draw call at the right point in the render loop.
+ * GROUND/DETAIL are baked once via drawTerrain instead, since nothing draws below them.
+ */
+export function drawVisualTileLayer(
+  ctx: CanvasRenderingContext2D,
+  map: GameMap,
+  layerId: MapVisualLayerId,
+  image: HTMLImageElement | null | undefined,
+) {
+  const tileset = map.def.tileset;
+  const placements = map.def.visualLayers?.[layerId];
+  if (!tileset || !image || !placements?.length) return;
+  for (const placement of placements) drawVisualTile(ctx, tileset, image, placement);
+}
+
+function drawVisualTile(
+  ctx: CanvasRenderingContext2D,
+  tileset: MapTileset,
+  image: HTMLImageElement,
+  placement: { tx: number; ty: number; tile: number },
+) {
+  const { tile, tx, ty } = placement;
+  if (tile < 0 || tile >= tileset.columns * tileset.rows) return;
+  const sx = (tile % tileset.columns) * tileset.tileWidth;
+  const sy = Math.floor(tile / tileset.columns) * tileset.tileHeight;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, sx, sy, tileset.tileWidth, tileset.tileHeight, tx * TILE, ty * TILE, TILE, TILE);
 }
 
 /** HIGH overlay pass. Drawn after LOW entities so the deck occludes the road underneath. */
@@ -340,7 +382,7 @@ export function drawCover(ctx: CanvasRenderingContext2D, x: number, y: number, t
   });
 }
 
-export function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, type: string) {
+export function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, type: string, time = 0) {
   // sprite-based props (fall through to pixel art if the atlas hasn't loaded)
   if (type === "hut" || type === "crate") {
     px(ctx, "#00000050", x + 4, y + TILE - 7, TILE - 8, 5);
@@ -438,6 +480,72 @@ export function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, ty
         px(ctx, "#5b5548", 0, 4, 32, 7);
         px(ctx, "#7a725f", 0, 4, 32, 2);
         break;
+      case "tent":
+        // stepped canvas wedge with a dark entrance flap
+        px(ctx, "#00000040", 3, 28, 26, 3);
+        px(ctx, "#4d5a34", 14, 4, 4, 4);
+        px(ctx, "#5b6b3f", 10, 8, 12, 4);
+        px(ctx, "#5b6b3f", 6, 12, 20, 4);
+        px(ctx, "#4d5a34", 4, 16, 24, 4);
+        px(ctx, "#3c4526", 4, 20, 24, 8);
+        px(ctx, "#1a1712", 13, 22, 6, 6);
+        break;
+      case "gun-bench":
+        // workbench with a leaning rifle
+        px(ctx, "#00000040", 3, 27, 26, 4);
+        px(ctx, "#3a2e1c", 4, 18, 24, 4);
+        px(ctx, "#594930", 5, 16, 22, 3);
+        px(ctx, "#2a2114", 6, 22, 3, 8);
+        px(ctx, "#2a2114", 23, 22, 3, 8);
+        px(ctx, "#1c1a17", 9, 4, 2, 16);
+        px(ctx, "#3c352a", 7, 10, 6, 3);
+        px(ctx, "#14130f", 8, 20, 3, 3);
+        break;
+      case "ops-table":
+        // planning table with a pinned map spread
+        px(ctx, "#00000040", 3, 27, 26, 4);
+        px(ctx, "#3a2e1c", 3, 17, 26, 5);
+        px(ctx, "#2a2114", 5, 22, 3, 8);
+        px(ctx, "#2a2114", 24, 22, 3, 8);
+        px(ctx, "#8a7a3c", 6, 13, 20, 5);
+        px(ctx, "#5c6165", 12, 15, 8, 1);
+        px(ctx, "#c23b2c", 9, 15, 2, 2);
+        px(ctx, "#f0b400", 17, 14, 2, 2);
+        break;
+      case "map-table":
+        // low round table with a compass rose, distinct silhouette from ops-table
+        px(ctx, "#00000040", 4, 27, 24, 4);
+        px(ctx, "#2a2114", 8, 24, 4, 6);
+        px(ctx, "#2a2114", 20, 24, 4, 6);
+        px(ctx, "#6b5230", 8, 10, 16, 16);
+        px(ctx, "#8a7a3c", 10, 12, 12, 12);
+        px(ctx, "#c9a227", 15, 13, 2, 4);
+        px(ctx, "#7a2f2f", 15, 19, 2, 4);
+        px(ctx, "#c9a227", 15, 17, 2, 2);
+        break;
+      case "radio":
+        // boxy field radio with an antenna
+        px(ctx, "#00000040", 8, 27, 16, 3);
+        px(ctx, "#2a2b23", 9, 14, 14, 14);
+        px(ctx, "#4a4d3f", 10, 15, 12, 6);
+        px(ctx, "#4dd36a", 12, 17, 3, 2);
+        px(ctx, "#c9a227", 17, 17, 3, 2);
+        px(ctx, "#5b5c55", 15, 4, 2, 10);
+        px(ctx, "#8c8a78", 14, 3, 4, 2);
+        break;
+      case "fire": {
+        // time-indexed flame silhouette over a small log base
+        px(ctx, "#00000040", 6, 27, 20, 3);
+        px(ctx, "#2a2016", 10, 22, 12, 6);
+        px(ctx, "#1a130c", 12, 23, 3, 4);
+        px(ctx, "#1a130c", 18, 23, 3, 4);
+        const heights = [14, 17, 15, 18];
+        const h = heights[Math.floor(time / 180) % heights.length] ?? 14;
+        px(ctx, "#c23b2c", 12, 22 - h, 8, h);
+        px(ctx, "#f0b400", 13, 22 - h * 0.7, 6, h * 0.7);
+        px(ctx, "#ffe27a", 14, 22 - h * 0.4, 4, h * 0.4);
+        break;
+      }
     }
   });
 }
@@ -551,9 +659,14 @@ export function drawDropBag(ctx: CanvasRenderingContext2D, tx: number, ty: numbe
 }
 
 /** Core operator sprite. Drawn in the 32px art grid around (cx, cy) at `scale`. */
+export type DrawableOperator = Pick<
+  Tower,
+  "id" | "weapon" | "armor" | "armorHp" | "attachments" | "hurt" | "angle" | "pmc" | "level" | "flash"
+>;
+
 export function drawOperator(
   ctx: CanvasRenderingContext2D,
-  t: Tower,
+  t: DrawableOperator,
   cx: number,
   cy: number,
   scale: number,
@@ -691,9 +804,25 @@ export function drawOperator(
   ctx.restore();
 }
 
-export function drawTower(ctx: CanvasRenderingContext2D, t: Tower, time: number) {
+export function drawTower(ctx: CanvasRenderingContext2D, t: Tower, time: number, reloadMs?: number) {
   const { x: cx, y: cy } = operatorWorldPos(t);
   drawOperator(ctx, t, cx, cy, SCALE, time);
+
+  if (t.reloadLeft > 0 && reloadMs) {
+    const w = 22;
+    const bx = cx - w / 2;
+    const by = cy - TILE / 2 - 9;
+    ctx.save();
+    ctx.font = "7px monospace";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#000";
+    ctx.fillText("RLD", cx + 1, by - 1);
+    ctx.fillStyle = "#f0b400";
+    ctx.fillText("RLD", cx, by - 2);
+    ctx.restore();
+    px(ctx, "#140f0d", bx, by, w, 4);
+    px(ctx, "#f0b400", bx + 1, by + 1, (w - 2) * reloadProgress(t.reloadLeft, reloadMs), 2);
+  }
 
   // attachment pips
   for (let i = 0; i < t.attachments.length; i++)
@@ -720,6 +849,10 @@ export function drawTower(ctx: CanvasRenderingContext2D, t: Tower, time: number)
   if (armor && t.armorHp != null && t.armorHp > 0) {
     px(ctx, "#140f0d", cx - bw / 2, cy - TILE / 2 + 6, bw, 3);
     px(ctx, armor.trim, cx - bw / 2 + 1, cy - TILE / 2 + 7, (bw - 2) * Math.max(0, Math.min(1, t.armorHp / armor.durability)), 1);
+  }
+  if (t.stamina < STAMINA_MAX) {
+    px(ctx, "#140f0d", cx - bw / 2, cy - TILE / 2 + 10, bw, 3);
+    px(ctx, "#8fd3ff", cx - bw / 2 + 1, cy - TILE / 2 + 11, (bw - 2) * Math.max(0, t.stamina / STAMINA_MAX), 1);
   }
 }
 

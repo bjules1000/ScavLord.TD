@@ -22,7 +22,7 @@ function restoreAutoPreference(tower: Tower): AutoTargetMode {
   return isAutoTargetMode(pref) ? pref : "FIRST";
 }
 
-export type MoveCommand = { type: "MOVE"; tx: number; ty: number };
+export type MoveCommand = { type: "MOVE"; tx: number; ty: number; sprint?: boolean };
 export type ReloadCommand = { type: "RELOAD" };
 export type ThrowGrenadeCommand = { type: "THROW_GRENADE"; grenade: GrenadeKind; point: { x: number; y: number } };
 export type HoldAngleCommand = {
@@ -71,7 +71,7 @@ export function dispatchOperatorCommand(
 ): DispatchResult {
   switch (command.type) {
     case "MOVE": {
-      const r: IssueMoveResult = issueOperatorMove(ctx.map, ctx.towers, tower, command.tx, command.ty);
+      const r: IssueMoveResult = issueOperatorMove(ctx.map, ctx.towers, tower, command.tx, command.ty, command.sprint);
       if (!r.ok) return { ok: false, reason: r.reason };
       return r.alreadyThere ? { ok: true, alreadyThere: true } : { ok: true };
     }

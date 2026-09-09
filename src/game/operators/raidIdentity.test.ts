@@ -46,6 +46,7 @@ function tower(partial: Partial<Tower> & Pick<Tower, "id">): Tower {
     targetMode: "CLOSEST",
     manualTargetId: null,
     engageTargetId: null,
+    stamina: 100,
     ...partial,
   };
 }

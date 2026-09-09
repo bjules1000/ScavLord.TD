@@ -37,6 +37,19 @@ export interface WaveMods {
   heavyDelay: number;
 }
 
+/** Aseprite-authored tile atlas — a uniform grid PNG sliced by tileWidth/tileHeight. */
+export interface MapTileset {
+  imageDataUrl: string;
+  tileWidth: number;
+  tileHeight: number;
+  columns: number;
+  rows: number;
+}
+
+export const MAP_VISUAL_LAYER_IDS = ["GROUND", "DETAIL", "OBJECTS", "FOREGROUND"] as const;
+export type MapVisualLayerId = (typeof MAP_VISUAL_LAYER_IDS)[number];
+export type MapVisualLayers = Record<MapVisualLayerId, Array<{ tx: number; ty: number; tile: number }>>;
+
 export interface MapDef {
   id: string;
   name: string;
@@ -95,6 +108,10 @@ export interface MapDef {
   /** False keeps authored sentries available to the editor without making them a mandatory raid-clear phase. */
   activateSentries?: boolean;
   palette: Palette;
+  /** Optional Aseprite-authored tile atlas. Absent = today's procedural terrain (every built-in map). */
+  tileset?: MapTileset | null;
+  /** Sparse per-layer tile placements against `tileset`. Only meaningful when tileset is set. */
+  visualLayers?: MapVisualLayers;
 }
 
 

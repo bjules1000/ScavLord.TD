@@ -1,5 +1,5 @@
 import type { CheckpointPart, CoverType, PropType } from "../map";
-import type { GateId, TerrainKind } from "./schema";
+import type { CampPropType, GateId, TerrainKind, VisualLayerId } from "./schema";
 import type { EnemyKind } from "../types";
 
 export type EditorTool =
@@ -11,7 +11,7 @@ export type EditorTool =
   | { id: "end" }
   | { id: "gate"; gateId: GateId }
   | { id: "zone" }
-  | { id: "prop"; type: PropType }
+  | { id: "prop"; type: PropType | CampPropType }
   | { id: "cover"; type: CoverType }
   | { id: "crate" }
   | { id: "extraction" }
@@ -24,7 +24,10 @@ export type EditorTool =
   | { id: "erase-bridge" }
   | { id: "erase-prop" }
   | { id: "erase-gameplay" }
-  | { id: "los-probe" };
+  | { id: "los-probe" }
+  | { id: "visual-tile"; layerId: VisualLayerId; tile: number }
+  | { id: "visual-erase"; layerId: VisualLayerId }
+  | { id: "visual-pick"; layerId: VisualLayerId };
 
 export const TERRAIN_PAINT_KINDS = ["GROUND", "ROAD", "WATER", "MOUNTAIN", "HIGH_GROUND"] as const;
 export const DRAG_PLACE_PROPS: PropType[] = ["tree", "rock", "barrel"];
@@ -45,7 +48,7 @@ export function selectLosProbeTool(): EditorTool {
   return { id: "los-probe" };
 }
 
-export function selectPropTool(type: PropType): EditorTool {
+export function selectPropTool(type: PropType | CampPropType): EditorTool {
   return { id: "prop", type };
 }
 
@@ -78,7 +81,15 @@ export function isLosProbeMode(tool: EditorTool): boolean {
 }
 
 export function isPropPlaceMode(tool: EditorTool): boolean {
-  return tool.id === "prop" || tool.id === "cover" || tool.id === "crate" || tool.id === "extraction" || tool.id === "sentry" || tool.id === "checkpoint" || tool.id === "edge";
+  return (
+    tool.id === "prop" ||
+    tool.id === "cover" ||
+    tool.id === "crate" ||
+    tool.id === "extraction" ||
+    tool.id === "sentry" ||
+    tool.id === "checkpoint" ||
+    tool.id === "edge"
+  );
 }
 
 export function isPropEraseMode(tool: EditorTool): boolean {
@@ -138,10 +149,14 @@ export function selectEraseBridgeTool(): EditorTool {
 }
 
 export function isAuthoringTool(tool: EditorTool): boolean {
-  return tool.id !== "select" && tool.id !== "los-probe";
+  return tool.id !== "select" && tool.id !== "los-probe" && tool.id !== "visual-pick";
 }
 
-export function isDragPlaceProp(type: PropType): boolean {
+export function isVisualTileTool(tool: EditorTool): boolean {
+  return tool.id === "visual-tile" || tool.id === "visual-erase" || tool.id === "visual-pick";
+}
+
+export function isDragPlaceProp(type: PropType | CampPropType): boolean {
   return type === "tree" || type === "rock" || type === "barrel";
 }
 

@@ -339,7 +339,10 @@ describe("LOS probe visibility", () => {
   it("diagnostic result matches canonical hasLineOfSight", () => {
     const map = testMap({
       mountain: [[5, 2]],
-      highGround: [[8, 4], [9, 4]],
+      highGround: [
+        [8, 4],
+        [9, 4],
+      ],
     });
     const origin = resolveProbePoint(map, 3, 2);
     const samples = sampleLanePath([
@@ -348,7 +351,9 @@ describe("LOS probe visibility", () => {
     ]);
     const sweep = evaluatePathSweep(map, origin, samples);
     for (const r of sweep.results) {
-      expect(probeHitMatchesGameplay(map, origin, { x: r.x, y: r.y, surface: r.surface }, r.hit)).toBe(true);
+      expect(
+        probeHitMatchesGameplay(map, origin, { x: r.x, y: r.y, surface: r.surface }, r.hit),
+      ).toBe(true);
       expect(r.hit.clear).toBe(hasLineOfSight(map, origin, { x: r.x, y: r.y, surface: r.surface }));
     }
   });
@@ -471,6 +476,8 @@ describe("LOS probe tool state", () => {
         "zones",
         "collisionWalls",
         "bridges",
+        "tileset",
+        "visualLayers",
       ].sort(),
     );
   });
@@ -489,8 +496,10 @@ describe("LOS probe tool state", () => {
     ]);
     const west = evaluatePathSweep(map, resolveProbePoint(map, 1, 5), samples);
     const east = evaluatePathSweep(map, resolveProbePoint(map, 7, 5), samples);
+    // The two origins block a different set of samples around the mountain (the real
+    // property under test) — their *counts* can coincidentally match even so, so assert
+    // on the pattern, not the aggregate.
     expect(west.results.map((r) => r.hit.clear)).not.toEqual(east.results.map((r) => r.hit.clear));
-    expect(west.visible).not.toBe(east.visible);
   });
 
   it("changing active lane recomputes targets", () => {

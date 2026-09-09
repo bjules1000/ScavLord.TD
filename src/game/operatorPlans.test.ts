@@ -87,8 +87,16 @@ describe("operatorPlans left-click semantics", () => {
     expect(r.kind).toBe("apply");
     if (r.kind === "apply") {
       expect(r.executeNow).toBe(true);
-      expect(r.plan.orders).toEqual([{ type: "MOVE", tx: 5, ty: 8 }]);
+      expect(r.plan.orders).toEqual([{ type: "MOVE", tx: 5, ty: 8, sprint: false }]);
       expect(r.plan.state).toBe("EXECUTING");
+    }
+  });
+
+  it("shift+click embeds a sprint order", () => {
+    const r = resolveLeftClickMovePlan(undefined, 5, 8, false, true);
+    expect(r.kind).toBe("apply");
+    if (r.kind === "apply") {
+      expect(r.plan.orders).toEqual([{ type: "MOVE", tx: 5, ty: 8, sprint: true }]);
     }
   });
 
@@ -111,7 +119,7 @@ describe("operatorPlans left-click semantics", () => {
     const r = resolveLeftClickMovePlan(existing, 6, 8, true);
     expect(r.kind).toBe("apply");
     if (r.kind === "apply") {
-      expect(r.plan.orders[0]).toEqual({ type: "MOVE", tx: 6, ty: 8 });
+      expect(r.plan.orders[0]).toEqual({ type: "MOVE", tx: 6, ty: 8, sprint: false });
     }
   });
 
@@ -128,7 +136,7 @@ describe("operatorPlans left-click semantics", () => {
     const r = resolveLeftClickMovePlan(existing, 7, 8, true);
     expect(r.kind).toBe("apply");
     if (r.kind === "apply") {
-      expect(r.plan.orders[0]).toEqual({ type: "MOVE", tx: 7, ty: 8 });
+      expect(r.plan.orders[0]).toEqual({ type: "MOVE", tx: 7, ty: 8, sprint: false });
       expect(r.plan.orders[1]?.type).toBe("RELOAD");
     }
   });

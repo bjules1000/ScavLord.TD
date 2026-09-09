@@ -54,6 +54,70 @@ function at(tx: number, ty: number) {
   return { x: (tx + 0.5) * TILE, y: (ty + 0.5) * TILE };
 }
 
+/**
+ * A wall between shooter and enemy must stop the projectile at any frame rate. At
+ * TILE=32 and DEFAULT_BULLET_SPEED (18 tiles/sec), 60fps steps land on an exact
+ * 9.6px increment — every 5th frame's endpoint coincides with a tile-multiple
+ * boundary to within float noise, which used to make crossedTileEdges floor the
+ * destination into the wrong tile and silently drop the wall crossing (and any
+ * enemy hit-zone lookup past it). A single giant step never hit this, which is
+ * why it went unnoticed until real per-frame ticking was checked.
+ */
+describe("wall blocks projectile regardless of frame rate", () => {
+  function wallScenario() {
+    const map = testMap({ collisionWalls: [{ tx: 3, ty: 2, edge: "E", kind: "SOLID" }] });
+    const shooterPos = at(2, 2);
+    const enemyPos = at(5, 2);
+    const e = enemy(1, 5, 2, 100);
+    const proj = spawnProjectile({
+      id: 1,
+      shooterId: 1,
+      origin: shooterPos,
+      angle: Math.atan2(enemyPos.y - shooterPos.y, enemyPos.x - shooterPos.x),
+      range: 500,
+      damage: 50,
+      pen: 0,
+      color: "#fff",
+      surface: "GROUND",
+    });
+    return { map, e, proj };
+  }
+
+  it("stops the projectile in a single large step", () => {
+    const { map, e, proj } = wallScenario();
+    const result = tickProjectile(proj, 1.0, [e], () => 0, map);
+    expect(result.hits.length).toBe(0);
+    expect(e.hp).toBe(100);
+  });
+
+  it("stops the projectile ticked at 60fps", () => {
+    const { map, e, proj } = wallScenario();
+    let totalHits = 0;
+    for (let i = 0; i < 600 && !proj.dead; i++) {
+      totalHits += tickProjectile(proj, 1 / 60, [e], () => 0, map).hits.length;
+    }
+    expect(totalHits).toBe(0);
+    expect(e.hp).toBe(100);
+    expect(proj.dead).toBe(true);
+  });
+
+  it("stops the projectile at 60fps with hitZoneOf provided (the swept hit-zone path)", () => {
+    const { map, e, proj } = wallScenario();
+    const hitZoneOf = (_enemy: ProjectileTickEnemy, _ax: number, _ay: number, bx: number, by: number) => ({
+      damageMult: 1,
+      zoneId: "body",
+      x: bx,
+      y: by,
+    });
+    let totalHits = 0;
+    for (let i = 0; i < 600 && !proj.dead; i++) {
+      totalHits += tickProjectile(proj, 1 / 60, [e], () => 0, map, undefined, hitZoneOf).hits.length;
+    }
+    expect(totalHits).toBe(0);
+    expect(e.hp).toBe(100);
+  });
+});
+
 function enemy(id: number, tx: number, ty: number, hp = 100): ProjectileTickEnemy {
   return {
     id,

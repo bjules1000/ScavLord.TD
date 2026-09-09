@@ -1,5 +1,6 @@
 import { ATTACHMENTS, WEAPONS, type AttachmentDef, type ReloadType, type WeaponDef } from "./gear";
 import { effectiveAttachment, effectiveWeapon } from "./dev/balance";
+import { STAMINA_MAX } from "./movement";
 import type { TargetMode } from "./targeting";
 
 export type { ReloadType };
@@ -44,6 +45,7 @@ export function weaponRuntimeFields(weaponId: string) {
     autoTargetMode: "FIRST" as const,
     manualTargetId: null as number | null,
     engageTargetId: null as number | null,
+    stamina: STAMINA_MAX,
   };
 }
 

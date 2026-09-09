@@ -28,6 +28,7 @@ import {
   partitionBySurface,
 } from "./surfaces";
 import {
+  canSprint,
   clearOperatorMove,
   findOperatorPath,
   isOperatorMoving,
@@ -36,9 +37,12 @@ import {
   operatorMoveSpeedPx,
   operatorWorldPos,
   getOperatorMoveSpeed,
+  isOperatorSprinting,
   resolveMoveDestination,
+  SPRINT_SPEED_MULT,
   stepDirectMove,
   stepOperatorMove,
+  tickStamina,
 } from "./movement";
 import {
   BATTLE_TIME_MODE_ORDER,
@@ -95,6 +99,16 @@ import {
 } from "./actionWheel";
 import { OrdersPanel, type OrdersEditorMode } from "./OrdersPanel";
 import { GRENADE_DEFS, carriedGrenadeKinds, clampGrenadeTarget, consumeGrenadeItem, grenadeDamageAt, grenadeDef, nextGrenadeKind, smokeBlocksSight, spawnGrenade, tickGrenade, type Grenade, type GrenadeCloud, type GrenadeKind } from "./grenades";
+import {
+  autoPopulateHotbar,
+  bindHotbarSlot,
+  clearHotbarSlot,
+  hotbarSlotCount,
+  hotbarSlotFromItem,
+  hotbarSlotLabel,
+  HOTBAR_SIZE,
+  type HotbarSlot,
+} from "./hotbar";
 import { raidStartingSentryEnemies, sentryMovementMultiplier, syncEnemyToLanePosition } from "./mapSentries";
 import { selectDeploymentTiles } from "./mapDeployment";
 import { absorbWithArmor, getEquippedWeight } from "./armor";
@@ -169,6 +183,7 @@ import {
   drawOperator,
   drawTerrain,
   drawTower,
+  drawVisualTileLayer,
 } from "./draw";
 import type { Bullet, Enemy, EnemyKind, FloatText, Particle, Tower } from "./types";
 import {
@@ -326,7 +341,8 @@ import {
 } from "./operators/runtime";
 import { operatorSpeedMultiplier, OPERATOR_MOVE_SPEED_TILES } from "./movement";
 import CampHub from "./hub/CampHub";
-import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
+import type { HubAction } from "./campActions";
+import { CAMP_MAP_DEF } from "./hub/campMaps/campMain";
 
 import { RAID_SCRAP_MULT } from "./loot";
 import { DEV_TOOLS_ENABLED } from "./dev/tools";
@@ -455,6 +471,8 @@ interface GameState {
   recovered: Item[];
   pmcDown: boolean;
   newDebuff: string | null;
+  /** Quick-use meds/grenade bindings, keys 1..HOTBAR_SIZE. Raid-scoped, not saved to Meta. */
+  hotbar: HotbarSlot[];
 }
 
 function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = START_ROUBLES): GameState {
@@ -494,6 +512,7 @@ function freshState(loadout: Item[], phase: Phase, map: GameMap, startRoubles = 
     recovered: [],
     pmcDown: false,
     newDebuff: null,
+    hotbar: autoPopulateHotbar(loadout),
   };
 }
 
@@ -565,13 +584,14 @@ function coverList(map: GameMap, s: GameState): CoverPiece[] {
   ];
 }
 
-export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Meta) {
+export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Meta, firingOnTheMove = false) {
   const w = weaponDef(t.weapon);
   const fitted = fittedWeaponStats(t.weapon, t.attachments, t.scavMods);
   let damage = fitted.damage;
   let range = fitted.range * SCALE;
   let cooldown = fitted.cooldown;
   let accuracy = fitted.accuracy;
+  let reloadMs = fitted.reloadMs;
   let pen = applyAttachmentMods(w, t.attachments, attachmentDef).pen;
   const splash = w.splash * SCALE;
   const operatorMods = t.operatorId && meta ? resolveCombatMods(findOperator(meta, t.operatorId) ?? { stats: { aim: 50, toughness: 50, handling: 50, mobility: 50 }, traitIds: [], perkIds: [] }) : null;
@@ -586,7 +606,11 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
   }
   if (operatorMods) {
     accuracy += operatorAccuracyBonus(operatorMods);
-    cooldown *= operatorReloadMult(operatorMods);
+    reloadMs *= operatorReloadMult(operatorMods);
+  }
+  if (firingOnTheMove) {
+    range *= MOVING_FIRE_RANGE_MULT;
+    accuracy -= MOVING_FIRE_ACCURACY_PENALTY;
   }
   if (map) {
     const boosted = applyHighGroundCombat(range, accuracy, map, t.tx, t.ty);
@@ -605,7 +629,7 @@ export function towerStats(t: Tower, mods?: DebuffMods, map?: GameMap, meta?: Me
     splash,
     slots: w.slots,
     magSize: fitted.magSize,
-    reloadMs: fitted.reloadMs,
+    reloadMs,
     reloadType: w.reloadType,
     spread: fitted.spread,
   };
@@ -638,7 +662,15 @@ const HEAL_MOVE_MULT = 0.1;
 /** Direct-control G key: shorter than this is a tap (cycle kind); at/above this is a hold (throw on release). */
 const GRENADE_HOLD_THRESHOLD_MS = 220;
 
-function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
+/**
+ * Firing while walking (not sprinting — that still blocks fire outright) narrows
+ * engagement rather than spraying: range takes the real hit, accuracy only a little,
+ * so a moving operator reads as "focused but short-ranged," not "wasting ammo wildly."
+ */
+const MOVING_FIRE_RANGE_MULT = 0.65;
+const MOVING_FIRE_ACCURACY_PENALTY = 0.06;
+
+function towerMoveSpeedPx(t: Tower, meta?: Meta, sprinting = false): number {
   const kit = { weapon: t.weapon, attachments: t.attachments, armor: t.armor ?? null };
   const scav = scavVisualMods(t.weapon, t.scavMods);
   let weight = getEquippedWeight(kit) + scav.weightAdd;
@@ -647,7 +679,8 @@ function towerMoveSpeedPx(t: Tower, meta?: Meta): number {
     if (op) weight = operatorEffectiveWeight(kit, resolveCombatMods(op)) + scav.weightAdd;
   }
   const healMult = t.healing ? HEAL_MOVE_MULT : 1;
-  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * healMult * TILE;
+  const sprintMult = sprinting ? SPRINT_SPEED_MULT : 1;
+  return OPERATOR_MOVE_SPEED_TILES * operatorSpeedMultiplier(weight) * scav.moveMult * healMult * sprintMult * TILE;
 }
 
 function findDeployTiles(map: GameMap, s: GameState, count: number) {
@@ -692,10 +725,21 @@ function spawnPersistentOperatorTower(
   });
 }
 
+/** Decodes a map's embedded tileset data URL. Data URLs decode fast, but Image.onload is still async. */
+function loadTilesetImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not decode map tileset."));
+    image.src = dataUrl;
+  });
+}
 
 export default function TarkovTD() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const terrainRef = useRef<HTMLCanvasElement | null>(null);
+  /** Decoded tileset image for the current map's Aseprite-authored tiles, if any. */
+  const tilesetImageRef = useRef<HTMLImageElement | null>(null);
   const metaRef = useRef<Meta>(loadMeta());
   const uidRef = useRef(1);
   const [mapId, setMapId] = useState<string>("kolkhoz");
@@ -802,6 +846,8 @@ export default function TarkovTD() {
   });
   const [log, setLog] = useState<string[]>(["Prep your kit in the hideout, then deploy."]);
   const dragUid = useRef<number | null>(null);
+  /** Backpack item currently under the cursor — lets a number-key press bind it, no drag needed. */
+  const hoveredBackpackUidRef = useRef<number | null>(null);
 
   const pushLog = useCallback((msg: string) => setLog((l) => [msg, ...l].slice(0, 6)), []);
   const mods = skillMods(metaRef.current.skills);
@@ -854,22 +900,46 @@ export default function TarkovTD() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const def = MAP_BY_ID[mapId] ?? MAP_DEFS[1]!;
     mapRef.current = buildMap(def);
-    const c = document.createElement("canvas");
-    c.width = W;
-    c.height = H;
-    const ctx = c.getContext("2d")!;
-    ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = "#0a0c08";
-    ctx.fillRect(0, 0, W, H);
-    ctx.save();
-    ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
-    drawTerrain(ctx, mapRef.current);
-    ctx.restore();
-    terrainRef.current = c;
+    tilesetImageRef.current = null;
+
+    const bakeTerrain = () => {
+      const c = document.createElement("canvas");
+      c.width = W;
+      c.height = H;
+      const ctx = c.getContext("2d")!;
+      ctx.imageSmoothingEnabled = false;
+      ctx.fillStyle = "#0a0c08";
+      ctx.fillRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(BOARD_GUTTER, BOARD_GUTTER);
+      drawTerrain(ctx, mapRef.current, { tilesetImage: tilesetImageRef.current });
+      ctx.restore();
+      terrainRef.current = c;
+    };
+
+    bakeTerrain();
     if (gs.current.phase === "hideout") gs.current = freshState([], "hideout", mapRef.current);
     rerender();
+
+    if (def.tileset) {
+      void loadTilesetImage(def.tileset.imageDataUrl)
+        .then((image) => {
+          if (cancelled) return;
+          tilesetImageRef.current = image;
+          bakeTerrain();
+          rerender();
+        })
+        .catch(() => {
+          // No tileset art this raid — the procedural terrain already baked above stands.
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [mapId, rerender]);
 
   /* ---------------- hideout ---------------- */
@@ -1445,6 +1515,78 @@ export default function TarkovTD() {
     [addToBackpack, pushLog, rerender],
   );
 
+  /** Hotbar meds slots bind a kind, not a specific item instance — resolve to the first matching uid. */
+  const applyMedToTower = useCallback(
+    (medId: string, towerId: number) => {
+      const item = gs.current.backpack.find((i) => i.id === medId && i.kind === "meds");
+      if (!item) return pushLog("No supply of that kit left.");
+      equipOnTower(item.uid, towerId);
+    },
+    [equipOnTower, pushLog],
+  );
+
+  /**
+   * Shared by the number-key press and clicking a hotbar cell. Meds apply instantly
+   * (any mode); grenades just arm the kind for G to throw, they don't throw on their own.
+   */
+  const activateHotbarSlot = useCallback(
+    (index: number) => {
+      const s = gs.current;
+      const slot = s.hotbar[index];
+      if (!slot || s.selectedId == null) return;
+      if (slot.kind === "meds") {
+        applyMedToTower(slot.medId, s.selectedId);
+        return;
+      }
+      // Grenades throw immediately at the live mouse-aim point — meds are instant-use
+      // too, so this stays symmetric. G's own hold/release/cycle flow is unaffected;
+      // this just also updates what it considers "armed."
+      if (!directControlActive()) return;
+      const sel = s.towers.find((t) => t.id === s.selectedId);
+      const point = directMouseWorldRef.current;
+      if (!sel || !point) return;
+      directGrenadeKindRef.current = slot.grenade;
+      const r = throwGrenade(sel, slot.grenade, point);
+      pushLog(r.ok ? r.message : r.reason);
+      rerender();
+    },
+    [applyMedToTower, pushLog, rerender],
+  );
+
+  /** Shared by drag-drop and hover+number-key binding. */
+  const bindHotbarSlotToUid = useCallback(
+    (index: number, uid: number) => {
+      const s = gs.current;
+      const item = s.backpack.find((i) => i.uid === uid);
+      if (!item) return;
+      const slot = hotbarSlotFromItem(item);
+      if (!slot) return pushLog("Only meds and grenades can go on the hotbar.");
+      s.hotbar = bindHotbarSlot(s.hotbar, index, slot);
+      rerender();
+    },
+    [pushLog, rerender],
+  );
+
+  /** Drop a dragged BackpackCell onto a hotbar slot to bind it (reuses the existing dragUid ref). */
+  const bindHotbarSlotFromDrag = useCallback(
+    (index: number) => {
+      const uid = dragUid.current;
+      dragUid.current = null;
+      if (uid == null) return;
+      bindHotbarSlotToUid(index, uid);
+    },
+    [bindHotbarSlotToUid],
+  );
+
+  const clearHotbarSlotAt = useCallback(
+    (index: number) => {
+      const s = gs.current;
+      s.hotbar = clearHotbarSlot(s.hotbar, index);
+      rerender();
+    },
+    [rerender],
+  );
+
   /** Stop an in-progress heal early. Whatever HP already ticked in stays — no rollback. */
   const cancelHealing = useCallback(
     (towerId: number) => {
@@ -1882,17 +2024,25 @@ export default function TarkovTD() {
         }
       }
 
-      // towers move, then fire (moving operators cannot shoot — except the
-      // directly-controlled one, which is a live strafe-and-shoot unit)
+      // towers move, then fire — walking narrows engagement (range/accuracy penalty
+      // below) but doesn't block it; sprinting still does, for everyone
       for (const t of s.towers) {
         const isDirect = t.id === s.selectedId && directControlActive();
+        let isMoving = false;
+        let isSprinting = false;
         if (isDirect) {
           if (!t.freeMove) {
             const startPos = operatorWorldPos(t);
             t.freeMove = { x: startPos.x, y: startPos.y };
             t.move = null; // direct control overrides any queued path order
+            // ...and any queued plan — otherwise it sits in the UI forever, never
+            // executing (onMoveStepComplete only runs for order-driven movement)
+            // and never clearing, since nothing here ever advances or cancels it.
+            clearPlan(planBookRef.current, t.id);
           }
           const keys = directHeldKeysRef.current;
+          isMoving = keys.has("w") || keys.has("a") || keys.has("s") || keys.has("d");
+          isSprinting = isMoving && keys.has("shift") && canSprint(t);
           const result = stepDirectMove(
             t.freeMove.x,
             t.freeMove.y,
@@ -1900,23 +2050,29 @@ export default function TarkovTD() {
             { up: keys.has("w"), down: keys.has("s"), left: keys.has("a"), right: keys.has("d") },
             dt,
             mapRef.current,
-            towerMoveSpeedPx(t, metaRef.current),
+            towerMoveSpeedPx(t, metaRef.current, isSprinting),
           );
           t.freeMove = { x: result.x, y: result.y };
           t.tx = result.tx;
           t.ty = result.ty;
           t.surface = result.surface;
+          t.stamina = tickStamina(t.stamina, isSprinting, dt);
         } else {
           if (t.freeMove) t.freeMove = null; // direct control just ended — settle onto the tile grid
-          const wasMoving = isOperatorMoving(t);
-          if (wasMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current));
+          isMoving = isOperatorMoving(t);
+          isSprinting = isOperatorSprinting(t);
+          if (isMoving) stepOperatorMove(t, dt, mapRef.current, towerMoveSpeedPx(t, metaRef.current, isSprinting));
+          t.stamina = tickStamina(t.stamina, isSprinting, dt);
           const plan = planBookRef.current.get(t.id);
           if (plan) {
-            const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers, throwGrenade }, wasMoving);
+            const step = onMoveStepComplete(t, plan, { map: mapRef.current, towers: s.towers, throwGrenade }, isMoving);
             if (step.advanced || step.plan !== plan) setPlan(planBookRef.current, t.id, step.plan);
           }
         }
-        const st = towerStats(t, mods, mapRef.current, metaRef.current);
+        // Walking narrows engagement (range down, aim slightly off) rather than blocking fire outright —
+        // sprinting still blocks fire entirely (isSprinting, checked below at the fire gate).
+        const firingOnTheMove = isMoving && !isSprinting;
+        const st = towerStats(t, mods, mapRef.current, metaRef.current, firingOnTheMove);
         t.cd -= dt * 1000;
         t.flash = Math.max(0, t.flash - dt);
         t.hurt = Math.max(0, t.hurt - dt);
@@ -2022,9 +2178,9 @@ export default function TarkovTD() {
         });
 
         const canFire = isDirect
-          // No !isOperatorMoving check here (strafe-and-shoot is the point) —
-          // but a healing operator still can't fire, same rule as everyone else.
-          ? directTriggerHeldRef.current && !t.healing && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft)
+          // Walking (strafe-and-shoot) is fine; sprinting isn't — no shots while sprinting,
+          // same rule as everyone else (operatorCanFire enforces it on the order-driven path).
+          ? directTriggerHeldRef.current && !t.healing && !isSprinting && t.cd <= 0 && canShoot(t.ammo, t.reloadLeft)
           : (holding ? holdAngleCanFire : !!best || !!locked) &&
             t.cd <= 0 &&
             canShoot(t.ammo, t.reloadLeft) &&
@@ -2422,16 +2578,25 @@ export default function TarkovTD() {
 
       for (const d of s.drops) drawDropBag(ctx, d.tx, d.ty, performance.now());
 
+      // Above crates/extraction markers, below every entity — matches the Map Builder preview.
+      drawVisualTileLayer(ctx, mapRef.current, "OBJECTS", tilesetImageRef.current);
+
       const now = performance.now();
       const towersByY = [...s.towers].sort((a, b) => a.ty - b.ty);
       const enemiesByY = [...s.enemies].sort((a, b) => a.y - b.y);
       const towersBySurface = partitionBySurface(towersByY);
       const enemiesBySurface = partitionBySurface(enemiesByY);
-      for (const t of towersBySurface.low) drawTower(ctx, t, now);
+      // Only towers actively reloading pay for the operator-mod stats lookup.
+      const reloadMsFor = (t: Tower) =>
+        t.reloadLeft > 0 ? towerStats(t, undefined, mapRef.current, metaRef.current).reloadMs : undefined;
+      for (const t of towersBySurface.low) drawTower(ctx, t, now, reloadMsFor(t));
       for (const e of enemiesBySurface.low) drawEnemy(ctx, e);
       drawElevatedSurfaces(ctx, mapRef.current);
-      for (const t of towersBySurface.high) drawTower(ctx, t, now);
+      for (const t of towersBySurface.high) drawTower(ctx, t, now, reloadMsFor(t));
       for (const e of enemiesBySurface.high) drawEnemy(ctx, e);
+
+      // Above every entity — canopy/overhang art reads as genuinely in front, not just decoration.
+      drawVisualTileLayer(ctx, mapRef.current, "FOREGROUND", tilesetImageRef.current);
 
       if (s.place === "operator") {
         const seen = new Set<string>();
@@ -2817,7 +2982,7 @@ export default function TarkovTD() {
 
   const recruitCost = () => Math.round(RECRUIT_BASE * Math.pow(1.4, gs.current.towers.length));
 
-  const applyOperatorMoveToTile = (sel: Tower, tx: number, ty: number) => {
+  const applyOperatorMoveToTile = (sel: Tower, tx: number, ty: number, sprint = false) => {
     const s = gs.current;
     const dest = resolveMoveDestination(mapRef.current, logicalNode(sel), tx, ty);
     if (!dest) {
@@ -2825,7 +2990,7 @@ export default function TarkovTD() {
       return;
     }
     const paused = battleTimeRef.current.mode === "PAUSED";
-    const decision = resolveLeftClickMovePlan(planBookRef.current.get(sel.id), dest.tx, dest.ty, paused);
+    const decision = resolveLeftClickMovePlan(planBookRef.current.get(sel.id), dest.tx, dest.ty, paused, sprint);
     if (decision.kind === "refuse") {
       pushLog(decision.reason);
       openOrdersForOperator(sel.id, planBookRef.current.get(sel.id) ?? createEmptyPlan());
@@ -3172,7 +3337,7 @@ export default function TarkovTD() {
     // Paused: LEFT-CLICK always means MOVE when an operator is selected (no MOVE mode
     // required) — this is the escape hatch back to considered, click-based orders.
     if (sel && !s.place && battleTimeRef.current.mode === "PAUSED") {
-      applyOperatorMoveToTile(sel, tx, ty);
+      applyOperatorMoveToTile(sel, tx, ty, ev.shiftKey);
       rerender();
       return;
     }
@@ -3284,10 +3449,10 @@ export default function TarkovTD() {
 
   /** WASD held-state for direct operator control. Separate from onKey above — this is continuous "is it held", not a discrete action-on-press. */
   useEffect(() => {
-    const WASD = new Set(["w", "a", "s", "d"]);
+    const TRACKED_KEYS = new Set(["w", "a", "s", "d", "shift"]);
     const onKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (WASD.has(key)) directHeldKeysRef.current.add(key);
+      if (TRACKED_KEYS.has(key)) directHeldKeysRef.current.add(key);
       if (key === "g" && !e.repeat) {
         const s = gs.current;
         const sel = s.towers.find((t) => t.id === s.selectedId);
@@ -3295,10 +3460,21 @@ export default function TarkovTD() {
           directGrenadeHoldStartRef.current = performance.now();
         }
       }
+      // Hotbar: 1..HOTBAR_SIZE, same effect as clicking the cell — unless a backpack
+      // item is currently hovered, in which case the press binds it there instead.
+      if (!e.repeat && e.key >= "1" && e.key <= String(HOTBAR_SIZE)) {
+        const index = Number(e.key) - 1;
+        const hoveredUid = hoveredBackpackUidRef.current;
+        if (hoveredUid != null) {
+          bindHotbarSlotToUid(index, hoveredUid);
+        } else {
+          activateHotbarSlot(index);
+        }
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (WASD.has(key)) directHeldKeysRef.current.delete(key);
+      if (TRACKED_KEYS.has(key)) directHeldKeysRef.current.delete(key);
       if (key === "g") {
         const start = directGrenadeHoldStartRef.current;
         directGrenadeHoldStartRef.current = null;
@@ -3587,15 +3763,20 @@ export default function TarkovTD() {
               style={{
                 maxWidth: `min(100%, calc((100dvh - ${
                   s.phase === "hideout" ? "8.25rem" : "var(--td-chrome, 13rem)"
-                }) * ${s.phase === "hideout" ? CAMP_IMAGE_W / CAMP_IMAGE_H : W / H}))`,
+                }) * ${s.phase === "hideout" ? CAMP_MAP_DEF.width / CAMP_MAP_DEF.height : W / H}))`,
               }}
             >
 
               {s.phase === "hideout" ? (
-                /* M2A camp home. Pre-M2A box-menu dashboard is replaced by hotspots + the overlays below. */
+                /* M2A camp home: a tile-drawn scene authored in the map editor's camp mode. */
                 <CampHub
-                  editMode={editMode}
-                  controlsEnabled={editMode && screen === "hideout"}
+                  walkable={!editMode && screen === "hideout"}
+                  player={{
+                    weapon: meta.pmc.weapon,
+                    armor: meta.pmc.armor ?? null,
+                    attachments: meta.pmc.attachments,
+                    level: meta.pmc.level,
+                  }}
                   onAction={(action: HubAction) => {
                     if (action === "supplies") setSuppliesTab("stash");
                     if (action === "skills") setScavTab("overview");
@@ -3603,6 +3784,7 @@ export default function TarkovTD() {
                   }}
                 />
               ) : (
+                <>
                 <canvas
                   ref={canvasRef}
                   width={W}
@@ -3622,7 +3804,20 @@ export default function TarkovTD() {
                   }}
                   onMouseDown={(ev) => {
                     if (ev.button !== 0) return;
-                    if (directControlActive()) directTriggerHeldRef.current = true;
+                    if (!directControlActive()) return;
+                    // A click landing on a different squadmate switches control to them instead
+                    // of firing — without this, clicking to swap operators always fired a shot
+                    // in whatever direction you were aiming (a real friendly-fire risk later).
+                    const s = gs.current;
+                    const [tx, ty] = toTile(ev);
+                    const hit = towerAtTile(s.towers, tx, ty);
+                    if (hit && hit.id !== s.selectedId) {
+                      directTriggerHeldRef.current = false;
+                      s.selectedId = hit.id;
+                      rerender();
+                      return;
+                    }
+                    directTriggerHeldRef.current = true;
                   }}
                   onMouseUp={(ev) => {
                     if (ev.button !== 0) return;
@@ -3702,6 +3897,14 @@ export default function TarkovTD() {
                   className={`block w-full ${directControlActive() ? "cursor-crosshair" : "cursor-default"}`}
                   style={{ imageRendering: "pixelated", aspectRatio: `${W} / ${H}` }}
                 />
+                <HotbarStrip
+                  hotbar={s.hotbar}
+                  backpack={s.backpack}
+                  onActivate={activateHotbarSlot}
+                  onDrop={bindHotbarSlotFromDrag}
+                  onClear={clearHotbarSlotAt}
+                />
+                </>
               )}
 
               {s.phase === "hideout" && screen === "skills" && (
@@ -4510,6 +4713,10 @@ export default function TarkovTD() {
                             else pushLog("Select an operator first, or drag the item onto him.");
                           }}
                           onContext={() => scrapInRaid(item.uid)}
+                          onHoverChange={(hovering) => {
+                            if (hovering) hoveredBackpackUidRef.current = item.uid;
+                            else if (hoveredBackpackUidRef.current === item.uid) hoveredBackpackUidRef.current = null;
+                          }}
                         />
                       );
                     })}
@@ -5260,22 +5467,103 @@ function RegionMap({
   );
 }
 
+/**
+ * Quick-use strip along the bottom of the canvas — meds/grenade slots, numbered 1..HOTBAR_SIZE.
+ * Click or press the number to activate; drag a backpack item on (or hover it and press the
+ * number) to bind; the small x, or right-click, clears a bound slot.
+ */
+function HotbarStrip({
+  hotbar,
+  backpack,
+  onActivate,
+  onDrop,
+  onClear,
+}: {
+  hotbar: HotbarSlot[];
+  backpack: Item[];
+  onActivate: (index: number) => void;
+  onDrop: (index: number) => void;
+  onClear: (index: number) => void;
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-1 flex justify-center gap-1 px-2">
+      {hotbar.map((slot, i) => {
+        const count = hotbarSlotCount(slot, backpack);
+        const depleted = !!slot && count === 0;
+        return (
+          <div
+            key={i}
+            className="pointer-events-auto relative"
+            onDragOver={(ev) => ev.preventDefault()}
+            onDrop={(ev) => {
+              ev.preventDefault();
+              onDrop(i);
+            }}
+          >
+            <button
+              type="button"
+              className={`flex h-10 w-9 flex-col items-center justify-center border font-mono text-[8px] leading-tight ${
+                !slot
+                  ? "border-dashed border-border/50 text-muted-foreground"
+                  : depleted
+                    ? "border-border/40 text-muted-foreground opacity-50"
+                    : "border-primary/70 bg-background/80 text-primary"
+              }`}
+              onClick={() => onActivate(i)}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                if (slot) onClear(i);
+              }}
+              title={slot ? hotbarSlotLabel(slot) : "Drag a med or grenade here, or hover it and press the number"}
+            >
+              <span className="text-[7px] text-muted-foreground">{i + 1}</span>
+              {slot && (
+                <>
+                  <span className="w-full truncate text-center">{hotbarSlotLabel(slot)}</span>
+                  <span className={depleted ? "text-destructive" : ""}>{count}</span>
+                </>
+              )}
+            </button>
+            {slot && (
+              <button
+                type="button"
+                className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center border border-border bg-background text-[8px] leading-none text-muted-foreground hover:text-destructive"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  onClear(i);
+                }}
+                title="Clear this slot"
+              >
+                x
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BackpackCell({
   item,
   onClick,
   onContext,
   onDragStart,
+  onHoverChange,
 }: {
   item: Item;
   onClick: () => void;
   onContext: () => void;
   onDragStart: () => void;
+  onHoverChange?: (hovering: boolean) => void;
 }) {
   const lp = useLongPress(onContext);
   return (
     <button
       draggable
       onDragStart={onDragStart}
+      onMouseEnter={() => onHoverChange?.(true)}
+      onMouseLeave={() => onHoverChange?.(false)}
       {...lp.handlers}
       onClick={() => {
         if (lp.firedRef.current) {
@@ -5288,7 +5576,7 @@ function BackpackCell({
         ev.preventDefault();
         onContext();
       }}
-      title={`${item.desc} · tap to equip, hold to scrap for raid funds`}
+      title={`${item.desc} · tap to equip, hold to scrap for raid funds · hover + press 1-${HOTBAR_SIZE} to hotbar it`}
       className="h-[46px] touch-none select-none border-2 bg-background/70 p-1 text-left font-mono text-[9px] leading-tight hover:-translate-y-[2px]"
       style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}
     >

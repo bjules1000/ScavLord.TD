@@ -4,22 +4,6 @@ import type { AmmoTier } from "./gear";
 /** Two tactical surfaces. Not a 3D Z stack. */
 export type SurfaceLevel = "GROUND" | "HIGH";
 
-export type TowerKind = "scout" | "sniper" | "gunner" | "grenadier";
-
-export interface TowerDef {
-  kind: TowerKind;
-  name: string;
-  role: string;
-  cost: number;
-  damage: number;
-  range: number;
-  cooldown: number; // ms
-  splash: number;
-  color: string;
-  accent: string;
-  desc: string;
-}
-
 export interface MoveNode {
   tx: number;
   ty: number;
@@ -34,6 +18,8 @@ export interface OperatorMoveState {
   path: MoveNode[];
   dest: MoveNode;
   pendingDest: MoveNode | null;
+  /** Shift+click order — sprint for the whole move, stamina permitting (hard drop to walk at 0). */
+  sprint?: boolean;
 }
 
 export interface Tower {
@@ -65,6 +51,8 @@ export interface Tower {
   hp: number;
   maxHp: number;
   hurt: number;
+  /** Sprint fuel, 0..STAMINA_MAX (movement.ts). Drains while sprinting, regenerates otherwise. */
+  stamina: number;
   /** true for the player's own operator — dies once, run over */
   pmc?: boolean;
   /** Persistent crew operator deployed from hideout. */

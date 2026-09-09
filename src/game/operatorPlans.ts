@@ -15,7 +15,7 @@ import type { Tower } from "./types";
 
 export const MAX_OPERATOR_ORDERS = 3;
 
-export type MoveOrder = { type: "MOVE"; tx: number; ty: number };
+export type MoveOrder = { type: "MOVE"; tx: number; ty: number; sprint?: boolean };
 export type ReloadOrder = { type: "RELOAD" };
 export type ThrowGrenadeOrder = { type: "THROW_GRENADE"; grenade: GrenadeKind; point: { x: number; y: number } };
 export type HoldAngleOrder = {
@@ -254,8 +254,9 @@ export function resolveLeftClickMovePlan(
   tx: number,
   ty: number,
   paused: boolean,
+  sprint = false,
 ): LeftClickPlanAction {
-  const move: MoveOrder = { type: "MOVE", tx, ty };
+  const move: MoveOrder = { type: "MOVE", tx, ty, sprint };
   if (!paused) {
     return {
       kind: "apply",
@@ -292,7 +293,7 @@ export function resolveLeftClickMovePlan(
 export function orderToCommand(order: OperatorOrder): OperatorCommand {
   switch (order.type) {
     case "MOVE":
-      return { type: "MOVE", tx: order.tx, ty: order.ty };
+      return { type: "MOVE", tx: order.tx, ty: order.ty, sprint: order.sprint ?? false };
     case "RELOAD":
       return { type: "RELOAD" };
     case "THROW_GRENADE":

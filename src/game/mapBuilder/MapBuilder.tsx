@@ -1,16 +1,59 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import { Link } from "@tanstack/react-router";
 import { TILE } from "../data";
 import { MAP_BY_ID, MAP_DEFS, type GameMap } from "../map";
 import type { LosHit } from "../los";
 import type { SurfaceLevel } from "../types";
-import { EDITOR_GUTTER, canvasPixelSize, EDGE_LABEL, hitLanePort, portEdgeFromCursor } from "./ports";
+import { HUB_ACTIONS } from "../campActions";
+import type { CampMapDef } from "../hub/campMap";
+import {
+  EDITOR_GUTTER,
+  canvasPixelSize,
+  EDGE_LABEL,
+  hitLanePort,
+  portEdgeFromCursor,
+} from "./ports";
 import { draftIdForSource, fromProductionMap, productionMaps } from "./adapters";
+import { fromCampMapDef, productionCampMaps } from "./campAdapters";
 import { createBlankMap, slugId, unlockRevision, validateNewMapInput } from "./document";
+import { createBlankCampMap, DEFAULT_CAMP_HEIGHT, DEFAULT_CAMP_WIDTH, isCampDoc } from "./campDocument";
+import { setPropHubAction } from "./campPaint";
+import { canLockCamp, validateCampMap } from "./campValidate";
+import {
+  campExportFilename,
+  importedToCampDoc,
+  parseCampImport,
+  stringifyCampExport,
+} from "./campExport";
 import { edgeFromCursor } from "./edges";
 import { exportFilename, importedToDoc, parseImport, stringifyExport } from "./export";
-import { canRedo, canUndo, commit, commitStroke, redo, replaceDoc, sessionFrom, undo, type EditorSession } from "./history";
-import { applyAuthorStroke, gameplayEraseTarget, pathPreviewCells, pathStepValid, propAt, type AuthorCell } from "./author";
+import {
+  canRedo,
+  canUndo,
+  commit,
+  commitStroke,
+  redo,
+  replaceDoc,
+  sessionFrom,
+  undo,
+  type EditorSession,
+} from "./history";
+import {
+  applyAuthorStroke,
+  gameplayEraseTarget,
+  pathPreviewCells,
+  pathStepValid,
+  propAt,
+  type AuthorCell,
+} from "./author";
 import { addLane, canPlaceOccupant, clearLanePath, removeLane, removeObject } from "./paint";
 import { nextLaneId, pathCells } from "./pathing";
 import { emptyStore, readStore, upsertDoc, writeStore } from "./persist";
@@ -31,6 +74,7 @@ import {
   isPropPlaceMode,
   isTerrainEraserMode,
   isTerrainPaintMode,
+  isVisualTileTool,
   selectBridgeTool,
   selectCollisionWallTool,
   selectSolidWallTool,
@@ -64,8 +108,8 @@ import {
   type LosProbeState,
   type PathSweepResult,
 } from "./losProbe";
-import type { EditorMapDoc, TerrainKind } from "./schema";
-import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
+import type { EditorMapDoc, MapType, TerrainKind, VisualLayerId } from "./schema";
+import { CAMP_PROP_TYPES, CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
 import { listAllEnemyKinds } from "../dev/waveLabCore";
 import { lockDoc } from "./document";
@@ -77,6 +121,7 @@ import {
   MOVEMENT_WALL_COLOR,
   SOLID_WALL_COLOR,
 } from "./walls";
+import { VISUAL_LAYER_IDS, clearVisualLayer, tilesetTileCount, visualTileAt } from "./visualTiles";
 
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5];
 const GHOST: Record<TerrainKind, string> = {
@@ -86,6 +131,31 @@ const GHOST: Record<TerrainKind, string> = {
   MOUNTAIN: "#6a6e76",
   HIGH_GROUND: "#c9a227",
 };
+
+const MAX_TILESET_BYTES = 1_000_000;
+
+/** A doc's authoring tools don't carry over across a raid/camp switch — reset to a safe default. */
+function defaultToolFor(mapType: MapType): EditorTool {
+  return { id: "terrain", terrain: mapType === "camp" ? "GROUND" : "ROAD" };
+}
+
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Could not read tileset."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadBrowserImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not decode tileset PNG."));
+    image.src = src;
+  });
+}
 
 function persist(session: EditorSession) {
   if (typeof window === "undefined") return;
@@ -118,8 +188,17 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const [laneId, setLaneId] = useState("MAIN");
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [layers, setLayers] = useState<LayerFlags>(DEFAULT_LAYERS);
+  const [visualLayerId, setVisualLayerId] = useState<VisualLayerId>("GROUND");
+  const [selectedVisualTile, setSelectedVisualTile] = useState(0);
+  const [atlasTileSize, setAtlasTileSize] = useState(22);
+  const [tilesetImage, setTilesetImage] = useState<HTMLImageElement | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [hover, setHover] = useState<{ tx: number; ty: number; localX: number; localY: number } | null>(null);
+  const [hover, setHover] = useState<{
+    tx: number;
+    ty: number;
+    localX: number;
+    localY: number;
+  } | null>(null);
   const [selected, setSelected] = useState<{ kind: string; id: string } | null>(null);
   const [probe, setProbe] = useState<LosProbeState>(emptyLosProbeState);
   const [validation, setValidation] = useState<ReturnType<typeof validateMap> | null>(null);
@@ -127,6 +206,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("NEW SECTOR");
   const [newId, setNewId] = useState("new-sector");
+  const [newType, setNewType] = useState<MapType>("raid");
   const [newW, setNewW] = useState(20);
   const [newH, setNewH] = useState(13);
   const stroke = useRef<AuthorCell[]>([]);
@@ -138,20 +218,51 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const doc = liveDoc ?? session.doc;
   const locked = doc.status === "locked";
 
-  const probeMap = useMemo(() => gameMapFromEditorDoc(doc), [doc]);
-  const pathSamples = useMemo(() => sampleActiveLane(probeMap, laneId), [probeMap, laneId]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!doc.tileset?.imageDataUrl) {
+      setTilesetImage(null);
+      return;
+    }
+    void loadBrowserImage(doc.tileset.imageDataUrl)
+      .then((image) => {
+        if (!cancelled) setTilesetImage(image);
+      })
+      .catch(() => {
+        if (!cancelled) setTilesetImage(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [doc.tileset?.imageDataUrl]);
+
+  /** Camp docs have no lanes/gameplay for the LOS probe to sample — null rather than faking a raid map. */
+  const probeMap = useMemo(() => (isCampDoc(doc) ? null : gameMapFromEditorDoc(doc)), [doc]);
+  const pathSamples = useMemo(
+    () => (probeMap ? sampleActiveLane(probeMap, laneId) : []),
+    [probeMap, laneId],
+  );
   const pathSweep = useMemo(() => {
-    if (!probe.origin) return { results: [], visible: 0, blocked: 0 };
+    if (!probeMap || !probe.origin) return { results: [], visible: 0, blocked: 0 };
     return evaluatePathSweep(probeMap, probePointAsSight(probe.origin), pathSamples);
   }, [probeMap, probe.origin, pathSamples]);
   const customHit = useMemo(() => {
-    if (probe.mode !== "CUSTOM" || !probe.origin || !probe.customTarget) return null;
-    return evaluateCustomProbe(probeMap, probePointAsSight(probe.origin), probePointAsSight(probe.customTarget));
+    if (!probeMap || probe.mode !== "CUSTOM" || !probe.origin || !probe.customTarget) return null;
+    return evaluateCustomProbe(
+      probeMap,
+      probePointAsSight(probe.origin),
+      probePointAsSight(probe.customTarget),
+    );
   }, [probe.mode, probe.origin, probe.customTarget, probeMap]);
 
   useEffect(() => {
     if (!doc.lanes.some((l) => l.id === laneId)) setLaneId(doc.lanes[0]?.id ?? "MAIN");
   }, [doc.lanes, laneId]);
+
+  useEffect(() => {
+    setNewW(newType === "camp" ? DEFAULT_CAMP_WIDTH : 20);
+    setNewH(newType === "camp" ? DEFAULT_CAMP_HEIGHT : 13);
+  }, [newType]);
 
   useEffect(() => {
     setProbe((s) => ({ ...s, hoverSampleIndex: null, selectedSampleIndex: null }));
@@ -170,7 +281,11 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     canvas.width = size.w;
     canvas.height = size.h;
     const edge =
-      hover && (tool.id === "edge" || tool.id === "gate" || isCollisionWallMode(tool) || isEraseWallMode(tool))
+      hover &&
+      (tool.id === "edge" ||
+        tool.id === "gate" ||
+        isCollisionWallMode(tool) ||
+        isEraseWallMode(tool))
         ? edgeFromCursor(hover.localX, hover.localY)
         : undefined;
     let ghost: string | null = null;
@@ -193,6 +308,11 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       | null = null;
     let pathPreview: Array<[number, number]> | undefined;
     if (hover && isTerrainPaintMode(tool) && tool.id === "terrain") ghost = GHOST[tool.terrain];
+    if (hover && tool.id === "visual-erase") {
+      ghost = "#c23b2c";
+      ghostItem = "erase";
+      invalid = visualTileAt(doc, tool.layerId, hover.tx, hover.ty) == null;
+    }
     if (hover && isPropPlaceMode(tool)) {
       ghost = "#c9c2a6";
       invalid = tool.id === "edge" ? false : !canPlaceOccupant(doc, hover.tx, hover.ty);
@@ -203,11 +323,15 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       else if (tool.id === "checkpoint") ghostItem = "checkpoint";
       else ghostItem = "prop";
     }
-    if (hover && (isTerrainEraserMode(tool) || isPropEraseMode(tool) || isGameplayEraseMode(tool))) {
+    if (
+      hover &&
+      (isTerrainEraserMode(tool) || isPropEraseMode(tool) || isGameplayEraseMode(tool))
+    ) {
       ghost = "#c23b2c";
       ghostItem = "erase";
       if (isPropEraseMode(tool)) invalid = !propAt(doc, hover.tx, hover.ty);
-      if (isGameplayEraseMode(tool)) invalid = !gameplayEraseTarget(doc, laneId, hover.tx, hover.ty);
+      if (isGameplayEraseMode(tool))
+        invalid = !gameplayEraseTarget(doc, laneId, hover.tx, hover.ty);
     }
     if (hover && isPathMode(tool)) {
       ghost = "#f0b400";
@@ -219,13 +343,25 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     if (hover && (tool.id === "spawn" || tool.id === "end")) {
       ghost = "#f0b400";
       ghostItem = tool.id === "spawn" ? "spawn" : "end";
-      const portEdge = portEdgeFromCursor(hover.tx, hover.ty, hover.localX, hover.localY, doc.width, doc.height);
+      const portEdge = portEdgeFromCursor(
+        hover.tx,
+        hover.ty,
+        hover.localX,
+        hover.localY,
+        doc.width,
+        doc.height,
+      );
       invalid = !portEdge;
       portPreview = portEdge ? { tx: hover.tx, ty: hover.ty, edge: portEdge } : null;
     } else if (hover && (tool.id === "zone" || tool.id === "gate")) {
       ghost = "#f0b400";
     }
-    let wallPreview: { tx: number; ty: number; edge: "N" | "E" | "S" | "W"; kind: "MOVEMENT" | "SOLID" } | null = null;
+    let wallPreview: {
+      tx: number;
+      ty: number;
+      edge: "N" | "E" | "S" | "W";
+      kind: "MOVEMENT" | "SOLID";
+    } | null = null;
     if (hover && (isCollisionWallMode(tool) || isEraseWallMode(tool)) && edge) {
       const canonical = canonicalCollisionWall(hover.tx, hover.ty, edge, doc.width, doc.height);
       const existing = canonical ? hitCollisionWall(doc, hover.tx, hover.ty, edge) : null;
@@ -234,7 +370,11 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
         : isSolidWallMode(tool)
           ? "SOLID"
           : "MOVEMENT";
-      ghost = isEraseWallMode(tool) ? "#c23b2c" : kind === "SOLID" ? SOLID_WALL_COLOR : MOVEMENT_WALL_COLOR;
+      ghost = isEraseWallMode(tool)
+        ? "#c23b2c"
+        : kind === "SOLID"
+          ? SOLID_WALL_COLOR
+          : MOVEMENT_WALL_COLOR;
       ghostItem = isEraseWallMode(tool) ? "erase-wall" : "wall";
       wallPreview = canonical ? { ...canonical, kind } : null;
       invalid = isEraseWallMode(tool) ? !existing : !wallPreview;
@@ -270,9 +410,12 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             ...(portPreview ? { portPreview } : {}),
             ...(wallPreview ? { wallPreview } : {}),
             ...(bridgePreview ? { bridgePreview } : {}),
+            visualTile: tool.id === "visual-tile" ? tool.tile : null,
+            visualLayerId: tool.id === "visual-tile" ? tool.layerId : null,
           }
         : null,
       laneId,
+      tilesetImage,
     );
     if (isLosProbeMode(tool)) {
       ctx.save();
@@ -293,7 +436,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       });
       ctx.restore();
     }
-  }, [doc, layers, hover, tool, laneId, probe, pathSweep, customHit]);
+  }, [doc, layers, hover, tool, laneId, probe, pathSweep, customHit, tilesetImage]);
 
   const apply = useCallback((next: EditorMapDoc) => {
     setSession((s) => commit(s, next));
@@ -303,7 +446,15 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const pointerCell = (ev: PointerEvent<HTMLCanvasElement>): AuthorCell | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    return clientToTile(ev.clientX, ev.clientY, canvas.getBoundingClientRect(), doc.width, doc.height, TILE, EDITOR_GUTTER);
+    return clientToTile(
+      ev.clientX,
+      ev.clientY,
+      canvas.getBoundingClientRect(),
+      doc.width,
+      doc.height,
+      TILE,
+      EDITOR_GUTTER,
+    );
   };
 
   const authorCtx = () => ({ laneId, zoneId, tileSize: TILE });
@@ -318,14 +469,25 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     ev.currentTarget.setPointerCapture(ev.pointerId);
     const cell = pointerCell(ev);
     if (!cell) return;
-    if (isLosProbeMode(tool)) {
+    if (isLosProbeMode(tool) && probeMap) {
       const x = cell.tx * TILE + cell.localX;
       const y = cell.ty * TILE + cell.localY;
-      setProbe((s) => applyLosProbeClick(s, probeMap, { tx: cell.tx, ty: cell.ty, x, y }, pathSweep.results));
+      setProbe((s) =>
+        applyLosProbeClick(s, probeMap, { tx: cell.tx, ty: cell.ty, x, y }, pathSweep.results),
+      );
       return;
     }
     if (isInspectMode(tool)) {
       setSelected(hitObject(doc, cell.tx, cell.ty, cell.localX, cell.localY));
+      return;
+    }
+    if (tool.id === "visual-pick") {
+      const tile = visualTileAt(doc, tool.layerId, cell.tx, cell.ty);
+      if (tile != null) {
+        setSelectedVisualTile(tile);
+        setTool({ id: "visual-tile", layerId: tool.layerId, tile });
+        setMessage(`Picked tile ${tile + 1} from ${tool.layerId}.`);
+      }
       return;
     }
     if (locked || !isAuthoringTool(tool)) return;
@@ -345,7 +507,9 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     const cell = pointerCell(ev);
     setHover(cell);
     if (isLosProbeMode(tool)) {
-      const world = cell ? { x: cell.tx * TILE + cell.localX, y: cell.ty * TILE + cell.localY } : null;
+      const world = cell
+        ? { x: cell.tx * TILE + cell.localX, y: cell.ty * TILE + cell.localY }
+        : null;
       setProbe((s) => applyLosProbeHover(s, pathSweep.results, world));
       return;
     }
@@ -375,7 +539,13 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       const t = ev.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
         return;
       }
       const mod = ev.ctrlKey || ev.metaKey;
@@ -401,7 +571,10 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     return () => window.removeEventListener("keydown", onKey);
   }, [apply, doc, selected]);
 
-  const report = useMemo(() => validation ?? validateMap(doc), [doc, validation]);
+  const report = useMemo(
+    () => validation ?? (isCampDoc(doc) ? validateCampMap(doc) : validateMap(doc)),
+    [doc, validation],
+  );
 
   const openProduction = (sourceId: string) => {
     const store = typeof window !== "undefined" ? readStore(window.localStorage) : emptyStore();
@@ -414,6 +587,20 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     setSelected(null);
     setProbe(emptyLosProbeState());
     setValidation(null);
+    setTool(defaultToolFor("raid"));
+  };
+
+  const openProductionCamp = (def: CampMapDef) => {
+    const store = typeof window !== "undefined" ? readStore(window.localStorage) : emptyStore();
+    const id = draftIdForSource(def.id);
+    const existing = store.docs[id];
+    const next = existing ?? fromCampMapDef(def);
+    setSession(replaceDoc(session, next));
+    setZoneId(null);
+    setSelected(null);
+    setProbe(emptyLosProbeState());
+    setValidation(null);
+    setTool(defaultToolFor("camp"));
   };
 
   const createNew = () => {
@@ -423,32 +610,74 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       setMessage(err);
       return;
     }
-    const next = createBlankMap({ displayName: newName, id, width: newW, height: newH });
+    const next =
+      newType === "camp"
+        ? createBlankCampMap({ displayName: newName, id, width: newW, height: newH })
+        : createBlankMap({ displayName: newName, id, width: newW, height: newH });
     setSession(replaceDoc(session, next));
     setShowNew(false);
     setLaneId("MAIN");
+    setSelected(null);
     setProbe(emptyLosProbeState());
+    setTool(defaultToolFor(newType));
     setMessage(null);
   };
 
   const resetDraft = () => {
+    if (isCampDoc(doc)) {
+      if (doc.sourceMapId) {
+        if (!window.confirm("Discard this draft and reload the current production camp?")) return;
+        const prod = productionCampMaps().find((m) => m.id === doc.sourceMapId);
+        if (prod) setSession(replaceDoc(session, fromCampMapDef(prod)));
+      } else {
+        if (!window.confirm("Clear this camp map? All authored tiles will be lost.")) return;
+        setSession(
+          replaceDoc(
+            session,
+            createBlankCampMap({
+              displayName: doc.displayName,
+              id: doc.id,
+              width: doc.width,
+              height: doc.height,
+            }),
+          ),
+        );
+      }
+      setSelected(null);
+      setValidation(null);
+      return;
+    }
     if (doc.sourceMapId) {
       if (!window.confirm("Discard this draft and reload the current production map?")) return;
-      setSession(replaceDoc(session, fromProductionMap(MAP_DEFS.find((m) => m.id === doc.sourceMapId)!)));
+      setSession(
+        replaceDoc(session, fromProductionMap(MAP_DEFS.find((m) => m.id === doc.sourceMapId)!)),
+      );
     } else {
       if (!window.confirm("Clear this map? All authored tiles will be lost.")) return;
-      setSession(replaceDoc(session, createBlankMap({ displayName: doc.displayName, id: doc.id, width: doc.width, height: doc.height })));
+      setSession(
+        replaceDoc(
+          session,
+          createBlankMap({
+            displayName: doc.displayName,
+            id: doc.id,
+            width: doc.width,
+            height: doc.height,
+          }),
+        ),
+      );
     }
     setProbe(emptyLosProbeState());
     setValidation(null);
   };
 
-  const runValidate = () => setValidation(validateMap(doc));
+  const runValidate = () =>
+    setValidation(isCampDoc(doc) ? validateCampMap(doc) : validateMap(doc));
 
   const runLock = () => {
-    const result = validateMap(doc);
+    const camp = isCampDoc(doc);
+    const result = camp ? validateCampMap(doc) : validateMap(doc);
     setValidation(result);
-    if (!canLock(doc)) {
+    if (camp ? !canLockCamp(doc) : !canLock(doc)) {
       setMessage("Lock blocked: fix validation errors first.");
       return;
     }
@@ -465,22 +694,45 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   };
 
   const runExport = () => {
-    const text = stringifyExport(doc);
+    const camp = isCampDoc(doc);
+    const text = camp ? stringifyCampExport(doc) : stringifyExport(doc);
+    const filename = camp ? campExportFilename(doc) : exportFilename(doc);
     const blob = new Blob([text], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = exportFilename(doc);
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
-    setMessage(`Downloaded ${exportFilename(doc)}`);
+    setMessage(`Downloaded ${filename}`);
   };
 
   const runCopy = async () => {
-    await navigator.clipboard.writeText(stringifyExport(doc));
+    await navigator.clipboard.writeText(isCampDoc(doc) ? stringifyCampExport(doc) : stringifyExport(doc));
     setMessage("Map data copied.");
   };
 
   const runImport = (raw: string) => {
+    let sniff: unknown;
+    try {
+      sniff = JSON.parse(raw);
+    } catch {
+      setMessage("Import is not valid JSON.");
+      return;
+    }
+    const isCampPayload = !!sniff && typeof sniff === "object" && (sniff as { mapType?: unknown }).mapType === "camp";
+    if (isCampPayload) {
+      const parsed = parseCampImport(raw);
+      if (!parsed.ok) {
+        setMessage(parsed.error);
+        return;
+      }
+      const id = `import-${parsed.payload.id}`;
+      setSession(replaceDoc(session, importedToCampDoc(parsed.payload, id)));
+      setTool(defaultToolFor("camp"));
+      setProbe(emptyLosProbeState());
+      setMessage("Camp import loaded as a new editor draft.");
+      return;
+    }
     const parsed = parseImport(raw);
     if (!parsed.ok) {
       setMessage(parsed.error);
@@ -488,8 +740,57 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     }
     const id = `import-${parsed.payload.id}`;
     setSession(replaceDoc(session, importedToDoc(parsed.payload, id)));
+    setTool(defaultToolFor("raid"));
     setProbe(emptyLosProbeState());
     setMessage("Import loaded as a new editor draft.");
+  };
+
+  const importTileset = async (file: File) => {
+    if (locked) return;
+    if (file.type !== "image/png") {
+      setMessage("Tileset must be a PNG file.");
+      return;
+    }
+    if (file.size > MAX_TILESET_BYTES) {
+      setMessage("Tileset is too large. Keep the PNG under 1 MB so drafts fit browser storage.");
+      return;
+    }
+    try {
+      const dataUrl = await readDataUrl(file);
+      const image = await loadBrowserImage(dataUrl);
+      const tileSize = Math.max(8, Math.min(64, Math.floor(atlasTileSize)));
+      if (image.naturalWidth % tileSize !== 0 || image.naturalHeight % tileSize !== 0) {
+        setMessage(
+          `PNG size ${image.naturalWidth}x${image.naturalHeight} is not divisible by ${tileSize}px.`,
+        );
+        return;
+      }
+      const hasPaint = VISUAL_LAYER_IDS.some((id) => doc.visualLayers[id].length > 0);
+      if (
+        hasPaint &&
+        !window.confirm(
+          "Replace the tileset? Existing visual tile indexes will be kept and may point at different art.",
+        )
+      )
+        return;
+      const tileset = {
+        name: file.name,
+        imageDataUrl: dataUrl,
+        imageWidth: image.naturalWidth,
+        imageHeight: image.naturalHeight,
+        tileWidth: tileSize,
+        tileHeight: tileSize,
+        columns: image.naturalWidth / tileSize,
+        rows: image.naturalHeight / tileSize,
+      };
+      apply({ ...doc, tileset });
+      setTilesetImage(image);
+      setSelectedVisualTile(0);
+      setTool({ id: "visual-tile", layerId: visualLayerId, tile: 0 });
+      setMessage(`Loaded ${file.name}: ${tileset.columns * tileset.rows} tiles at ${tileSize}px.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load tileset.");
+    }
   };
 
   const drafts =
@@ -511,41 +812,76 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             MAP
             <select
               className="ml-2 border border-border bg-card px-2 py-1"
-              value={doc.sourceMapId ?? doc.id}
+              value={
+                isCampDoc(doc) && doc.sourceMapId ? `camp:${doc.sourceMapId}` : (doc.sourceMapId ?? doc.id)
+              }
               onChange={(e) => {
                 const v = e.target.value;
                 if (v === "__new") {
                   setShowNew(true);
                   return;
                 }
+                if (v.startsWith("camp:")) {
+                  const campId = v.slice("camp:".length);
+                  const prod = productionCampMaps().find((m) => m.id === campId);
+                  if (prod) openProductionCamp(prod);
+                  return;
+                }
                 const prod = productionMaps().find((m) => m.id === v);
                 if (prod) openProduction(prod.id);
                 else {
                   const stored = readStore(window.localStorage).docs[v];
-                  if (stored) setSession(replaceDoc(session, stored));
+                  if (stored) {
+                    setSession(replaceDoc(session, stored));
+                    setTool(defaultToolFor(stored.mapType));
+                  }
                 }
               }}
             >
-              {productionMaps().map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-              {drafts
-                .filter((d) => !d.sourceMapId)
-                .map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.displayName} (draft)
+              <optgroup label="RAID">
+                {productionMaps().map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
                   </option>
                 ))}
+                {drafts
+                  .filter((d) => !d.sourceMapId && d.mapType !== "camp")
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.displayName} (draft)
+                    </option>
+                  ))}
+              </optgroup>
+              <optgroup label="CAMP">
+                {productionCampMaps().map((m) => (
+                  <option key={`camp:${m.id}`} value={`camp:${m.id}`}>
+                    {m.displayName}
+                  </option>
+                ))}
+                {drafts
+                  .filter((d) => !d.sourceMapId && d.mapType === "camp")
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.displayName} (draft)
+                    </option>
+                  ))}
+              </optgroup>
               <option value="__new">+ NEW MAP</option>
             </select>
           </label>
           <div className="ml-auto flex flex-wrap gap-1">
-            <button className="pixel-btn" disabled={!canUndo(session)} onClick={() => setSession((s) => undo(s))}>
+            <button
+              className="pixel-btn"
+              disabled={!canUndo(session)}
+              onClick={() => setSession((s) => undo(s))}
+            >
               UNDO
             </button>
-            <button className="pixel-btn" disabled={!canRedo(session)} onClick={() => setSession((s) => redo(s))}>
+            <button
+              className="pixel-btn"
+              disabled={!canRedo(session)}
+              onClick={() => setSession((s) => redo(s))}
+            >
               REDO
             </button>
             <button className="pixel-btn" onClick={runValidate}>
@@ -594,20 +930,49 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
         {showNew && (
           <div className="pixel-card mb-2 flex flex-wrap items-end gap-2 font-mono text-[11px]">
             <label>
+              TYPE
+              <select
+                className="ml-1 border border-border bg-background px-1"
+                value={newType}
+                onChange={(e) => setNewType(e.target.value as MapType)}
+              >
+                <option value="raid">RAID</option>
+                <option value="camp">CAMP</option>
+              </select>
+            </label>
+            <label>
               NAME
-              <input className="ml-1 border border-border bg-background px-1" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              <input
+                className="ml-1 border border-border bg-background px-1"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
             </label>
             <label>
               ID
-              <input className="ml-1 border border-border bg-background px-1" value={newId} onChange={(e) => setNewId(e.target.value)} />
+              <input
+                className="ml-1 border border-border bg-background px-1"
+                value={newId}
+                onChange={(e) => setNewId(e.target.value)}
+              />
             </label>
             <label>
               W
-              <input className="ml-1 w-14 border border-border bg-background px-1" type="number" value={newW} onChange={(e) => setNewW(Number(e.target.value))} />
+              <input
+                className="ml-1 w-14 border border-border bg-background px-1"
+                type="number"
+                value={newW}
+                onChange={(e) => setNewW(Number(e.target.value))}
+              />
             </label>
             <label>
               H
-              <input className="ml-1 w-14 border border-border bg-background px-1" type="number" value={newH} onChange={(e) => setNewH(Number(e.target.value))} />
+              <input
+                className="ml-1 w-14 border border-border bg-background px-1"
+                type="number"
+                value={newH}
+                onChange={(e) => setNewH(Number(e.target.value))}
+              />
             </label>
             <button className="pixel-btn pixel-btn-primary" onClick={createNew}>
               CREATE
@@ -620,9 +985,125 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
 
         <div className="grid grid-cols-1 gap-2 lg:grid-cols-[220px_minmax(0,1fr)_240px]">
           <aside className="pixel-card space-y-3 overflow-auto font-mono text-[11px]">
+            <Section title="VISUAL TILES">
+              <label className="inline-flex items-center gap-1">
+                TILE PX
+                <input
+                  className="w-12 border border-border bg-background px-1"
+                  type="number"
+                  min={8}
+                  max={64}
+                  value={atlasTileSize}
+                  onChange={(e) => setAtlasTileSize(Number(e.target.value))}
+                />
+              </label>
+              <label
+                className={`pixel-btn cursor-pointer ${locked ? "pointer-events-none opacity-50" : ""}`}
+              >
+                IMPORT PNG
+                <input
+                  type="file"
+                  accept="image/png"
+                  className="hidden"
+                  disabled={locked}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void importTileset(file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {doc.tileset ? (
+                <>
+                  <div className="w-full text-muted-foreground">
+                    {doc.tileset.name} · {doc.tileset.columns}x{doc.tileset.rows} ·{" "}
+                    {doc.tileset.tileWidth}px
+                  </div>
+                  <div className="w-full">
+                    {VISUAL_LAYER_IDS.map((id) => (
+                      <Chip
+                        key={id}
+                        active={visualLayerId === id}
+                        onClick={() => {
+                          setVisualLayerId(id);
+                          if (isVisualTileTool(tool)) {
+                            setTool(
+                              tool.id === "visual-tile"
+                                ? { ...tool, layerId: id }
+                                : tool.id === "visual-erase"
+                                  ? { id: "visual-erase", layerId: id }
+                                  : { id: "visual-pick", layerId: id },
+                            );
+                          }
+                        }}
+                      >
+                        {id}
+                      </Chip>
+                    ))}
+                  </div>
+                  <div className="grid max-h-44 w-full grid-cols-5 gap-1 overflow-y-auto border border-border p-1">
+                    {Array.from({ length: tilesetTileCount(doc) }, (_, tile) => {
+                      const col = tile % doc.tileset!.columns;
+                      const row = Math.floor(tile / doc.tileset!.columns);
+                      const swatch = 30;
+                      return (
+                        <button
+                          key={tile}
+                          type="button"
+                          title={`Tile ${tile + 1}`}
+                          className={`h-8 w-8 border ${selectedVisualTile === tile && tool.id === "visual-tile" ? "border-primary" : "border-border"}`}
+                          style={{
+                            backgroundImage: `url(${doc.tileset!.imageDataUrl})`,
+                            backgroundSize: `${doc.tileset!.columns * swatch}px ${doc.tileset!.rows * swatch}px`,
+                            backgroundPosition: `-${col * swatch}px -${row * swatch}px`,
+                            backgroundRepeat: "no-repeat",
+                            imageRendering: "pixelated",
+                          }}
+                          onClick={() => {
+                            setSelectedVisualTile(tile);
+                            setTool({ id: "visual-tile", layerId: visualLayerId, tile });
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <Chip
+                    active={tool.id === "visual-erase"}
+                    onClick={() => setTool({ id: "visual-erase", layerId: visualLayerId })}
+                  >
+                    ERASE TILE
+                  </Chip>
+                  <Chip
+                    active={tool.id === "visual-pick"}
+                    onClick={() => setTool({ id: "visual-pick", layerId: visualLayerId })}
+                  >
+                    EYEDROPPER
+                  </Chip>
+                  <button
+                    className="pixel-btn"
+                    disabled={locked || doc.visualLayers[visualLayerId].length === 0}
+                    onClick={() => {
+                      if (window.confirm(`Clear all ${visualLayerId} visual tiles?`))
+                        apply(clearVisualLayer(doc, visualLayerId));
+                    }}
+                  >
+                    CLEAR {visualLayerId}
+                  </button>
+                </>
+              ) : (
+                <div className="w-full text-muted-foreground">
+                  Import a PNG atlas, choose its source tile size, then paint tiles onto independent
+                  visual layers.
+                </div>
+              )}
+            </Section>
             <Section title="TERRAIN">
               {(["GROUND", "ROAD", "WATER", "MOUNTAIN", "HIGH_GROUND"] as const).map((t) => (
-                <Chip key={t} active={tool.id === "terrain" && tool.terrain === t} onClick={() => setTool(selectTerrainTool(t))}>
+                <Chip
+                  key={t}
+                  active={tool.id === "terrain" && tool.terrain === t}
+                  onClick={() => setTool(selectTerrainTool(t))}
+                >
                   {t.replace("_", " ")}
                 </Chip>
               ))}
@@ -630,100 +1111,208 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 ERASE TERRAIN
               </Chip>
             </Section>
-            <Section title="ROUTES / GAMEPLAY">
-              <Chip active={tool.id === "path"} onClick={() => setTool(selectPathTool())}>
-                PATH
-              </Chip>
-              <Chip active={tool.id === "spawn"} onClick={() => setTool({ id: "spawn" })}>
-                SPAWN
-              </Chip>
-              <Chip active={tool.id === "end"} onClick={() => setTool({ id: "end" })}>
-                ENDPOINT
-              </Chip>
-              <Chip active={tool.id === "zone"} onClick={() => setTool({ id: "zone" })}>
-                SPECIAL ZONE
-              </Chip>
-              {GATE_IDS.map((g) => (
-                <Chip key={g} active={tool.id === "gate" && tool.gateId === g} onClick={() => setTool({ id: "gate", gateId: g })}>
-                  GATE {g}
+            {!isCampDoc(doc) && (
+              <Section title="ROUTES / GAMEPLAY">
+                <Chip active={tool.id === "path"} onClick={() => setTool(selectPathTool())}>
+                  PATH
                 </Chip>
-              ))}
-              <Chip active={tool.id === "erase-gameplay"} onClick={() => setTool(selectGameplayEraser())}>
-                ERASE GAMEPLAY
-              </Chip>
-            </Section>
-            <Section title="PROPS">
-              {PROP_TYPES.map((p) => (
-                <Chip key={p} active={tool.id === "prop" && tool.type === p} onClick={() => setTool(selectPropTool(p))}>
-                  {p}
+                <Chip active={tool.id === "spawn"} onClick={() => setTool({ id: "spawn" })}>
+                  SPAWN
                 </Chip>
-              ))}
-              {COVER_TYPES.map((c) => (
-                <Chip key={c} active={tool.id === "cover" && tool.type === c} onClick={() => setTool({ id: "cover", type: c })}>
-                  COVER {c}
+                <Chip active={tool.id === "end"} onClick={() => setTool({ id: "end" })}>
+                  ENDPOINT
                 </Chip>
-              ))}
-              <Chip active={tool.id === "crate"} onClick={() => setTool({ id: "crate" })}>
-                LOOT CRATE
-              </Chip>
-              <Chip active={tool.id === "extraction"} onClick={() => setTool({ id: "extraction" })}>
-                EXTRACTION
-              </Chip>
-              {CHECKPOINT_TYPES.map((c) => (
-                <Chip key={c} active={tool.id === "checkpoint" && tool.type === c} onClick={() => setTool({ id: "checkpoint", type: c })}>
-                  {c}
+                <Chip active={tool.id === "zone"} onClick={() => setTool({ id: "zone" })}>
+                  SPECIAL ZONE
                 </Chip>
-              ))}
-              <Chip active={tool.id === "edge" && tool.type === "fence"} onClick={() => setTool({ id: "edge", type: "fence" })}>
-                FENCE EDGE
-              </Chip>
-              <Chip active={tool.id === "edge" && tool.type === "wall"} onClick={() => setTool({ id: "edge", type: "wall" })}>
-                WALL EDGE
-              </Chip>
-              <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
-                ERASE PROP
-              </Chip>
-            </Section>
-            <Section title="HOSTILE SENTRIES">
-              {listAllEnemyKinds().map((kind) => (
-                <Chip key={kind} active={tool.id === "sentry" && tool.kind === kind} onClick={() => setTool({ id: "sentry", kind })}>
-                  {kind === "sniperScav" ? "SNIPER SCAV" : kind.toUpperCase()}
+                {GATE_IDS.map((g) => (
+                  <Chip
+                    key={g}
+                    active={tool.id === "gate" && tool.gateId === g}
+                    onClick={() => setTool({ id: "gate", gateId: g })}
+                  >
+                    GATE {g}
+                  </Chip>
+                ))}
+                <Chip
+                  active={tool.id === "erase-gameplay"}
+                  onClick={() => setTool(selectGameplayEraser())}
+                >
+                  ERASE GAMEPLAY
                 </Chip>
-              ))}
-              <div className="w-full text-muted-foreground">Placed defenders begin on the map and hold their position while normal waves still use authored lanes.</div>
-            </Section>
-            <Section title="COLLISION / BARRIERS">
-              <Chip active={isMovementWallMode(tool)} onClick={() => setTool(selectCollisionWallTool())}>
-                MOVEMENT WALL
-              </Chip>
-              <Chip active={isSolidWallMode(tool)} onClick={() => setTool(selectSolidWallTool())}>
-                SOLID WALL
-              </Chip>
-              <Chip active={isEraseWallMode(tool)} onClick={() => setTool(selectEraseWallTool())}>
-                ERASE WALL
-              </Chip>
-              <div className="w-full text-muted-foreground">
-                Hover a tile edge (N/E/S/W) and click. Shared neighbor edges are one wall. Cyan MOVEMENT WALL = cliffs (blocks walking, not sight). Magenta SOLID WALL = buildings (blocks walking and LOS). ERASE WALL removes the exact physical edge regardless of type. Leave gaps at slopes.
-              </div>
-            </Section>
-            <Section title="OVERLAYS / STRUCTURES">
-              <Chip active={isBridgeMode(tool)} onClick={() => setTool(selectBridgeTool())}>
-                SUSPENDED BRIDGE
-              </Chip>
-              <Chip active={isEraseBridgeMode(tool)} onClick={() => setTool(selectEraseBridgeTool())}>
-                ERASE BRIDGE
-              </Chip>
-              <div className="w-full text-muted-foreground">
-                Overlay sits above base terrain. ROAD under a bridge stays. Drag to paint. ERASE TERRAIN does not remove the overlay.
-              </div>
-            </Section>
+              </Section>
+            )}
+            {isCampDoc(doc) ? (
+              <Section title="CAMP PROPS">
+                {CAMP_PROP_TYPES.map((p) => (
+                  <Chip
+                    key={p}
+                    active={tool.id === "prop" && tool.type === p}
+                    onClick={() => setTool(selectPropTool(p))}
+                  >
+                    {p}
+                  </Chip>
+                ))}
+                <Chip
+                  active={tool.id === "prop" && tool.type === "crate"}
+                  onClick={() => setTool(selectPropTool("crate"))}
+                >
+                  crate
+                </Chip>
+                <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
+                  ERASE PROP
+                </Chip>
+                {selected?.kind === "prop" &&
+                  (() => {
+                    const prop = doc.props.find((p) => p.id === selected.id);
+                    if (!prop) return null;
+                    return (
+                      <div className="w-full border-t border-border pt-1">
+                        <div className="mb-1 text-muted-foreground">
+                          STATION FOR {prop.type} · X {prop.tx} Y {prop.ty}
+                        </div>
+                        {HUB_ACTIONS.map((action) => (
+                          <Chip
+                            key={action}
+                            active={prop.hubAction === action}
+                            onClick={() =>
+                              apply(
+                                setPropHubAction(
+                                  doc,
+                                  prop.id,
+                                  prop.hubAction === action ? null : action,
+                                ),
+                              )
+                            }
+                          >
+                            {action}
+                          </Chip>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                <div className="w-full text-muted-foreground">
+                  Select a placed prop (SELECT tool) to assign it as a station. Tent and fire stay
+                  decorative — no station assignment shows for them.
+                </div>
+              </Section>
+            ) : (
+              <Section title="PROPS">
+                {PROP_TYPES.map((p) => (
+                  <Chip
+                    key={p}
+                    active={tool.id === "prop" && tool.type === p}
+                    onClick={() => setTool(selectPropTool(p))}
+                  >
+                    {p}
+                  </Chip>
+                ))}
+                {COVER_TYPES.map((c) => (
+                  <Chip
+                    key={c}
+                    active={tool.id === "cover" && tool.type === c}
+                    onClick={() => setTool({ id: "cover", type: c })}
+                  >
+                    COVER {c}
+                  </Chip>
+                ))}
+                <Chip active={tool.id === "crate"} onClick={() => setTool({ id: "crate" })}>
+                  LOOT CRATE
+                </Chip>
+                <Chip active={tool.id === "extraction"} onClick={() => setTool({ id: "extraction" })}>
+                  EXTRACTION
+                </Chip>
+                {CHECKPOINT_TYPES.map((c) => (
+                  <Chip
+                    key={c}
+                    active={tool.id === "checkpoint" && tool.type === c}
+                    onClick={() => setTool({ id: "checkpoint", type: c })}
+                  >
+                    {c}
+                  </Chip>
+                ))}
+                <Chip
+                  active={tool.id === "edge" && tool.type === "fence"}
+                  onClick={() => setTool({ id: "edge", type: "fence" })}
+                >
+                  FENCE EDGE
+                </Chip>
+                <Chip
+                  active={tool.id === "edge" && tool.type === "wall"}
+                  onClick={() => setTool({ id: "edge", type: "wall" })}
+                >
+                  WALL EDGE
+                </Chip>
+                <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
+                  ERASE PROP
+                </Chip>
+              </Section>
+            )}
+            {!isCampDoc(doc) && (
+              <Section title="HOSTILE SENTRIES">
+                {listAllEnemyKinds().map((kind) => (
+                  <Chip
+                    key={kind}
+                    active={tool.id === "sentry" && tool.kind === kind}
+                    onClick={() => setTool({ id: "sentry", kind })}
+                  >
+                    {kind === "sniperScav" ? "SNIPER SCAV" : kind.toUpperCase()}
+                  </Chip>
+                ))}
+                <div className="w-full text-muted-foreground">
+                  Placed defenders begin on the map and hold their position while normal waves still
+                  use authored lanes.
+                </div>
+              </Section>
+            )}
+            {!isCampDoc(doc) && (
+              <Section title="COLLISION / BARRIERS">
+                <Chip
+                  active={isMovementWallMode(tool)}
+                  onClick={() => setTool(selectCollisionWallTool())}
+                >
+                  MOVEMENT WALL
+                </Chip>
+                <Chip active={isSolidWallMode(tool)} onClick={() => setTool(selectSolidWallTool())}>
+                  SOLID WALL
+                </Chip>
+                <Chip active={isEraseWallMode(tool)} onClick={() => setTool(selectEraseWallTool())}>
+                  ERASE WALL
+                </Chip>
+                <div className="w-full text-muted-foreground">
+                  Hover a tile edge (N/E/S/W) and click. Shared neighbor edges are one wall. Cyan
+                  MOVEMENT WALL = cliffs (blocks walking, not sight). Magenta SOLID WALL = buildings
+                  (blocks walking and LOS). ERASE WALL removes the exact physical edge regardless of
+                  type. Leave gaps at slopes.
+                </div>
+              </Section>
+            )}
+            {!isCampDoc(doc) && (
+              <Section title="OVERLAYS / STRUCTURES">
+                <Chip active={isBridgeMode(tool)} onClick={() => setTool(selectBridgeTool())}>
+                  SUSPENDED BRIDGE
+                </Chip>
+                <Chip
+                  active={isEraseBridgeMode(tool)}
+                  onClick={() => setTool(selectEraseBridgeTool())}
+                >
+                  ERASE BRIDGE
+                </Chip>
+                <div className="w-full text-muted-foreground">
+                  Overlay sits above base terrain. ROAD under a bridge stays. Drag to paint. ERASE
+                  TERRAIN does not remove the overlay.
+                </div>
+              </Section>
+            )}
             <Section title="TOOLS">
               <Chip active={tool.id === "select"} onClick={() => setTool({ id: "select" })}>
                 SELECT
               </Chip>
-              <Chip active={isLosProbeMode(tool)} onClick={() => setTool(selectLosProbeTool())}>
-                LOS PROBE
-              </Chip>
+              {!isCampDoc(doc) && (
+                <Chip active={isLosProbeMode(tool)} onClick={() => setTool(selectLosProbeTool())}>
+                  LOS PROBE
+                </Chip>
+              )}
               {isLosProbeMode(tool) && (
                 <>
                   <Chip
@@ -754,7 +1343,9 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                     TARGETS: CUSTOM
                   </Chip>
                   <div className="w-full text-muted-foreground">
-                    Diagnostic only. Click a tile for origin (HIGH on HIGH_GROUND / bridge; LOW elsewhere; stacked tiles cycle). Unlimited range. Same LOS as raids. Does not edit the map.
+                    Diagnostic only. Click a tile for origin (HIGH on HIGH_GROUND / bridge; LOW
+                    elsewhere; stacked tiles cycle). Unlimited range. Same LOS as raids. Does not
+                    edit the map.
                   </div>
                 </>
               )}
@@ -785,13 +1376,15 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
               onPointerCancel={onPointerUp}
               onPointerLeave={() => {
                 if (!painting.current) setHover(null);
-                if (isLosProbeMode(tool)) setProbe((s) => applyLosProbeHover(s, pathSweep.results, null));
+                if (isLosProbeMode(tool))
+                  setProbe((s) => applyLosProbeHover(s, pathSweep.results, null));
               }}
               onContextMenu={(e) => e.preventDefault()}
             />
           </div>
 
           <aside className="pixel-card space-y-3 overflow-auto font-mono text-[11px]">
+            {!isCampDoc(doc) && (
             <Section title="LANES">
               {doc.lanes.map((l) => (
                 <Chip key={l.id} active={l.id === laneId} onClick={() => setLaneId(l.id)}>
@@ -810,17 +1403,27 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 + NEW LANE
               </button>
               {doc.lanes.length > 1 && (
-                <button className="pixel-btn" disabled={locked} onClick={() => apply(removeLane(doc, laneId))}>
+                <button
+                  className="pixel-btn"
+                  disabled={locked}
+                  onClick={() => apply(removeLane(doc, laneId))}
+                >
                   REMOVE LANE
                 </button>
               )}
               <button
                 className="pixel-btn"
-                disabled={locked || !(doc.lanes.find((l) => l.id === laneId)?.waypoints.length)}
+                disabled={locked || !doc.lanes.find((l) => l.id === laneId)?.waypoints.length}
                 onClick={() => {
                   const lane = doc.lanes.find((l) => l.id === laneId);
                   const n = lane ? pathCells(lane.waypoints).length : 0;
-                  if (n > 4 && typeof window !== "undefined" && !window.confirm(`Clear the ${n}-tile path on lane ${laneId}? Spawn stays. Road and props are unchanged.`)) {
+                  if (
+                    n > 4 &&
+                    typeof window !== "undefined" &&
+                    !window.confirm(
+                      `Clear the ${n}-tile path on lane ${laneId}? Spawn stays. Road and props are unchanged.`,
+                    )
+                  ) {
                     return;
                   }
                   apply(clearLanePath(doc, laneId));
@@ -829,9 +1432,13 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 CLEAR PATH
               </button>
               <div className="text-muted-foreground">
-                PATH is in-map ROAD only. SPAWN and ENDPOINT attach to a border tile and sit just outside the map. Hover a boundary tile (corners pick the nearer edge) and click to place or move the port. ERASE GAMEPLAY on an outside marker removes that spawn or endpoint only. CLEAR PATH keeps ports and drops the route.
+                PATH is in-map ROAD only. SPAWN and ENDPOINT attach to a border tile and sit just
+                outside the map. Hover a boundary tile (corners pick the nearer edge) and click to
+                place or move the port. ERASE GAMEPLAY on an outside marker removes that spawn or
+                endpoint only. CLEAR PATH keeps ports and drops the route.
               </div>
             </Section>
+            )}
             <Section title="LAYERS">
               {(Object.keys(layers) as Array<keyof LayerFlags>).map((k) => (
                 <label key={k} className="mr-2 inline-flex items-center gap-1">
@@ -844,7 +1451,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 </label>
               ))}
             </Section>
-            {isLosProbeMode(tool) && (
+            {isLosProbeMode(tool) && probeMap && (
               <Section title="LOS PROBE">
                 <LosProbeInspector
                   map={probeMap}
@@ -854,13 +1461,26 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                   customHit={customHit}
                   onSetOriginSurface={(surface) =>
                     setProbe((s) =>
-                      s.origin ? { ...s, origin: resolveProbePoint(probeMap, s.origin.tx, s.origin.ty, surface) } : s,
+                      s.origin
+                        ? {
+                            ...s,
+                            origin: resolveProbePoint(probeMap, s.origin.tx, s.origin.ty, surface),
+                          }
+                        : s,
                     )
                   }
                   onSetTargetSurface={(surface) =>
                     setProbe((s) =>
                       s.customTarget
-                        ? { ...s, customTarget: resolveProbePoint(probeMap, s.customTarget.tx, s.customTarget.ty, surface) }
+                        ? {
+                            ...s,
+                            customTarget: resolveProbePoint(
+                              probeMap,
+                              s.customTarget.tx,
+                              s.customTarget.ty,
+                              surface,
+                            ),
+                          }
                         : s,
                     )
                   }
@@ -910,7 +1530,15 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function Chip({ active, onClick, children }: { active?: boolean; onClick: () => void; children: ReactNode }) {
+function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
   return (
     <button
       type="button"
@@ -935,9 +1563,10 @@ function Inspector({
   locked: boolean;
   onToggleBridge: (tx: number, ty: number) => void;
 }) {
-  const tile = selected?.kind === "tile" && selected.id.includes(",")
-    ? { tx: Number(selected.id.split(",")[0]), ty: Number(selected.id.split(",")[1]) }
-    : hover;
+  const tile =
+    selected?.kind === "tile" && selected.id.includes(",")
+      ? { tx: Number(selected.id.split(",")[0]), ty: Number(selected.id.split(",")[1]) }
+      : hover;
   if (selected?.kind === "wall") {
     const parts = selected.id.slice("wall:".length).split(",");
     const tx = Number(parts[0]);
@@ -963,7 +1592,10 @@ function Inspector({
   }
   const bridgeSel =
     selected?.kind === "bridge"
-      ? { tx: Number(selected.id.split(":")[1]?.split(",")[0]), ty: Number(selected.id.split(",")[1]) }
+      ? {
+          tx: Number(selected.id.split(":")[1]?.split(",")[0]),
+          ty: Number(selected.id.split(",")[1]),
+        }
       : tile && hasBridge(doc, tile.tx, tile.ty)
         ? tile
         : null;
@@ -996,7 +1628,7 @@ function Inspector({
     selected?.kind === "spawn" || selected?.kind === "endpoint"
       ? { kind: selected.kind as "spawn" | "endpoint", laneId: selected.id.split(":")[1] ?? "" }
       : tile
-        ? hitLanePort(doc, tile.tx, tile.ty) ??
+        ? (hitLanePort(doc, tile.tx, tile.ty) ??
           doc.lanes
             .map((l) => {
               if (l.spawn && l.spawn.tx === tile.tx && l.spawn.ty === tile.ty) {
@@ -1007,7 +1639,8 @@ function Inspector({
               }
               return null;
             })
-            .find(Boolean) ?? null
+            .find(Boolean) ??
+          null)
         : null;
   if (portHit) {
     const lane = doc.lanes.find((l) => l.id === portHit.laneId);
@@ -1032,16 +1665,54 @@ function Inspector({
   const cp = doc.checkpoints.find((p) => p.id === selected?.id);
   const zone = doc.zones.find((p) => p.id === selected?.id);
   const gate = doc.gates.find((p) => p.id === selected?.id);
-  if (prop) return <div>PROP {prop.type} · X {prop.tx} Y {prop.ty}</div>;
-  if (cover) return <div>COVER {cover.type} · X {cover.tx} Y {cover.ty}</div>;
-  if (crate) return <div>CRATE · X {crate.tx} Y {crate.ty}</div>;
-  if (extraction) return <div>EXTRACTION · X {extraction.tx} Y {extraction.ty}</div>;
-  if (cp) return <div>CHECKPOINT {cp.type} · X {cp.tx} Y {cp.ty}</div>;
-  if (zone) return <div>ZONE {zone.type} · {zone.name} · {zone.cells.length} tiles</div>;
-  if (gate) return <div>GATE {gate.id} · LANE {gate.laneId} · X {gate.tx} Y {gate.ty} · {gate.edge}</div>;
+  if (prop)
+    return (
+      <div>
+        PROP {prop.type} · X {prop.tx} Y {prop.ty}
+        {prop.hubAction && <div>STATION {prop.hubAction.toUpperCase()}</div>}
+      </div>
+    );
+  if (cover)
+    return (
+      <div>
+        COVER {cover.type} · X {cover.tx} Y {cover.ty}
+      </div>
+    );
+  if (crate)
+    return (
+      <div>
+        CRATE · X {crate.tx} Y {crate.ty}
+      </div>
+    );
+  if (extraction)
+    return (
+      <div>
+        EXTRACTION · X {extraction.tx} Y {extraction.ty}
+      </div>
+    );
+  if (cp)
+    return (
+      <div>
+        CHECKPOINT {cp.type} · X {cp.tx} Y {cp.ty}
+      </div>
+    );
+  if (zone)
+    return (
+      <div>
+        ZONE {zone.type} · {zone.name} · {zone.cells.length} tiles
+      </div>
+    );
+  if (gate)
+    return (
+      <div>
+        GATE {gate.id} · LANE {gate.laneId} · X {gate.tx} Y {gate.ty} · {gate.edge}
+      </div>
+    );
   if (tile) {
     const t = doc.terrain[tile.ty]?.[tile.tx] ?? "—";
-    const lanes = doc.lanes.filter((l) => pathCells(l.waypoints).some(([x, y]) => x === tile.tx && y === tile.ty)).map((l) => l.id);
+    const lanes = doc.lanes
+      .filter((l) => pathCells(l.waypoints).some(([x, y]) => x === tile.tx && y === tile.ty))
+      .map((l) => l.id);
     const elevated = t === "HIGH_GROUND" || hasBridge(doc, tile.tx, tile.ty);
     return (
       <div>
@@ -1075,10 +1746,15 @@ function LosProbeInspector({
   onSetTargetSurface: (surface: SurfaceLevel) => void;
 }) {
   const originSurfaces = probe.origin ? probeSurfacesAt(map, probe.origin.tx, probe.origin.ty) : [];
-  const targetSurfaces = probe.customTarget ? probeSurfacesAt(map, probe.customTarget.tx, probe.customTarget.ty) : [];
+  const targetSurfaces = probe.customTarget
+    ? probeSurfacesAt(map, probe.customTarget.tx, probe.customTarget.ty)
+    : [];
   const activeIdx = probe.selectedSampleIndex ?? probe.hoverSampleIndex;
   const sample =
-    probe.mode === "PATH" && activeIdx != null && activeIdx >= 0 && activeIdx < pathSweep.results.length
+    probe.mode === "PATH" &&
+    activeIdx != null &&
+    activeIdx >= 0 &&
+    activeIdx < pathSweep.results.length
       ? pathSweep.results[activeIdx]
       : null;
 
@@ -1114,8 +1790,14 @@ function LosProbeInspector({
       {probe.mode === "CUSTOM" && probe.customTarget && (
         <>
           <div>
-            TARGET: ({probe.customTarget.tx},{probe.customTarget.ty}) · {displaySurface(probe.customTarget.surface)} ·{" "}
-            {probeKindLabel(map, probe.customTarget.tx, probe.customTarget.ty, probe.customTarget.surface)}
+            TARGET: ({probe.customTarget.tx},{probe.customTarget.ty}) ·{" "}
+            {displaySurface(probe.customTarget.surface)} ·{" "}
+            {probeKindLabel(
+              map,
+              probe.customTarget.tx,
+              probe.customTarget.ty,
+              probe.customTarget.surface,
+            )}
           </div>
           {targetSurfaces.length > 1 && (
             <div className="flex flex-wrap gap-1">
@@ -1139,22 +1821,27 @@ function LosProbeInspector({
         <div>
           <div>{formatProbeBlocker(sample.hit)}</div>
           <div>
-            SRC {displaySurface(probe.origin.surface)} · {probeKindLabel(map, probe.origin.tx, probe.origin.ty, probe.origin.surface)}
+            SRC {displaySurface(probe.origin.surface)} ·{" "}
+            {probeKindLabel(map, probe.origin.tx, probe.origin.ty, probe.origin.surface)}
           </div>
-          <div>
-            TGT {displaySurface(sample.surface)} · PATH
-          </div>
+          <div>TGT {displaySurface(sample.surface)} · PATH</div>
         </div>
       )}
       {probe.mode === "CUSTOM" && customHit && probe.origin && probe.customTarget && (
         <div>
           <div>{formatProbeBlocker(customHit)}</div>
           <div>
-            SRC {displaySurface(probe.origin.surface)} · {probeKindLabel(map, probe.origin.tx, probe.origin.ty, probe.origin.surface)}
+            SRC {displaySurface(probe.origin.surface)} ·{" "}
+            {probeKindLabel(map, probe.origin.tx, probe.origin.ty, probe.origin.surface)}
           </div>
           <div>
             TGT {displaySurface(probe.customTarget.surface)} ·{" "}
-            {probeKindLabel(map, probe.customTarget.tx, probe.customTarget.ty, probe.customTarget.surface)}
+            {probeKindLabel(
+              map,
+              probe.customTarget.tx,
+              probe.customTarget.ty,
+              probe.customTarget.surface,
+            )}
           </div>
         </div>
       )}

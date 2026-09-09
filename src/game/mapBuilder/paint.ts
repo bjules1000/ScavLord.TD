@@ -17,6 +17,7 @@ import type {
   EditorMapDoc,
   EditorProp,
   EditorZone,
+  CampPropType,
   GateId,
   SpecialZoneType,
   TerrainKind,
@@ -48,7 +49,7 @@ export function canPlaceOccupant(doc: EditorMapDoc, tx: number, ty: number): boo
   return occupantAt(doc, tx, ty) === null;
 }
 
-export function placeProp(doc: EditorMapDoc, tx: number, ty: number, type: PropType): EditorMapDoc {
+export function placeProp(doc: EditorMapDoc, tx: number, ty: number, type: PropType | CampPropType): EditorMapDoc {
   if (!canPlaceOccupant(doc, tx, ty)) return doc;
   const next: EditorProp = { id: nextObjectId(doc, "prop"), type, tx, ty };
   return { ...doc, props: [...doc.props, next] };
