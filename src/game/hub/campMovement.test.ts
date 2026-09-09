@@ -1,20 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { stepCampMove, nearestStation, type CampMoveInput } from "./campMovement";
-import type { HubHotspot } from "./hotspots";
+import type { CampStationProp } from "./campMap";
 
 const NONE: CampMoveInput = { up: false, down: false, left: false, right: false };
 const BOUNDS = { width: 1000, height: 800 };
+const TILE = 32;
 
-function station(partial: Partial<HubHotspot> & Pick<HubHotspot, "id" | "action">): HubHotspot {
-  return {
-    label: partial.id.toUpperCase(),
-    xPercent: 0,
-    yPercent: 0,
-    widthPercent: 10,
-    heightPercent: 10,
-    enabled: true,
-    ...partial,
-  };
+function station(partial: Partial<CampStationProp> & Pick<CampStationProp, "id">): CampStationProp {
+  return { type: "crate", tx: 0, ty: 0, ...partial };
 }
 
 describe("stepCampMove", () => {
@@ -42,41 +35,64 @@ describe("stepCampMove", () => {
     expect(stepCampMove(500, 2, { ...NONE, up: true }, 1, 100, BOUNDS).y).toBe(0);
     expect(stepCampMove(500, 798, { ...NONE, down: true }, 1, 100, BOUNDS).y).toBe(800);
   });
+
+  it("without a collision predicate, movement is unaffected (backward compatible)", () => {
+    const r = stepCampMove(500, 400, { ...NONE, right: true }, 1, 100, BOUNDS);
+    expect(r.x).toBe(600);
+  });
+
+  it("stops on the blocked axis when approaching from the west", () => {
+    // Tile tx=5 spans 160..192. Starting at x=150 (tile 4), a 20px step lands at 170 (tile 5).
+    const collision = { tileSize: TILE, blocked: (tx: number) => tx === 5 };
+    const r = stepCampMove(150, 100, { ...NONE, right: true }, 1, 20, BOUNDS, collision);
+    expect(r.x).toBe(150);
+  });
+
+  it("stops on the blocked axis when approaching from the north", () => {
+    const collision = { tileSize: TILE, blocked: (_tx: number, ty: number) => ty === 5 };
+    const r = stepCampMove(100, 150, { ...NONE, down: true }, 1, 20, BOUNDS, collision);
+    expect(r.y).toBe(150);
+  });
+
+  it("lets a diagonal move slide along a wall instead of freezing both axes", () => {
+    // Blocked column at tx=5; moving down-right should still advance in y.
+    const collision = { tileSize: TILE, blocked: (tx: number) => tx === 5 };
+    const r = stepCampMove(150, 100, { ...NONE, right: true, down: true }, 1, 20, BOUNDS, collision);
+    expect(r.x).toBe(150);
+    expect(r.y).toBeGreaterThan(100);
+  });
 });
 
 describe("nearestStation", () => {
-  const stations: HubHotspot[] = [
-    station({ id: "supplies", action: "supplies", xPercent: 0, yPercent: 0, widthPercent: 10, heightPercent: 10 }),
-    station({ id: "gear", action: "gear", xPercent: 80, yPercent: 80, widthPercent: 10, heightPercent: 10 }),
+  const props: CampStationProp[] = [
+    station({ id: "supplies", type: "crate", tx: 0, ty: 0, hubAction: "supplies" }),
+    station({ id: "gear", type: "gun-bench", tx: 25, ty: 25, hubAction: "gear" }),
   ];
 
   it("returns the closest in-range station", () => {
-    // (0,0)-(100,100) box in a 1000x800 image; player near it.
-    const hit = nearestStation(120, 50, stations, 1000, 800, 60);
+    const hit = nearestStation(40, 20, props, TILE, 60);
     expect(hit?.id).toBe("supplies");
   });
 
   it("returns null when nothing is within radius", () => {
-    expect(nearestStation(500, 400, stations, 1000, 800, 60)).toBeNull();
+    expect(nearestStation(500, 400, props, TILE, 60)).toBeNull();
   });
 
-  it("distance is to the nearest edge of the box, not the center", () => {
-    // supplies box is (0,0)-(100,100); a point at (100, 500) is 400px from the box's
-    // center but only ~400... actually let's use a point straight off one edge.
-    const hit = nearestStation(150, 50, stations, 1000, 800, 60);
+  it("distance is to the nearest edge of the tile, not the center", () => {
+    const hit = nearestStation(TILE + 50, 16, props, TILE, 60);
     expect(hit?.id).toBe("supplies");
   });
 
-  it("skips disabled or action-less stations", () => {
-    const disabled = [station({ id: "reserved", action: undefined, xPercent: 0, yPercent: 0, widthPercent: 10, heightPercent: 10 })];
-    expect(nearestStation(10, 10, disabled, 1000, 800, 60)).toBeNull();
+  it("skips decorative props with no hubAction", () => {
+    const decorative = [station({ id: "fire", type: "fire", tx: 0, ty: 0 })];
+    expect(nearestStation(10, 10, decorative, TILE, 60)).toBeNull();
   });
 
   it("breaks ties by array order", () => {
-    const tied: HubHotspot[] = [
-      station({ id: "first", action: "supplies", xPercent: 0, yPercent: 0, widthPercent: 10, heightPercent: 10 }),
-      station({ id: "second", action: "gear", xPercent: 0, yPercent: 0, widthPercent: 10, heightPercent: 10 }),
+    const tied: CampStationProp[] = [
+      station({ id: "first", type: "crate", tx: 0, ty: 0, hubAction: "supplies" }),
+      station({ id: "second", type: "gun-bench", tx: 0, ty: 0, hubAction: "gear" }),
     ];
-    expect(nearestStation(50, 50, tied, 1000, 800, 100)?.id).toBe("first");
+    expect(nearestStation(16, 16, tied, TILE, 100)?.id).toBe("first");
   });
 });

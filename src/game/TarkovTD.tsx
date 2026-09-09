@@ -341,7 +341,8 @@ import {
 } from "./operators/runtime";
 import { operatorSpeedMultiplier, OPERATOR_MOVE_SPEED_TILES } from "./movement";
 import CampHub from "./hub/CampHub";
-import { CAMP_IMAGE_H, CAMP_IMAGE_W, type HubAction } from "./hub/hotspots";
+import type { HubAction } from "./campActions";
+import { CAMP_MAP_DEF } from "./hub/campMaps/campMain";
 
 import { RAID_SCRAP_MULT } from "./loot";
 import { DEV_TOOLS_ENABLED } from "./dev/tools";
@@ -3762,7 +3763,7 @@ export default function TarkovTD() {
               style={{
                 maxWidth: `min(100%, calc((100dvh - ${
                   s.phase === "hideout" ? "8.25rem" : "var(--td-chrome, 13rem)"
-                }) * ${s.phase === "hideout" ? CAMP_IMAGE_W / CAMP_IMAGE_H : W / H}))`,
+                }) * ${s.phase === "hideout" ? CAMP_MAP_DEF.width / CAMP_MAP_DEF.height : W / H}))`,
               }}
             >
 
