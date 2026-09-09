@@ -78,14 +78,10 @@ describe("composeCosmeticLayers", () => {
     expect(layers.map((l) => l.slot)).toEqual([...COSMETIC_FIGURE.layerOrder]);
   });
 
-  it("positions each layer at its slot's fixed anchor", () => {
+  it("carries its slot's placeholder rect (used only until real art exists)", () => {
     const layers = composeCosmeticLayers(defaultCosmeticLoadout());
     for (const layer of layers) {
-      const anchor = COSMETIC_FIGURE.anchors[layer.slot];
-      expect(layer.x).toBe(anchor.x);
-      expect(layer.y).toBe(anchor.y);
-      expect(layer.w).toBe(anchor.w);
-      expect(layer.h).toBe(anchor.h);
+      expect(layer.placeholder).toEqual(COSMETIC_FIGURE.placeholderRects[layer.slot]);
     }
   });
 

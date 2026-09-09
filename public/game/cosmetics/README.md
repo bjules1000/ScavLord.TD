@@ -1,6 +1,6 @@
 # Cosmetic sprites
 
-Drop PNG parts here. Expected slots/anchors/catalog are defined in `src/game/cosmetics.ts`.
+Drop PNG parts here. Expected sizes/catalog are defined in `src/game/cosmetics.ts`.
 
 ## Folder convention
 
@@ -14,18 +14,16 @@ public/game/cosmetics/<slot>/<option-id>-shading.png   (optional)
 - `public/game/cosmetics/legs/`
 - `public/game/cosmetics/hat/`
 
-## Sizing
+## Sizing — no scaling, no per-part anchors
 
-Each slot draws into a fixed box on a 32x64 figure (`COSMETIC_FIGURE.anchors` in `cosmetics.ts`):
-
-| Slot  | Size (w x h) |
-|-------|--------------|
-| hat   | 16 x 10      |
-| head  | 12 x 16      |
-| torso | 20 x 22      |
-| legs  | 16 x 24      |
-
-Art gets scaled to fit, so it doesn't have to be exactly this size, but matching it exactly keeps pixel art crisp and undistorted — draw each part on its own canvas at that slot's size.
+Every part is exported at the **exact same canvas size** — `COSMETIC_FIGURE.width x height`
+in `cosmetics.ts` (32x64 by default; change that constant to match your real Aseprite
+canvas). Draw the whole figure once across aligned layers (legs, torso, head, hat) the way
+you already do, and export each layer as its own PNG at that full canvas size, transparent
+everywhere except that part's own pixels. The game draws each layer at native size, at
+(0, 0), stacked in order — nothing is scaled or repositioned, since your layers are already
+aligned by construction. If a PNG comes out the wrong size, the CUSTOMIZE screen logs a
+console warning naming the file rather than silently stretching it.
 
 ## Recolorable regions
 

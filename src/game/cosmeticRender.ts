@@ -3,6 +3,10 @@
  * does an exact marker-color -> target-color swap (alpha preserved), then composites the
  * shading overlay with a multiply blend so shading stays correct regardless of the chosen
  * color. Results are cached so the pixel loop only reruns when a swatch actually changes.
+ *
+ * Real sprites are never scaled or repositioned — every part is authored on the same
+ * COSMETIC_FIGURE canvas and already sits exactly where it belongs, so layers are drawn at
+ * native size, at (0, 0). Only the "no art yet" placeholder box uses layer.placeholder.
  */
 
 import { COSMETIC_FIGURE, composeCosmeticLayers, type CosmeticLoadout } from "./cosmetics";
@@ -15,12 +19,25 @@ const SLOT_COLOR: Record<string, string> = {
 };
 
 const imageCache = new Map<string, HTMLImageElement>();
+const warnedMismatch = new Set<string>();
 
 function loadImage(src: string, onReady: () => void): HTMLImageElement {
   const cached = imageCache.get(src);
   if (cached) return cached;
   const img = new Image();
-  img.onload = onReady;
+  img.onload = () => {
+    if (
+      (img.naturalWidth !== COSMETIC_FIGURE.width || img.naturalHeight !== COSMETIC_FIGURE.height) &&
+      !warnedMismatch.has(src)
+    ) {
+      warnedMismatch.add(src);
+      console.warn(
+        `[cosmetics] ${src} is ${img.naturalWidth}x${img.naturalHeight}, expected the shared ` +
+          `${COSMETIC_FIGURE.width}x${COSMETIC_FIGURE.height} canvas — it won't align with other layers.`,
+      );
+    }
+    onReady();
+  };
   img.onerror = onReady;
   img.src = src;
   imageCache.set(src, img);
@@ -80,7 +97,7 @@ function recoloredLayerCanvas(
     const shadeImg = loadImage(layer.shadingKey, onReady);
     if (shadeImg.complete && shadeImg.naturalWidth) {
       octx.globalCompositeOperation = "multiply";
-      octx.drawImage(shadeImg, 0, 0, off.width, off.height);
+      octx.drawImage(shadeImg, 0, 0);
       octx.globalCompositeOperation = "source-over";
     }
   }
@@ -104,10 +121,12 @@ export function drawCosmeticFigure(
     if (layer.empty) continue;
     const canvas = recoloredLayerCanvas(layer, onReady);
     if (canvas) {
-      ctx.drawImage(canvas, layer.x, layer.y, layer.w, layer.h);
+      // Native size, no stretch — every part is pre-aligned on the shared figure canvas.
+      ctx.drawImage(canvas, 0, 0);
     } else {
+      const { x, y, w, h } = layer.placeholder;
       ctx.fillStyle = layer.placeholderColor ?? SLOT_COLOR[layer.slot] ?? "#666";
-      ctx.fillRect(layer.x, layer.y, layer.w, layer.h);
+      ctx.fillRect(x, y, w, h);
     }
   }
 }

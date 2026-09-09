@@ -14,24 +14,31 @@ export type CosmeticSlot = "head" | "torso" | "legs" | "hat";
 /** UI cycling order. */
 export const COSMETIC_SLOTS: readonly CosmeticSlot[] = ["hat", "head", "torso", "legs"];
 
-export type Anchor = { x: number; y: number; w: number; h: number };
+export type PlaceholderRect = { x: number; y: number; w: number; h: number };
 
 /**
- * Authoring contract: every option's PNG for a slot must be exactly this box (w x h),
- * positioned so the character's silhouette lines up across every option. Placeholder
- * pixel values on a 32x64 canvas — retune once real Aseprite art sizes are known.
+ * Authoring contract: every option's PNG is a layer on the SAME shared canvas (width x
+ * height below) — the artist draws one figure across aligned layers (legs/torso/head/hat),
+ * so a part's pixels already sit exactly where they belong. Real sprites are never scaled
+ * or repositioned: they're drawn at native size, at (0, 0), stacked in layerOrder. Retune
+ * width/height to match your actual Aseprite canvas — this must be exact, not a suggestion.
  */
 export const COSMETIC_FIGURE = {
   width: 32,
   height: 64,
   /** Back-to-front paint order. */
   layerOrder: ["legs", "torso", "head", "hat"] as const satisfies readonly CosmeticSlot[],
-  anchors: {
+  /**
+   * ONLY used to size/position the flat-color fallback box before a slot has real art.
+   * Real sprites ignore this entirely (see the contract above) — never used to scale or
+   * place actual PNGs.
+   */
+  placeholderRects: {
     legs: { x: 8, y: 40, w: 16, h: 24 },
     torso: { x: 6, y: 20, w: 20, h: 22 },
     head: { x: 10, y: 6, w: 12, h: 16 },
     hat: { x: 8, y: 0, w: 16, h: 10 },
-  } satisfies Record<CosmeticSlot, Anchor>,
+  } satisfies Record<CosmeticSlot, PlaceholderRect>,
 };
 
 /** Open/extensible — a sprite can declare any region name it needs (e.g. "hair", "skin", "fabric"). */
@@ -81,9 +88,13 @@ export interface CosmeticOption {
   id: string;
   slot: CosmeticSlot;
   name: string;
-  /** Fixed-path PNG, e.g. "/game/cosmetics/head/scout.png". Absent = placeholder block. */
+  /**
+   * Fixed-path PNG, e.g. "/game/cosmetics/head/scout.png", full COSMETIC_FIGURE canvas
+   * size with only this part's pixels opaque. Drawn at native size, unscaled. Absent =
+   * placeholder block.
+   */
   spriteKey?: string;
-  /** Optional multiply-blend shading overlay, same anchor/size as spriteKey. */
+  /** Optional multiply-blend shading overlay, same size as spriteKey. */
   shadingKey?: string;
   /** Intentionally nothing (e.g. "no hat") — renders neither a sprite nor a placeholder block. */
   empty?: boolean;
@@ -244,10 +255,8 @@ export interface ComposedCosmeticLayer {
   shadingKey?: string;
   /** Intentionally nothing (e.g. "no hat") — the renderer draws neither a sprite nor a placeholder. */
   empty: boolean;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  /** Fallback box, used ONLY when there's no spriteKey yet — never scales/positions real art. */
+  placeholder: PlaceholderRect;
   label: string;
   recolor: ComposedCosmeticRecolor[];
   /** First active region's resolved color — used only as the placeholder fill until spriteKey exists. */
@@ -263,7 +272,6 @@ export function composeCosmeticLayers(
   for (const slot of COSMETIC_FIGURE.layerOrder) {
     const optionId = resolved[slot];
     const option = cosmeticOption(slot, optionId);
-    const anchor = COSMETIC_FIGURE.anchors[slot];
     const recolor: ComposedCosmeticRecolor[] = [];
     if (option?.paintRegions) {
       for (const [region, markerHex] of Object.entries(option.paintRegions)) {
@@ -278,10 +286,7 @@ export function composeCosmeticLayers(
       ...(option?.spriteKey ? { spriteKey: option.spriteKey } : {}),
       ...(option?.shadingKey ? { shadingKey: option.shadingKey } : {}),
       empty: option?.empty ?? false,
-      x: anchor.x,
-      y: anchor.y,
-      w: anchor.w,
-      h: anchor.h,
+      placeholder: COSMETIC_FIGURE.placeholderRects[slot],
       label: option?.name ?? optionId,
       recolor,
       ...(recolor.length ? { placeholderColor: recolor[0]!.targetHex } : {}),
