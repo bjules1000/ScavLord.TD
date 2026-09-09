@@ -12,7 +12,7 @@
 export type CosmeticSlot = "head" | "torso" | "legs" | "hat";
 
 /** UI cycling order. */
-export const COSMETIC_SLOTS: readonly CosmeticSlot[] = ["head", "torso", "legs", "hat"];
+export const COSMETIC_SLOTS: readonly CosmeticSlot[] = ["hat", "head", "torso", "legs"];
 
 export type Anchor = { x: number; y: number; w: number; h: number };
 
