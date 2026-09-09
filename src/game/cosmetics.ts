@@ -16,8 +16,8 @@ export const COSMETIC_SLOTS: readonly CosmeticSlot[] = [
   "hat",
   "head",
   "torso",
-  "legs",
   "arms",
+  "legs",
   "armor",
 ];
 

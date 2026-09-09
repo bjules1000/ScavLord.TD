@@ -52,15 +52,18 @@ function PaintRow({
   region,
   loadout,
   onCyclePaint,
+  indent = true,
 }: {
   slot: CosmeticSlot;
   region: PaintRegionId;
   loadout: CosmeticLoadout;
   onCyclePaint: (slot: CosmeticSlot, region: PaintRegionId, direction: 1 | -1) => void;
+  /** Nested-under-a-slot rows indent; a standalone row (e.g. in the shared appearance block) doesn't. */
+  indent?: boolean;
 }) {
   const swatch = paintSwatch(loadout, slot, region);
   return (
-    <div className="flex items-center justify-between gap-2 py-1 pl-4">
+    <div className={`flex items-center justify-between gap-2 py-1 ${indent ? "pl-4" : ""}`}>
       <span className="w-10 shrink-0 font-mono text-[9px] uppercase text-muted-foreground">
         {region}
       </span>
@@ -112,26 +115,42 @@ export default function CosmeticsPanel({
   const anySlotFor = (region: PaintRegionId): CosmeticSlot =>
     COSMETIC_SLOTS.find((slot) => regionsFor(slot).includes(region)) ?? COSMETIC_SLOTS[0]!;
 
+  // ARMOR previews a top-layer overlay rather than an outfit piece, so it sits with the
+  // appearance traits (skin/hair) under the portrait instead of among the equip slots.
+  const equipSlots = COSMETIC_SLOTS.filter((slot) => slot !== "armor");
+  const armorRegions = regionsFor("armor");
+
   return (
     <div className="pixel-card flex flex-col items-center gap-3 text-left font-mono text-[10px] sm:flex-row sm:items-start sm:justify-center">
-      <div className="flex shrink-0 justify-center bg-black/20 p-3">
-        <CosmeticFigure loadout={loadout} scale={4} />
+      <div className="flex w-full max-w-[220px] shrink-0 flex-col gap-2 sm:w-[220px]">
+        <div className="flex justify-center bg-black/20 p-3">
+          <CosmeticFigure loadout={loadout} scale={6} />
+        </div>
+        <div>
+          {activeGlobalRegions.map((region) => (
+            <PaintRow
+              key={region}
+              slot={anySlotFor(region)}
+              region={region}
+              loadout={loadout}
+              onCyclePaint={onCyclePaint}
+              indent={false}
+            />
+          ))}
+          <CosmeticRow slot="armor" loadout={loadout} onCycle={onCycle} />
+          {armorRegions.map((region) => (
+            <PaintRow
+              key={region}
+              slot="armor"
+              region={region}
+              loadout={loadout}
+              onCyclePaint={onCyclePaint}
+            />
+          ))}
+        </div>
       </div>
       <div className="w-full max-w-[220px]">
-        {activeGlobalRegions.length > 0 && (
-          <div className="border-b border-border/40">
-            {activeGlobalRegions.map((region) => (
-              <PaintRow
-                key={region}
-                slot={anySlotFor(region)}
-                region={region}
-                loadout={loadout}
-                onCyclePaint={onCyclePaint}
-              />
-            ))}
-          </div>
-        )}
-        {COSMETIC_SLOTS.map((slot) => {
+        {equipSlots.map((slot) => {
           const regions = regionsFor(slot).filter((region) => !GLOBAL_PAINT_REGIONS.includes(region));
           return (
             <div key={slot} className="border-b border-border/40 last:border-b-0">
