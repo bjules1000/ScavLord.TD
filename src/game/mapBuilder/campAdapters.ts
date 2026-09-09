@@ -1,4 +1,5 @@
 import type { CampMapDef, CampStationProp } from "../hub/campMap";
+import { CAMP_MAP_DEF } from "../hub/campMaps/campMain";
 import { createBlankCampMap } from "./campDocument";
 import { toCampExport } from "./campExport";
 import type { EditorMapDoc } from "./schema";
@@ -46,9 +47,9 @@ export function fromCampMapDef(def: CampMapDef): EditorMapDoc {
   };
 }
 
-/** Shipped camp layouts. Empty until Phase 3 authors and registers the real one. */
+/** Shipped camp layouts. */
 export function productionCampMaps(): CampMapDef[] {
-  return [];
+  return [CAMP_MAP_DEF];
 }
 
 export interface CampIntegrationNote {
