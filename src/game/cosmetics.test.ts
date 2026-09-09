@@ -3,11 +3,16 @@ import {
   COSMETIC_CATALOG,
   COSMETIC_FIGURE,
   COSMETIC_SLOTS,
+  GLOBAL_PAINT_REGIONS,
+  SWATCH_LISTS,
   composeCosmeticLayers,
   cosmeticOption,
   cycleCosmeticOption,
+  cyclePaintSwatch,
   defaultCosmeticLoadout,
+  paintSwatch,
   resolveCosmeticLoadout,
+  resolvePaintSwatchId,
 } from "./cosmetics";
 
 describe("defaultCosmeticLoadout", () => {
@@ -105,5 +110,85 @@ describe("cosmeticOption", () => {
 
   it("returns null for an unknown id", () => {
     expect(cosmeticOption("torso", "nope")).toBeNull();
+  });
+});
+
+describe("resolvePaintSwatchId / paintSwatch", () => {
+  it("defaults to the first swatch in the region's list", () => {
+    const loadout = defaultCosmeticLoadout();
+    expect(resolvePaintSwatchId(loadout, "head", "hair")).toBe(SWATCH_LISTS.hair![0]!.id);
+    expect(paintSwatch(loadout, "head", "hair")?.id).toBe(SWATCH_LISTS.hair![0]!.id);
+  });
+
+  it("returns empty/null for a region with no swatch list", () => {
+    const loadout = defaultCosmeticLoadout();
+    expect(resolvePaintSwatchId(loadout, "head", "not-a-region")).toBe("");
+    expect(paintSwatch(loadout, "head", "not-a-region")).toBeNull();
+  });
+});
+
+describe("cyclePaintSwatch", () => {
+  it("cycles a non-global region independently per slot", () => {
+    let loadout = defaultCosmeticLoadout();
+    loadout = cyclePaintSwatch(loadout, "torso", "fabric", 1);
+    const torsoFabric = resolvePaintSwatchId(loadout, "torso", "fabric");
+    expect(torsoFabric).toBe(SWATCH_LISTS.fabric![1]!.id);
+    // legs' fabric choice is untouched by torso's cycle.
+    expect(resolvePaintSwatchId(loadout, "legs", "fabric")).toBe(SWATCH_LISTS.fabric![0]!.id);
+  });
+
+  it("wraps around a region's swatch list in both directions", () => {
+    let loadout = defaultCosmeticLoadout();
+    const last = SWATCH_LISTS.trim!.length - 1;
+    for (let i = 0; i < last; i++) loadout = cyclePaintSwatch(loadout, "hat", "trim", 1);
+    expect(resolvePaintSwatchId(loadout, "hat", "trim")).toBe(SWATCH_LISTS.trim![last]!.id);
+    loadout = cyclePaintSwatch(loadout, "hat", "trim", 1);
+    expect(resolvePaintSwatchId(loadout, "hat", "trim")).toBe(SWATCH_LISTS.trim![0]!.id);
+    loadout = cyclePaintSwatch(loadout, "hat", "trim", -1);
+    expect(resolvePaintSwatchId(loadout, "hat", "trim")).toBe(SWATCH_LISTS.trim![last]!.id);
+  });
+
+  it("is a no-op for a region with no swatch list", () => {
+    const loadout = defaultCosmeticLoadout();
+    expect(cyclePaintSwatch(loadout, "head", "not-a-region", 1)).toBe(loadout);
+  });
+
+  it("treats skin as global: cycling from one slot is visible from every slot", () => {
+    expect(GLOBAL_PAINT_REGIONS).toContain("skin");
+    let loadout = defaultCosmeticLoadout();
+    loadout = cyclePaintSwatch(loadout, "head", "skin", 1);
+    const expected = SWATCH_LISTS.skin![1]!.id;
+    expect(resolvePaintSwatchId(loadout, "head", "skin")).toBe(expected);
+    // Same global value read from an entirely different slot.
+    expect(resolvePaintSwatchId(loadout, "torso", "skin")).toBe(expected);
+    expect(resolvePaintSwatchId(loadout, "legs", "skin")).toBe(expected);
+  });
+});
+
+describe("composeCosmeticLayers recolor metadata", () => {
+  it("attaches a recolor entry and placeholderColor for an option with paintRegions", () => {
+    const layers = composeCosmeticLayers(defaultCosmeticLoadout());
+    const head = layers.find((l) => l.slot === "head")!;
+    expect(head.recolor.length).toBe(2);
+    expect(head.recolor.some((r) => r.region === "hair")).toBe(true);
+    expect(head.recolor.some((r) => r.region === "skin")).toBe(true);
+    expect(head.placeholderColor).toBe(head.recolor[0]!.targetHex);
+  });
+
+  it("leaves recolor empty for an option with no paintRegions", () => {
+    // head-c ("VISOR") declares no paintRegions.
+    const loadout = { ...defaultCosmeticLoadout(), head: "head-c" };
+    const layers = composeCosmeticLayers(loadout);
+    const head = layers.find((l) => l.slot === "head")!;
+    expect(head.recolor).toEqual([]);
+    expect(head.placeholderColor).toBeUndefined();
+  });
+
+  it("resolves the actual chosen swatch hex into targetHex, not just the default", () => {
+    let loadout = defaultCosmeticLoadout();
+    loadout = cyclePaintSwatch(loadout, "head", "hair", 1);
+    const layers = composeCosmeticLayers(loadout);
+    const hair = layers.find((l) => l.slot === "head")!.recolor.find((r) => r.region === "hair")!;
+    expect(hair.targetHex).toBe(SWATCH_LISTS.hair![1]!.hex);
   });
 });

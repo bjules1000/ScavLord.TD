@@ -332,7 +332,7 @@ import ArmoryPanel from "./ArmoryPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import CosmeticsPanel from "./operators/CosmeticsPanel";
-import { cycleCosmeticOption } from "./cosmetics";
+import { cycleCosmeticOption, cyclePaintSwatch } from "./cosmetics";
 import {
   operatorAccuracyBonus,
   operatorEffectiveWeight,
@@ -4110,6 +4110,12 @@ export default function TarkovTD() {
                       onCycle={(slot, direction) => {
                         const cur = metaRef.current;
                         cur.pmc.cosmetics = cycleCosmeticOption(cur.pmc.cosmetics, slot, direction);
+                        saveMeta(cur);
+                        rerender();
+                      }}
+                      onCyclePaint={(slot, region, direction) => {
+                        const cur = metaRef.current;
+                        cur.pmc.cosmetics = cyclePaintSwatch(cur.pmc.cosmetics, slot, region, direction);
                         saveMeta(cur);
                         rerender();
                       }}
