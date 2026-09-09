@@ -163,7 +163,13 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
   hat: [
     { id: "hat-none", slot: "hat", name: "NONE", empty: true },
     { id: "hat-a", slot: "hat", name: "BOONIE", paintRegions: { trim: "#ff00ff" } },
-    { id: "hat-b", slot: "hat", name: "USHANKA", spriteKey: "/game/cosmetics/hat/ushanka.png" },
+    {
+      id: "hat-b",
+      slot: "hat",
+      name: "USHANKA",
+      spriteKey: "/game/cosmetics/hat/ushanka.png",
+      paintRegions: { fabric: "#ff00ff" },
+    },
     {
       id: "hat-wolf-cap",
       slot: "hat",
@@ -171,10 +177,34 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       spriteKey: "/game/cosmetics/hat/wolf-cap.png",
       paintRegions: { hair: "#000000", fabric: "#ff00ff" },
     },
-    { id: "hat-cap-forward", slot: "hat", name: "FORWARD CAP", spriteKey: "/game/cosmetics/hat/cap-forward.png" },
-    { id: "hat-cap-backward", slot: "hat", name: "BACKWARD CAP", spriteKey: "/game/cosmetics/hat/cap-backward.png" },
-    { id: "hat-beanie", slot: "hat", name: "BEANIE", spriteKey: "/game/cosmetics/hat/beanie.png" },
-    { id: "hat-beanie-pompon", slot: "hat", name: "BEANIE (POMPON)", spriteKey: "/game/cosmetics/hat/beanie-pompon.png" },
+    {
+      id: "hat-cap-forward",
+      slot: "hat",
+      name: "FORWARD CAP",
+      spriteKey: "/game/cosmetics/hat/cap-forward.png",
+      paintRegions: { fabric: "#ff00ff", trim: "#00ffff" },
+    },
+    {
+      id: "hat-cap-backward",
+      slot: "hat",
+      name: "BACKWARD CAP",
+      spriteKey: "/game/cosmetics/hat/cap-backward.png",
+      paintRegions: { fabric: "#ff00ff", trim: "#00ffff", hair: "#000000" },
+    },
+    {
+      id: "hat-beanie",
+      slot: "hat",
+      name: "BEANIE",
+      spriteKey: "/game/cosmetics/hat/beanie.png",
+      paintRegions: { fabric: "#ff00ff" },
+    },
+    {
+      id: "hat-beanie-pompon",
+      slot: "hat",
+      name: "BEANIE (POMPON)",
+      spriteKey: "/game/cosmetics/hat/beanie-pompon.png",
+      paintRegions: { fabric: "#ff00ff", trim: "#00ffff" },
+    },
   ],
   arms: [
     {
