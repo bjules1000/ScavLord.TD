@@ -360,6 +360,7 @@ import EconomyLab from "./dev/EconomyLab";
 import WaveLab from "./dev/WaveLab";
 import QuestEditor from "./dev/QuestEditor";
 import RecruitmentLab from "./dev/RecruitmentLab";
+import SpritesLab from "./dev/SpritesLab";
 import { initRecruitmentLab } from "./operators/recruitmentLabCore";
 import {
   effectiveEnemy,
@@ -767,6 +768,7 @@ export default function TarkovTD() {
   const [waveLabOpen, setWaveLabOpen] = useState(false);
   const [questLabOpen, setQuestLabOpen] = useState(false);
   const [recruitmentLabOpen, setRecruitmentLabOpen] = useState(false);
+  const [spritesLabOpen, setSpritesLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const selectedMapDef = MAP_BY_ID[mapId] ?? MAP_DEFS[1]!;
@@ -1392,18 +1394,20 @@ export default function TarkovTD() {
     rerender();
   }, [pushLog, rerender]);
 
-  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "recruitment" | "none") => {
+  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "recruitment" | "sprites" | "none") => {
     const balance = which === "balance";
     const economy = which === "economy";
     const wave = which === "wave";
     const quest = which === "quest";
     const recruitment = which === "recruitment";
+    const sprites = which === "sprites";
     setBalanceLabOpen(balance);
     setEconomyLabOpen(economy);
     setWaveLabOpen(wave);
     setQuestLabOpen(quest);
     setRecruitmentLabOpen(recruitment);
-    labOpenRef.current = balance || economy || wave || quest || recruitment;
+    setSpritesLabOpen(sprites);
+    labOpenRef.current = balance || economy || wave || quest || recruitment || sprites;
   }, []);
 
   const onDevTool = useCallback(
@@ -1431,6 +1435,10 @@ export default function TarkovTD() {
       }
       if (id === "recruitment-lab") {
         setLabs("recruitment");
+        return;
+      }
+      if (id === "sprites-lab") {
+        setLabs("sprites");
         return;
       }
       setLabs("balance");
@@ -5373,6 +5381,9 @@ export default function TarkovTD() {
             rerender();
           }}
         />
+      )}
+      {DEV_TOOLS_ENABLED && spritesLabOpen && (
+        <SpritesLab enabled={DEV_TOOLS_ENABLED} onClose={() => setLabs("none")} onApplied={() => rerender()} />
       )}
       {progressionNotices[0] && (
         <ProgressionNoticeModal notice={progressionNotices[0]} onContinue={dismissProgressionNotice} />
