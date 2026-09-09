@@ -331,6 +331,8 @@ import CrewEquipmentPanel from "./CrewEquipmentPanel";
 import ArmoryPanel from "./ArmoryPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
+import CosmeticsPanel from "./operators/CosmeticsPanel";
+import { cycleCosmeticOption } from "./cosmetics";
 import {
   operatorAccuracyBonus,
   operatorEffectiveWeight,
@@ -747,7 +749,9 @@ export default function TarkovTD() {
   const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "armory" | "supplies" | "radio">("hideout");
   const [editMode, setEditMode] = useState(false);
   const [suppliesTab, setSuppliesTab] = useState<"stash" | "market">("stash");
-  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew">("overview");
+  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew" | "customize">(
+    "overview",
+  );
   const [selectedRecruitId, setSelectedRecruitId] = useState<string | null>(null);
   const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
   const [selectedEquipOwnerId, setSelectedEquipOwnerId] = useState<EquipmentOwnerId>(
@@ -3922,7 +3926,7 @@ export default function TarkovTD() {
                   layout={scavTab === "quests" ? "wide" : "center"}
                 >
                   <div className="mb-2 flex flex-wrap gap-1">
-                    {(["overview", "crew", "skills", "quests"] as const).map((tab) => (
+                    {(["overview", "crew", "skills", "quests", "customize"] as const).map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setScavTab(tab)}
@@ -4098,6 +4102,17 @@ export default function TarkovTD() {
                       filter={questFilter}
                       onFilter={setQuestFilter}
                       onRedeem={redeem}
+                    />
+                  )}
+                  {scavTab === "customize" && (
+                    <CosmeticsPanel
+                      loadout={meta.pmc.cosmetics}
+                      onCycle={(slot, direction) => {
+                        const cur = metaRef.current;
+                        cur.pmc.cosmetics = cycleCosmeticOption(cur.pmc.cosmetics, slot, direction);
+                        saveMeta(cur);
+                        rerender();
+                      }}
                     />
                   )}
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">

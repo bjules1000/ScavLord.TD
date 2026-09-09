@@ -1,3 +1,4 @@
+import { defaultCosmeticLoadout, resolveCosmeticLoadout, type CosmeticLoadout } from "./cosmetics";
 import { BACKPACKS, ITEM_BY_ID, WEAPONS, makeItem, type Item } from "./gear";
 import { freshCrewState, migrateV5ToV6, normalizeMetaV6 } from "./operators";
 import { STARTING_OPERATOR } from "./operators/startingOperator";
@@ -81,6 +82,7 @@ export interface PmcState {
   /** Improvised Bench visual/build state for the leader's equipped gun. */
   scavMods?: import("./weaponVisuals").WeaponVisualState | null;
   deaths: number;
+  cosmetics: CosmeticLoadout;
 }
 
 export function freshPmc(): PmcState {
@@ -93,6 +95,7 @@ export function freshPmc(): PmcState {
     attachments: [],
     armor: null,
     deaths: 0,
+    cosmetics: defaultCosmeticLoadout(),
   };
 }
 
@@ -215,6 +218,7 @@ function normalizeLegacyMeta(p: Partial<Meta>): Meta {
       attachments: Array.isArray(p.pmc?.attachments) ? p.pmc.attachments : [],
       armor: p.pmc?.armor ?? null,
       deaths: Number(p.pmc?.deaths) || 0,
+      cosmetics: resolveCosmeticLoadout(p.pmc?.cosmetics),
     },
     skills: Array.isArray(p.skills) ? p.skills.filter((x) => !!SKILL_BY_ID[x]) : [],
     skillPoints: Math.max(0, Number(p.skillPoints) || 0),
