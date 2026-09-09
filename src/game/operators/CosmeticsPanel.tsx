@@ -1,6 +1,7 @@
 import CosmeticFigure from "../CosmeticFigure";
 import {
   COSMETIC_SLOTS,
+  GLOBAL_PAINT_REGIONS,
   cosmeticOption,
   paintSwatch,
   type CosmeticLoadout,
@@ -100,14 +101,38 @@ export default function CosmeticsPanel({
   onCycle: (slot: CosmeticSlot, direction: 1 | -1) => void;
   onCyclePaint: (slot: CosmeticSlot, region: PaintRegionId, direction: 1 | -1) => void;
 }) {
+  const regionsFor = (slot: CosmeticSlot) =>
+    Object.keys(cosmeticOption(slot, loadout[slot])?.paintRegions ?? {});
+
+  // Global regions (skin, hair, ...) read/write one shared value regardless of slot — show
+  // each at most once instead of repeating it under every slot that happens to use it.
+  const activeGlobalRegions = GLOBAL_PAINT_REGIONS.filter((region) =>
+    COSMETIC_SLOTS.some((slot) => regionsFor(slot).includes(region)),
+  );
+  const anySlotFor = (region: PaintRegionId): CosmeticSlot =>
+    COSMETIC_SLOTS.find((slot) => regionsFor(slot).includes(region)) ?? COSMETIC_SLOTS[0]!;
+
   return (
     <div className="pixel-card flex flex-col items-center gap-3 text-left font-mono text-[10px] sm:flex-row sm:items-start sm:justify-center">
       <div className="flex shrink-0 justify-center bg-black/20 p-3">
         <CosmeticFigure loadout={loadout} scale={4} />
       </div>
       <div className="w-full max-w-[220px]">
+        {activeGlobalRegions.length > 0 && (
+          <div className="border-b border-border/40">
+            {activeGlobalRegions.map((region) => (
+              <PaintRow
+                key={region}
+                slot={anySlotFor(region)}
+                region={region}
+                loadout={loadout}
+                onCyclePaint={onCyclePaint}
+              />
+            ))}
+          </div>
+        )}
         {COSMETIC_SLOTS.map((slot) => {
-          const regions = Object.keys(cosmeticOption(slot, loadout[slot])?.paintRegions ?? {});
+          const regions = regionsFor(slot).filter((region) => !GLOBAL_PAINT_REGIONS.includes(region));
           return (
             <div key={slot} className="border-b border-border/40 last:border-b-0">
               <CosmeticRow slot={slot} loadout={loadout} onCycle={onCycle} />
