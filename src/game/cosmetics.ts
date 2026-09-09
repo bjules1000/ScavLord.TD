@@ -102,7 +102,7 @@ export const SWATCH_LISTS: Record<PaintRegionId, ColorSwatch[]> = {
 };
 
 /** Regions with this name share ONE choice across every slot, instead of one choice per slot. */
-export const GLOBAL_PAINT_REGIONS: readonly PaintRegionId[] = ["skin"];
+export const GLOBAL_PAINT_REGIONS: readonly PaintRegionId[] = ["skin", "hair"];
 
 export interface CosmeticOption {
   id: string;
@@ -128,31 +128,63 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
     { id: "head-a", slot: "head", name: "GRUNT", paintRegions: { hair: "#ff00ff", skin: "#00ffff" } },
     { id: "head-b", slot: "head", name: "BALACLAVA", paintRegions: { skin: "#00ffff" } },
     { id: "head-c", slot: "head", name: "VISOR" },
-    { id: "head-wolf", slot: "head", name: "WOLF", spriteKey: "/game/cosmetics/head/wolf.png" },
+    {
+      id: "head-wolf",
+      slot: "head",
+      name: "WOLF",
+      spriteKey: "/game/cosmetics/head/wolf.png",
+      paintRegions: { hair: "#000000", skin: "#ffff00" },
+    },
   ],
   torso: [
     { id: "torso-a", slot: "torso", name: "FIELD JACKET", paintRegions: { fabric: "#ff00ff" } },
     { id: "torso-b", slot: "torso", name: "PLATE CARRIER" },
     { id: "torso-c", slot: "torso", name: "RAIN SLICKER", paintRegions: { fabric: "#ff00ff" } },
-    { id: "torso-wolf", slot: "torso", name: "WOLF", spriteKey: "/game/cosmetics/torso/wolf.png" },
+    {
+      id: "torso-wolf",
+      slot: "torso",
+      name: "WOLF",
+      spriteKey: "/game/cosmetics/torso/wolf.png",
+      paintRegions: { fabric: "#ff00ff", trim: "#00ffff", skin: "#ffff00" },
+    },
   ],
   legs: [
     { id: "legs-a", slot: "legs", name: "FATIGUES", paintRegions: { fabric: "#ff00ff" } },
     { id: "legs-b", slot: "legs", name: "CARGO PANTS", paintRegions: { fabric: "#ff00ff" } },
     { id: "legs-c", slot: "legs", name: "WADERS" },
-    { id: "legs-wolf", slot: "legs", name: "WOLF", spriteKey: "/game/cosmetics/legs/wolf.png" },
+    {
+      id: "legs-wolf",
+      slot: "legs",
+      name: "WOLF",
+      spriteKey: "/game/cosmetics/legs/wolf.png",
+      paintRegions: { fabric: "#ff00ff", trim: "#00ffff" },
+    },
   ],
   hat: [
     { id: "hat-none", slot: "hat", name: "NONE", empty: true },
     { id: "hat-a", slot: "hat", name: "BOONIE", paintRegions: { trim: "#ff00ff" } },
     { id: "hat-b", slot: "hat", name: "USHANKA", spriteKey: "/game/cosmetics/hat/ushanka.png" },
-    { id: "hat-wolf-cap", slot: "hat", name: "WOLF CAP", spriteKey: "/game/cosmetics/hat/wolf-cap.png" },
+    {
+      id: "hat-wolf-cap",
+      slot: "hat",
+      name: "WOLF CAP",
+      spriteKey: "/game/cosmetics/hat/wolf-cap.png",
+      paintRegions: { hair: "#000000", fabric: "#ff00ff" },
+    },
     { id: "hat-cap-forward", slot: "hat", name: "FORWARD CAP", spriteKey: "/game/cosmetics/hat/cap-forward.png" },
     { id: "hat-cap-backward", slot: "hat", name: "BACKWARD CAP", spriteKey: "/game/cosmetics/hat/cap-backward.png" },
     { id: "hat-beanie", slot: "hat", name: "BEANIE", spriteKey: "/game/cosmetics/hat/beanie.png" },
     { id: "hat-beanie-pompon", slot: "hat", name: "BEANIE (POMPON)", spriteKey: "/game/cosmetics/hat/beanie-pompon.png" },
   ],
-  arms: [{ id: "arms-wolf", slot: "arms", name: "WOLF", spriteKey: "/game/cosmetics/arms/wolf.png" }],
+  arms: [
+    {
+      id: "arms-wolf",
+      slot: "arms",
+      name: "WOLF",
+      spriteKey: "/game/cosmetics/arms/wolf.png",
+      paintRegions: { fabric: "#ff00ff", skin: "#ffff00" },
+    },
+  ],
   armor: [
     { id: "armor-none", slot: "armor", name: "NONE", empty: true },
     { id: "armor-paca", slot: "armor", name: "PACA", spriteKey: "/game/cosmetics/armor/paca.png" },
@@ -169,7 +201,7 @@ export interface CosmeticLoadout {
   hat: string;
   arms: string;
   armor: string;
-  /** Swatch id per global region (currently just "skin"). */
+  /** Swatch id per global region (see GLOBAL_PAINT_REGIONS — currently "skin" and "hair"). */
   globalPaint: Record<PaintRegionId, string>;
   /** Swatch id per region, scoped to the slot — everything not in GLOBAL_PAINT_REGIONS. */
   slotPaint: Partial<Record<CosmeticSlot, Record<PaintRegionId, string>>>;
