@@ -12,6 +12,8 @@ import { TILE } from "../data";
 import { MAP_BY_ID, MAP_DEFS, type GameMap } from "../map";
 import type { LosHit } from "../los";
 import type { SurfaceLevel } from "../types";
+import { HUB_ACTIONS } from "../campActions";
+import type { CampMapDef } from "../hub/campMap";
 import {
   EDITOR_GUTTER,
   canvasPixelSize,
@@ -20,7 +22,17 @@ import {
   portEdgeFromCursor,
 } from "./ports";
 import { draftIdForSource, fromProductionMap, productionMaps } from "./adapters";
+import { fromCampMapDef, productionCampMaps } from "./campAdapters";
 import { createBlankMap, slugId, unlockRevision, validateNewMapInput } from "./document";
+import { createBlankCampMap, DEFAULT_CAMP_HEIGHT, DEFAULT_CAMP_WIDTH, isCampDoc } from "./campDocument";
+import { setPropHubAction } from "./campPaint";
+import { canLockCamp, validateCampMap } from "./campValidate";
+import {
+  campExportFilename,
+  importedToCampDoc,
+  parseCampImport,
+  stringifyCampExport,
+} from "./campExport";
 import { edgeFromCursor } from "./edges";
 import { exportFilename, importedToDoc, parseImport, stringifyExport } from "./export";
 import {
@@ -96,8 +108,8 @@ import {
   type LosProbeState,
   type PathSweepResult,
 } from "./losProbe";
-import type { EditorMapDoc, TerrainKind, VisualLayerId } from "./schema";
-import { CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
+import type { EditorMapDoc, MapType, TerrainKind, VisualLayerId } from "./schema";
+import { CAMP_PROP_TYPES, CHECKPOINT_TYPES, COVER_TYPES, GATE_IDS, PROP_TYPES } from "./schema";
 import { canLock, validateMap } from "./validate";
 import { listAllEnemyKinds } from "../dev/waveLabCore";
 import { lockDoc } from "./document";
@@ -121,6 +133,11 @@ const GHOST: Record<TerrainKind, string> = {
 };
 
 const MAX_TILESET_BYTES = 1_000_000;
+
+/** A doc's authoring tools don't carry over across a raid/camp switch — reset to a safe default. */
+function defaultToolFor(mapType: MapType): EditorTool {
+  return { id: "terrain", terrain: mapType === "camp" ? "GROUND" : "ROAD" };
+}
 
 function readDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -189,6 +206,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("NEW SECTOR");
   const [newId, setNewId] = useState("new-sector");
+  const [newType, setNewType] = useState<MapType>("raid");
   const [newW, setNewW] = useState(20);
   const [newH, setNewH] = useState(13);
   const stroke = useRef<AuthorCell[]>([]);
@@ -218,14 +236,18 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     };
   }, [doc.tileset?.imageDataUrl]);
 
-  const probeMap = useMemo(() => gameMapFromEditorDoc(doc), [doc]);
-  const pathSamples = useMemo(() => sampleActiveLane(probeMap, laneId), [probeMap, laneId]);
+  /** Camp docs have no lanes/gameplay for the LOS probe to sample — null rather than faking a raid map. */
+  const probeMap = useMemo(() => (isCampDoc(doc) ? null : gameMapFromEditorDoc(doc)), [doc]);
+  const pathSamples = useMemo(
+    () => (probeMap ? sampleActiveLane(probeMap, laneId) : []),
+    [probeMap, laneId],
+  );
   const pathSweep = useMemo(() => {
-    if (!probe.origin) return { results: [], visible: 0, blocked: 0 };
+    if (!probeMap || !probe.origin) return { results: [], visible: 0, blocked: 0 };
     return evaluatePathSweep(probeMap, probePointAsSight(probe.origin), pathSamples);
   }, [probeMap, probe.origin, pathSamples]);
   const customHit = useMemo(() => {
-    if (probe.mode !== "CUSTOM" || !probe.origin || !probe.customTarget) return null;
+    if (!probeMap || probe.mode !== "CUSTOM" || !probe.origin || !probe.customTarget) return null;
     return evaluateCustomProbe(
       probeMap,
       probePointAsSight(probe.origin),
@@ -236,6 +258,11 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   useEffect(() => {
     if (!doc.lanes.some((l) => l.id === laneId)) setLaneId(doc.lanes[0]?.id ?? "MAIN");
   }, [doc.lanes, laneId]);
+
+  useEffect(() => {
+    setNewW(newType === "camp" ? DEFAULT_CAMP_WIDTH : 20);
+    setNewH(newType === "camp" ? DEFAULT_CAMP_HEIGHT : 13);
+  }, [newType]);
 
   useEffect(() => {
     setProbe((s) => ({ ...s, hoverSampleIndex: null, selectedSampleIndex: null }));
@@ -442,7 +469,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     ev.currentTarget.setPointerCapture(ev.pointerId);
     const cell = pointerCell(ev);
     if (!cell) return;
-    if (isLosProbeMode(tool)) {
+    if (isLosProbeMode(tool) && probeMap) {
       const x = cell.tx * TILE + cell.localX;
       const y = cell.ty * TILE + cell.localY;
       setProbe((s) =>
@@ -544,7 +571,10 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     return () => window.removeEventListener("keydown", onKey);
   }, [apply, doc, selected]);
 
-  const report = useMemo(() => validation ?? validateMap(doc), [doc, validation]);
+  const report = useMemo(
+    () => validation ?? (isCampDoc(doc) ? validateCampMap(doc) : validateMap(doc)),
+    [doc, validation],
+  );
 
   const openProduction = (sourceId: string) => {
     const store = typeof window !== "undefined" ? readStore(window.localStorage) : emptyStore();
@@ -557,6 +587,20 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     setSelected(null);
     setProbe(emptyLosProbeState());
     setValidation(null);
+    setTool(defaultToolFor("raid"));
+  };
+
+  const openProductionCamp = (def: CampMapDef) => {
+    const store = typeof window !== "undefined" ? readStore(window.localStorage) : emptyStore();
+    const id = draftIdForSource(def.id);
+    const existing = store.docs[id];
+    const next = existing ?? fromCampMapDef(def);
+    setSession(replaceDoc(session, next));
+    setZoneId(null);
+    setSelected(null);
+    setProbe(emptyLosProbeState());
+    setValidation(null);
+    setTool(defaultToolFor("camp"));
   };
 
   const createNew = () => {
@@ -566,15 +610,43 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
       setMessage(err);
       return;
     }
-    const next = createBlankMap({ displayName: newName, id, width: newW, height: newH });
+    const next =
+      newType === "camp"
+        ? createBlankCampMap({ displayName: newName, id, width: newW, height: newH })
+        : createBlankMap({ displayName: newName, id, width: newW, height: newH });
     setSession(replaceDoc(session, next));
     setShowNew(false);
     setLaneId("MAIN");
+    setSelected(null);
     setProbe(emptyLosProbeState());
+    setTool(defaultToolFor(newType));
     setMessage(null);
   };
 
   const resetDraft = () => {
+    if (isCampDoc(doc)) {
+      if (doc.sourceMapId) {
+        if (!window.confirm("Discard this draft and reload the current production camp?")) return;
+        const prod = productionCampMaps().find((m) => m.id === doc.sourceMapId);
+        if (prod) setSession(replaceDoc(session, fromCampMapDef(prod)));
+      } else {
+        if (!window.confirm("Clear this camp map? All authored tiles will be lost.")) return;
+        setSession(
+          replaceDoc(
+            session,
+            createBlankCampMap({
+              displayName: doc.displayName,
+              id: doc.id,
+              width: doc.width,
+              height: doc.height,
+            }),
+          ),
+        );
+      }
+      setSelected(null);
+      setValidation(null);
+      return;
+    }
     if (doc.sourceMapId) {
       if (!window.confirm("Discard this draft and reload the current production map?")) return;
       setSession(
@@ -598,12 +670,14 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     setValidation(null);
   };
 
-  const runValidate = () => setValidation(validateMap(doc));
+  const runValidate = () =>
+    setValidation(isCampDoc(doc) ? validateCampMap(doc) : validateMap(doc));
 
   const runLock = () => {
-    const result = validateMap(doc);
+    const camp = isCampDoc(doc);
+    const result = camp ? validateCampMap(doc) : validateMap(doc);
     setValidation(result);
-    if (!canLock(doc)) {
+    if (camp ? !canLockCamp(doc) : !canLock(doc)) {
       setMessage("Lock blocked: fix validation errors first.");
       return;
     }
@@ -620,22 +694,45 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
   };
 
   const runExport = () => {
-    const text = stringifyExport(doc);
+    const camp = isCampDoc(doc);
+    const text = camp ? stringifyCampExport(doc) : stringifyExport(doc);
+    const filename = camp ? campExportFilename(doc) : exportFilename(doc);
     const blob = new Blob([text], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = exportFilename(doc);
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
-    setMessage(`Downloaded ${exportFilename(doc)}`);
+    setMessage(`Downloaded ${filename}`);
   };
 
   const runCopy = async () => {
-    await navigator.clipboard.writeText(stringifyExport(doc));
+    await navigator.clipboard.writeText(isCampDoc(doc) ? stringifyCampExport(doc) : stringifyExport(doc));
     setMessage("Map data copied.");
   };
 
   const runImport = (raw: string) => {
+    let sniff: unknown;
+    try {
+      sniff = JSON.parse(raw);
+    } catch {
+      setMessage("Import is not valid JSON.");
+      return;
+    }
+    const isCampPayload = !!sniff && typeof sniff === "object" && (sniff as { mapType?: unknown }).mapType === "camp";
+    if (isCampPayload) {
+      const parsed = parseCampImport(raw);
+      if (!parsed.ok) {
+        setMessage(parsed.error);
+        return;
+      }
+      const id = `import-${parsed.payload.id}`;
+      setSession(replaceDoc(session, importedToCampDoc(parsed.payload, id)));
+      setTool(defaultToolFor("camp"));
+      setProbe(emptyLosProbeState());
+      setMessage("Camp import loaded as a new editor draft.");
+      return;
+    }
     const parsed = parseImport(raw);
     if (!parsed.ok) {
       setMessage(parsed.error);
@@ -643,6 +740,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
     }
     const id = `import-${parsed.payload.id}`;
     setSession(replaceDoc(session, importedToDoc(parsed.payload, id)));
+    setTool(defaultToolFor("raid"));
     setProbe(emptyLosProbeState());
     setMessage("Import loaded as a new editor draft.");
   };
@@ -714,33 +812,60 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
             MAP
             <select
               className="ml-2 border border-border bg-card px-2 py-1"
-              value={doc.sourceMapId ?? doc.id}
+              value={
+                isCampDoc(doc) && doc.sourceMapId ? `camp:${doc.sourceMapId}` : (doc.sourceMapId ?? doc.id)
+              }
               onChange={(e) => {
                 const v = e.target.value;
                 if (v === "__new") {
                   setShowNew(true);
                   return;
                 }
+                if (v.startsWith("camp:")) {
+                  const campId = v.slice("camp:".length);
+                  const prod = productionCampMaps().find((m) => m.id === campId);
+                  if (prod) openProductionCamp(prod);
+                  return;
+                }
                 const prod = productionMaps().find((m) => m.id === v);
                 if (prod) openProduction(prod.id);
                 else {
                   const stored = readStore(window.localStorage).docs[v];
-                  if (stored) setSession(replaceDoc(session, stored));
+                  if (stored) {
+                    setSession(replaceDoc(session, stored));
+                    setTool(defaultToolFor(stored.mapType));
+                  }
                 }
               }}
             >
-              {productionMaps().map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-              {drafts
-                .filter((d) => !d.sourceMapId)
-                .map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.displayName} (draft)
+              <optgroup label="RAID">
+                {productionMaps().map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
                   </option>
                 ))}
+                {drafts
+                  .filter((d) => !d.sourceMapId && d.mapType !== "camp")
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.displayName} (draft)
+                    </option>
+                  ))}
+              </optgroup>
+              <optgroup label="CAMP">
+                {productionCampMaps().map((m) => (
+                  <option key={`camp:${m.id}`} value={`camp:${m.id}`}>
+                    {m.displayName}
+                  </option>
+                ))}
+                {drafts
+                  .filter((d) => !d.sourceMapId && d.mapType === "camp")
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.displayName} (draft)
+                    </option>
+                  ))}
+              </optgroup>
               <option value="__new">+ NEW MAP</option>
             </select>
           </label>
@@ -804,6 +929,17 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
 
         {showNew && (
           <div className="pixel-card mb-2 flex flex-wrap items-end gap-2 font-mono text-[11px]">
+            <label>
+              TYPE
+              <select
+                className="ml-1 border border-border bg-background px-1"
+                value={newType}
+                onChange={(e) => setNewType(e.target.value as MapType)}
+              >
+                <option value="raid">RAID</option>
+                <option value="camp">CAMP</option>
+              </select>
+            </label>
             <label>
               NAME
               <input
@@ -975,142 +1111,208 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 ERASE TERRAIN
               </Chip>
             </Section>
-            <Section title="ROUTES / GAMEPLAY">
-              <Chip active={tool.id === "path"} onClick={() => setTool(selectPathTool())}>
-                PATH
-              </Chip>
-              <Chip active={tool.id === "spawn"} onClick={() => setTool({ id: "spawn" })}>
-                SPAWN
-              </Chip>
-              <Chip active={tool.id === "end"} onClick={() => setTool({ id: "end" })}>
-                ENDPOINT
-              </Chip>
-              <Chip active={tool.id === "zone"} onClick={() => setTool({ id: "zone" })}>
-                SPECIAL ZONE
-              </Chip>
-              {GATE_IDS.map((g) => (
-                <Chip
-                  key={g}
-                  active={tool.id === "gate" && tool.gateId === g}
-                  onClick={() => setTool({ id: "gate", gateId: g })}
-                >
-                  GATE {g}
+            {!isCampDoc(doc) && (
+              <Section title="ROUTES / GAMEPLAY">
+                <Chip active={tool.id === "path"} onClick={() => setTool(selectPathTool())}>
+                  PATH
                 </Chip>
-              ))}
-              <Chip
-                active={tool.id === "erase-gameplay"}
-                onClick={() => setTool(selectGameplayEraser())}
-              >
-                ERASE GAMEPLAY
-              </Chip>
-            </Section>
-            <Section title="PROPS">
-              {PROP_TYPES.map((p) => (
-                <Chip
-                  key={p}
-                  active={tool.id === "prop" && tool.type === p}
-                  onClick={() => setTool(selectPropTool(p))}
-                >
-                  {p}
+                <Chip active={tool.id === "spawn"} onClick={() => setTool({ id: "spawn" })}>
+                  SPAWN
                 </Chip>
-              ))}
-              {COVER_TYPES.map((c) => (
-                <Chip
-                  key={c}
-                  active={tool.id === "cover" && tool.type === c}
-                  onClick={() => setTool({ id: "cover", type: c })}
-                >
-                  COVER {c}
+                <Chip active={tool.id === "end"} onClick={() => setTool({ id: "end" })}>
+                  ENDPOINT
                 </Chip>
-              ))}
-              <Chip active={tool.id === "crate"} onClick={() => setTool({ id: "crate" })}>
-                LOOT CRATE
-              </Chip>
-              <Chip active={tool.id === "extraction"} onClick={() => setTool({ id: "extraction" })}>
-                EXTRACTION
-              </Chip>
-              {CHECKPOINT_TYPES.map((c) => (
-                <Chip
-                  key={c}
-                  active={tool.id === "checkpoint" && tool.type === c}
-                  onClick={() => setTool({ id: "checkpoint", type: c })}
-                >
-                  {c}
+                <Chip active={tool.id === "zone"} onClick={() => setTool({ id: "zone" })}>
+                  SPECIAL ZONE
                 </Chip>
-              ))}
-              <Chip
-                active={tool.id === "edge" && tool.type === "fence"}
-                onClick={() => setTool({ id: "edge", type: "fence" })}
-              >
-                FENCE EDGE
-              </Chip>
-              <Chip
-                active={tool.id === "edge" && tool.type === "wall"}
-                onClick={() => setTool({ id: "edge", type: "wall" })}
-              >
-                WALL EDGE
-              </Chip>
-              <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
-                ERASE PROP
-              </Chip>
-            </Section>
-            <Section title="HOSTILE SENTRIES">
-              {listAllEnemyKinds().map((kind) => (
+                {GATE_IDS.map((g) => (
+                  <Chip
+                    key={g}
+                    active={tool.id === "gate" && tool.gateId === g}
+                    onClick={() => setTool({ id: "gate", gateId: g })}
+                  >
+                    GATE {g}
+                  </Chip>
+                ))}
                 <Chip
-                  key={kind}
-                  active={tool.id === "sentry" && tool.kind === kind}
-                  onClick={() => setTool({ id: "sentry", kind })}
+                  active={tool.id === "erase-gameplay"}
+                  onClick={() => setTool(selectGameplayEraser())}
                 >
-                  {kind === "sniperScav" ? "SNIPER SCAV" : kind.toUpperCase()}
+                  ERASE GAMEPLAY
                 </Chip>
-              ))}
-              <div className="w-full text-muted-foreground">
-                Placed defenders begin on the map and hold their position while normal waves still
-                use authored lanes.
-              </div>
-            </Section>
-            <Section title="COLLISION / BARRIERS">
-              <Chip
-                active={isMovementWallMode(tool)}
-                onClick={() => setTool(selectCollisionWallTool())}
-              >
-                MOVEMENT WALL
-              </Chip>
-              <Chip active={isSolidWallMode(tool)} onClick={() => setTool(selectSolidWallTool())}>
-                SOLID WALL
-              </Chip>
-              <Chip active={isEraseWallMode(tool)} onClick={() => setTool(selectEraseWallTool())}>
-                ERASE WALL
-              </Chip>
-              <div className="w-full text-muted-foreground">
-                Hover a tile edge (N/E/S/W) and click. Shared neighbor edges are one wall. Cyan
-                MOVEMENT WALL = cliffs (blocks walking, not sight). Magenta SOLID WALL = buildings
-                (blocks walking and LOS). ERASE WALL removes the exact physical edge regardless of
-                type. Leave gaps at slopes.
-              </div>
-            </Section>
-            <Section title="OVERLAYS / STRUCTURES">
-              <Chip active={isBridgeMode(tool)} onClick={() => setTool(selectBridgeTool())}>
-                SUSPENDED BRIDGE
-              </Chip>
-              <Chip
-                active={isEraseBridgeMode(tool)}
-                onClick={() => setTool(selectEraseBridgeTool())}
-              >
-                ERASE BRIDGE
-              </Chip>
-              <div className="w-full text-muted-foreground">
-                Overlay sits above base terrain. ROAD under a bridge stays. Drag to paint. ERASE
-                TERRAIN does not remove the overlay.
-              </div>
-            </Section>
+              </Section>
+            )}
+            {isCampDoc(doc) ? (
+              <Section title="CAMP PROPS">
+                {CAMP_PROP_TYPES.map((p) => (
+                  <Chip
+                    key={p}
+                    active={tool.id === "prop" && tool.type === p}
+                    onClick={() => setTool(selectPropTool(p))}
+                  >
+                    {p}
+                  </Chip>
+                ))}
+                <Chip
+                  active={tool.id === "prop" && tool.type === "crate"}
+                  onClick={() => setTool(selectPropTool("crate"))}
+                >
+                  crate
+                </Chip>
+                <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
+                  ERASE PROP
+                </Chip>
+                {selected?.kind === "prop" &&
+                  (() => {
+                    const prop = doc.props.find((p) => p.id === selected.id);
+                    if (!prop) return null;
+                    return (
+                      <div className="w-full border-t border-border pt-1">
+                        <div className="mb-1 text-muted-foreground">
+                          STATION FOR {prop.type} · X {prop.tx} Y {prop.ty}
+                        </div>
+                        {HUB_ACTIONS.map((action) => (
+                          <Chip
+                            key={action}
+                            active={prop.hubAction === action}
+                            onClick={() =>
+                              apply(
+                                setPropHubAction(
+                                  doc,
+                                  prop.id,
+                                  prop.hubAction === action ? null : action,
+                                ),
+                              )
+                            }
+                          >
+                            {action}
+                          </Chip>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                <div className="w-full text-muted-foreground">
+                  Select a placed prop (SELECT tool) to assign it as a station. Tent and fire stay
+                  decorative — no station assignment shows for them.
+                </div>
+              </Section>
+            ) : (
+              <Section title="PROPS">
+                {PROP_TYPES.map((p) => (
+                  <Chip
+                    key={p}
+                    active={tool.id === "prop" && tool.type === p}
+                    onClick={() => setTool(selectPropTool(p))}
+                  >
+                    {p}
+                  </Chip>
+                ))}
+                {COVER_TYPES.map((c) => (
+                  <Chip
+                    key={c}
+                    active={tool.id === "cover" && tool.type === c}
+                    onClick={() => setTool({ id: "cover", type: c })}
+                  >
+                    COVER {c}
+                  </Chip>
+                ))}
+                <Chip active={tool.id === "crate"} onClick={() => setTool({ id: "crate" })}>
+                  LOOT CRATE
+                </Chip>
+                <Chip active={tool.id === "extraction"} onClick={() => setTool({ id: "extraction" })}>
+                  EXTRACTION
+                </Chip>
+                {CHECKPOINT_TYPES.map((c) => (
+                  <Chip
+                    key={c}
+                    active={tool.id === "checkpoint" && tool.type === c}
+                    onClick={() => setTool({ id: "checkpoint", type: c })}
+                  >
+                    {c}
+                  </Chip>
+                ))}
+                <Chip
+                  active={tool.id === "edge" && tool.type === "fence"}
+                  onClick={() => setTool({ id: "edge", type: "fence" })}
+                >
+                  FENCE EDGE
+                </Chip>
+                <Chip
+                  active={tool.id === "edge" && tool.type === "wall"}
+                  onClick={() => setTool({ id: "edge", type: "wall" })}
+                >
+                  WALL EDGE
+                </Chip>
+                <Chip active={tool.id === "erase-prop"} onClick={() => setTool(selectPropEraser())}>
+                  ERASE PROP
+                </Chip>
+              </Section>
+            )}
+            {!isCampDoc(doc) && (
+              <Section title="HOSTILE SENTRIES">
+                {listAllEnemyKinds().map((kind) => (
+                  <Chip
+                    key={kind}
+                    active={tool.id === "sentry" && tool.kind === kind}
+                    onClick={() => setTool({ id: "sentry", kind })}
+                  >
+                    {kind === "sniperScav" ? "SNIPER SCAV" : kind.toUpperCase()}
+                  </Chip>
+                ))}
+                <div className="w-full text-muted-foreground">
+                  Placed defenders begin on the map and hold their position while normal waves still
+                  use authored lanes.
+                </div>
+              </Section>
+            )}
+            {!isCampDoc(doc) && (
+              <Section title="COLLISION / BARRIERS">
+                <Chip
+                  active={isMovementWallMode(tool)}
+                  onClick={() => setTool(selectCollisionWallTool())}
+                >
+                  MOVEMENT WALL
+                </Chip>
+                <Chip active={isSolidWallMode(tool)} onClick={() => setTool(selectSolidWallTool())}>
+                  SOLID WALL
+                </Chip>
+                <Chip active={isEraseWallMode(tool)} onClick={() => setTool(selectEraseWallTool())}>
+                  ERASE WALL
+                </Chip>
+                <div className="w-full text-muted-foreground">
+                  Hover a tile edge (N/E/S/W) and click. Shared neighbor edges are one wall. Cyan
+                  MOVEMENT WALL = cliffs (blocks walking, not sight). Magenta SOLID WALL = buildings
+                  (blocks walking and LOS). ERASE WALL removes the exact physical edge regardless of
+                  type. Leave gaps at slopes.
+                </div>
+              </Section>
+            )}
+            {!isCampDoc(doc) && (
+              <Section title="OVERLAYS / STRUCTURES">
+                <Chip active={isBridgeMode(tool)} onClick={() => setTool(selectBridgeTool())}>
+                  SUSPENDED BRIDGE
+                </Chip>
+                <Chip
+                  active={isEraseBridgeMode(tool)}
+                  onClick={() => setTool(selectEraseBridgeTool())}
+                >
+                  ERASE BRIDGE
+                </Chip>
+                <div className="w-full text-muted-foreground">
+                  Overlay sits above base terrain. ROAD under a bridge stays. Drag to paint. ERASE
+                  TERRAIN does not remove the overlay.
+                </div>
+              </Section>
+            )}
             <Section title="TOOLS">
               <Chip active={tool.id === "select"} onClick={() => setTool({ id: "select" })}>
                 SELECT
               </Chip>
-              <Chip active={isLosProbeMode(tool)} onClick={() => setTool(selectLosProbeTool())}>
-                LOS PROBE
-              </Chip>
+              {!isCampDoc(doc) && (
+                <Chip active={isLosProbeMode(tool)} onClick={() => setTool(selectLosProbeTool())}>
+                  LOS PROBE
+                </Chip>
+              )}
               {isLosProbeMode(tool) && (
                 <>
                   <Chip
@@ -1182,6 +1384,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
           </div>
 
           <aside className="pixel-card space-y-3 overflow-auto font-mono text-[11px]">
+            {!isCampDoc(doc) && (
             <Section title="LANES">
               {doc.lanes.map((l) => (
                 <Chip key={l.id} active={l.id === laneId} onClick={() => setLaneId(l.id)}>
@@ -1235,6 +1438,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 endpoint only. CLEAR PATH keeps ports and drops the route.
               </div>
             </Section>
+            )}
             <Section title="LAYERS">
               {(Object.keys(layers) as Array<keyof LayerFlags>).map((k) => (
                 <label key={k} className="mr-2 inline-flex items-center gap-1">
@@ -1247,7 +1451,7 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 </label>
               ))}
             </Section>
-            {isLosProbeMode(tool) && (
+            {isLosProbeMode(tool) && probeMap && (
               <Section title="LOS PROBE">
                 <LosProbeInspector
                   map={probeMap}
@@ -1465,6 +1669,7 @@ function Inspector({
     return (
       <div>
         PROP {prop.type} · X {prop.tx} Y {prop.ty}
+        {prop.hubAction && <div>STATION {prop.hubAction.toUpperCase()}</div>}
       </div>
     );
   if (cover)
