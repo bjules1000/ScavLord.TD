@@ -6,6 +6,8 @@
  */
 
 import { DEV_TOOLS_ENABLED } from "../dev/tools";
+import { effectiveClaimedQuestIds } from "../dev/questForceComplete";
+import { getQuestLabOverrides } from "../dev/questLab";
 import type { Meta } from "../meta";
 import {
   CANONICAL_RECRUITMENT_PROFILES,
@@ -384,8 +386,6 @@ export function progressionFactsFromMeta(
 ): RecruitmentProgressionFacts {
   const radio = meta.crew?.radio ?? freshRadioProgression();
   const cap = capabilityFromRadio(radio, overrides);
-  const { effectiveClaimedQuestIds } = require("../dev/questForceComplete") as typeof import("../dev/questForceComplete");
-  const { getQuestLabOverrides } = require("../dev/questLab") as typeof import("../dev/questLab");
   return {
     quests: meta.quests,
     claimedQuestIds: effectiveClaimedQuestIds(meta.claimed, getQuestLabOverrides().forcedCompleted),

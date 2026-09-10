@@ -331,6 +331,8 @@ import CrewEquipmentPanel from "./CrewEquipmentPanel";
 import ArmoryPanel from "./ArmoryPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
+import CosmeticsPanel from "./operators/CosmeticsPanel";
+import { cycleCosmeticOption, cyclePaintSwatch } from "./cosmetics";
 import {
   operatorAccuracyBonus,
   operatorEffectiveWeight,
@@ -360,6 +362,7 @@ import EconomyLab from "./dev/EconomyLab";
 import WaveLab from "./dev/WaveLab";
 import QuestEditor from "./dev/QuestEditor";
 import RecruitmentLab from "./dev/RecruitmentLab";
+import SpritesLab from "./dev/SpritesLab";
 import { initRecruitmentLab } from "./operators/recruitmentLabCore";
 import {
   effectiveEnemy,
@@ -746,7 +749,9 @@ export default function TarkovTD() {
   const [screen, setScreen] = useState<"hideout" | "region" | "skills" | "gear" | "armory" | "supplies" | "radio">("hideout");
   const [editMode, setEditMode] = useState(false);
   const [suppliesTab, setSuppliesTab] = useState<"stash" | "market">("stash");
-  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew">("overview");
+  const [scavTab, setScavTab] = useState<"overview" | "skills" | "quests" | "crew" | "customize">(
+    "overview",
+  );
   const [selectedRecruitId, setSelectedRecruitId] = useState<string | null>(null);
   const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
   const [selectedEquipOwnerId, setSelectedEquipOwnerId] = useState<EquipmentOwnerId>(
@@ -767,6 +772,7 @@ export default function TarkovTD() {
   const [waveLabOpen, setWaveLabOpen] = useState(false);
   const [questLabOpen, setQuestLabOpen] = useState(false);
   const [recruitmentLabOpen, setRecruitmentLabOpen] = useState(false);
+  const [spritesLabOpen, setSpritesLabOpen] = useState(false);
   const labOpenRef = useRef(false);
   const mapRef = useRef<GameMap>(buildMap(MAP_BY_ID["kolkhoz"]!));
   const selectedMapDef = MAP_BY_ID[mapId] ?? MAP_DEFS[1]!;
@@ -1392,18 +1398,20 @@ export default function TarkovTD() {
     rerender();
   }, [pushLog, rerender]);
 
-  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "recruitment" | "none") => {
+  const setLabs = useCallback((which: "balance" | "economy" | "wave" | "quest" | "recruitment" | "sprites" | "none") => {
     const balance = which === "balance";
     const economy = which === "economy";
     const wave = which === "wave";
     const quest = which === "quest";
     const recruitment = which === "recruitment";
+    const sprites = which === "sprites";
     setBalanceLabOpen(balance);
     setEconomyLabOpen(economy);
     setWaveLabOpen(wave);
     setQuestLabOpen(quest);
     setRecruitmentLabOpen(recruitment);
-    labOpenRef.current = balance || economy || wave || quest || recruitment;
+    setSpritesLabOpen(sprites);
+    labOpenRef.current = balance || economy || wave || quest || recruitment || sprites;
   }, []);
 
   const onDevTool = useCallback(
@@ -1431,6 +1439,10 @@ export default function TarkovTD() {
       }
       if (id === "recruitment-lab") {
         setLabs("recruitment");
+        return;
+      }
+      if (id === "sprites-lab") {
+        setLabs("sprites");
         return;
       }
       setLabs("balance");
@@ -3914,7 +3926,7 @@ export default function TarkovTD() {
                   layout={scavTab === "quests" ? "wide" : "center"}
                 >
                   <div className="mb-2 flex flex-wrap gap-1">
-                    {(["overview", "crew", "skills", "quests"] as const).map((tab) => (
+                    {(["overview", "crew", "skills", "quests", "customize"] as const).map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setScavTab(tab)}
@@ -4090,6 +4102,23 @@ export default function TarkovTD() {
                       filter={questFilter}
                       onFilter={setQuestFilter}
                       onRedeem={redeem}
+                    />
+                  )}
+                  {scavTab === "customize" && (
+                    <CosmeticsPanel
+                      loadout={meta.pmc.cosmetics}
+                      onCycle={(slot, direction) => {
+                        const cur = metaRef.current;
+                        cur.pmc.cosmetics = cycleCosmeticOption(cur.pmc.cosmetics, slot, direction);
+                        saveMeta(cur);
+                        rerender();
+                      }}
+                      onCyclePaint={(slot, region, direction) => {
+                        const cur = metaRef.current;
+                        cur.pmc.cosmetics = cyclePaintSwatch(cur.pmc.cosmetics, slot, region, direction);
+                        saveMeta(cur);
+                        rerender();
+                      }}
                     />
                   )}
                   <button onClick={() => setScreen("hideout")} className="pixel-btn pixel-btn-primary mt-3 w-full">
@@ -5373,6 +5402,9 @@ export default function TarkovTD() {
             rerender();
           }}
         />
+      )}
+      {DEV_TOOLS_ENABLED && spritesLabOpen && (
+        <SpritesLab enabled={DEV_TOOLS_ENABLED} onClose={() => setLabs("none")} onApplied={() => rerender()} />
       )}
       {progressionNotices[0] && (
         <ProgressionNoticeModal notice={progressionNotices[0]} onContinue={dismissProgressionNotice} />

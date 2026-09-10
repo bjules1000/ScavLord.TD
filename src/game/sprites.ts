@@ -3,6 +3,33 @@ import gearFrames from "./gear-atlas.json";
 
 export type FrameName = keyof typeof frames;
 export type GearFrameName = keyof typeof gearFrames;
+export type SpriteSheetName = "atlas" | "gear" | "floor";
+export type SpriteSlotName = FrameName | GearFrameName | "floor";
+
+export const SPRITE_LAB_STORAGE_KEY = "scavlord.dev.spriteLab.v1";
+
+export type SpriteLabEntry = {
+  sheet: SpriteSheetName;
+  name: SpriteSlotName;
+  width: number;
+  height: number;
+};
+
+export const spriteLabCatalog = (): SpriteLabEntry[] => [
+  ...Object.entries(frames).map(([name, frame]) => ({
+    sheet: "atlas" as const,
+    name: name as FrameName,
+    width: frame.w,
+    height: frame.h,
+  })),
+  ...Object.entries(gearFrames).map(([name, frame]) => ({
+    sheet: "gear" as const,
+    name: name as GearFrameName,
+    width: frame.w,
+    height: frame.h,
+  })),
+  { sheet: "floor", name: "floor", width: 32, height: 32 },
+];
 
 /**
  * Local pixel sheets in public/game/. Loaded at runtime so a missing file
@@ -25,6 +52,71 @@ type Sheet = {
 const atlas: Sheet = { img: null, ready: false, failed: false };
 const gear: Sheet = { img: null, ready: false, failed: false };
 const floor: Sheet = { img: null, ready: false, failed: false };
+const overrideImages = new Map<string, HTMLImageElement>();
+let overridesHydrated = false;
+
+function overrideKey(sheet: SpriteSheetName, name: SpriteSlotName) {
+  return `${sheet}:${name}`;
+}
+
+function loadOverrideImage(key: string, src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => {
+      overrideImages.set(key, img);
+      resolve(img);
+    };
+    img.onerror = () => reject(new Error("The selected file is not a readable PNG image."));
+    img.src = src;
+  });
+}
+
+function storedOverrides(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SPRITE_LAB_STORAGE_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function hydrateOverrides() {
+  if (overridesHydrated || typeof window === "undefined") return;
+  overridesHydrated = true;
+  for (const [key, src] of Object.entries(storedOverrides())) {
+    if (typeof src === "string" && src.startsWith("data:image/png"))
+      void loadOverrideImage(key, src).catch(() => {});
+  }
+}
+
+export function spriteOverrideData(
+  sheet: SpriteSheetName,
+  name: SpriteSlotName,
+): string | undefined {
+  return storedOverrides()[overrideKey(sheet, name)];
+}
+
+export async function applySpriteOverride(
+  sheet: SpriteSheetName,
+  name: SpriteSlotName,
+  dataUrl: string,
+) {
+  if (!dataUrl.startsWith("data:image/png")) throw new Error("Only PNG files are supported.");
+  const key = overrideKey(sheet, name);
+  await loadOverrideImage(key, dataUrl);
+  const next = { ...storedOverrides(), [key]: dataUrl };
+  window.localStorage.setItem(SPRITE_LAB_STORAGE_KEY, JSON.stringify(next));
+}
+
+export function clearSpriteOverride(sheet: SpriteSheetName, name: SpriteSlotName) {
+  const key = overrideKey(sheet, name);
+  overrideImages.delete(key);
+  const next = storedOverrides();
+  delete next[key];
+  window.localStorage.setItem(SPRITE_LAB_STORAGE_KEY, JSON.stringify(next));
+}
 
 function loadSheet(sheet: Sheet, src: string) {
   if (typeof window === "undefined") return;
@@ -44,6 +136,7 @@ function loadSheet(sheet: Sheet, src: string) {
 }
 
 function ensure() {
+  hydrateOverrides();
   loadSheet(atlas, ATLAS_SRC);
   loadSheet(gear, GEAR_SRC);
   loadSheet(floor, FLOOR_SRC);
@@ -63,6 +156,8 @@ export const floorReadyFn = () => {
 };
 export const floorImage = (): HTMLImageElement | null => {
   ensure();
+  const replacement = overrideImages.get(overrideKey("floor", "floor"));
+  if (replacement) return replacement;
   return floor.ready ? floor.img : null;
 };
 
@@ -104,12 +199,15 @@ export function drawSprite(
   opts: { anchor?: "bottom" | "center"; alpha?: number } = {},
 ) {
   ensure();
-  if (!atlas.ready || !atlas.img) return false;
   const f = frames[name];
   if (!f) return false;
-  const scale = Math.min(boxW / f.w, boxH / f.h);
-  const dw = f.w * scale;
-  const dh = f.h * scale;
+  const replacement = overrideImages.get(overrideKey("atlas", name));
+  if (!replacement && (!atlas.ready || !atlas.img)) return false;
+  const sourceW = replacement?.naturalWidth ?? f.w;
+  const sourceH = replacement?.naturalHeight ?? f.h;
+  const scale = Math.min(boxW / sourceW, boxH / sourceH);
+  const dw = sourceW * scale;
+  const dh = sourceH * scale;
   let dx = x;
   let dy = y;
   if (opts.anchor === "center") {
@@ -121,7 +219,8 @@ export function drawSprite(
   }
   const prevA = ctx.globalAlpha;
   if (opts.alpha != null) ctx.globalAlpha = opts.alpha;
-  blit(ctx, atlas.img, f.x, f.y, f.w, f.h, dx, dy, dw, dh);
+  if (replacement) blit(ctx, replacement, 0, 0, sourceW, sourceH, dx, dy, dw, dh);
+  else blit(ctx, atlas.img!, f.x, f.y, f.w, f.h, dx, dy, dw, dh);
   ctx.globalAlpha = prevA;
   return true;
 }
@@ -135,11 +234,14 @@ export function drawGear(
   opts: { anchor?: "left" | "center" } = {},
 ) {
   ensure();
-  if (!gear.ready || !gear.img) return false;
   const f = gearFrames[name];
   if (!f) return false;
+  const replacement = overrideImages.get(overrideKey("gear", name));
+  if (!replacement && (!gear.ready || !gear.img)) return false;
+  const sourceW = replacement?.naturalWidth ?? f.w;
+  const sourceH = replacement?.naturalHeight ?? f.h;
   const dw = width;
-  const dh = width * (f.h / f.w);
+  const dh = width * (sourceH / sourceW);
   let dx = x;
   let dy = y;
   if (opts.anchor === "center") {
@@ -148,6 +250,7 @@ export function drawGear(
   } else {
     dy = y - dh / 2;
   }
-  blit(ctx, gear.img, f.x, f.y, f.w, f.h, dx, dy, dw, dh);
+  if (replacement) blit(ctx, replacement, 0, 0, sourceW, sourceH, dx, dy, dw, dh);
+  else blit(ctx, gear.img!, f.x, f.y, f.w, f.h, dx, dy, dw, dh);
   return true;
 }
