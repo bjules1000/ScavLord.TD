@@ -218,6 +218,24 @@ describe("composeCosmeticLayers shadeMarkers", () => {
     expect(dg).toBe(Math.round(g * (0xba / 0xff)));
     expect(db).toBe(Math.round(b * (0xba / 0xff)));
   });
+
+  it("supports multiple shade tiers on the same region (jacket's 3-tone fabric)", () => {
+    const loadout = { ...defaultCosmeticLoadout(), torso: "torso-jacket" };
+    const torso = composeCosmeticLayers(loadout).find((l) => l.slot === "torso")!;
+    const base = torso.recolor.find((r) => r.markerHex === "#ff00ff")!;
+    const mid = torso.recolor.find((r) => r.markerHex === "#ad00ad")!;
+    const deep = torso.recolor.find((r) => r.markerHex === "#700270")!;
+    expect(mid.region).toBe("fabric");
+    expect(deep.region).toBe("fabric");
+    const [r, g, b] = channels(base.targetHex);
+    const [mr, mg, mb] = channels(mid.targetHex);
+    const [dr, dg, db] = channels(deep.targetHex);
+    expect([mr, mg, mb]).toEqual([r, g, b].map((c) => Math.round(c * (0xad / 0xff))));
+    expect([dr, dg, db]).toEqual([r, g, b].map((c) => Math.round(c * (0x70 / 0xff))));
+    // Two more regions get their own single darker tier alongside fabric's three tiers.
+    expect(torso.recolor.some((rc) => rc.region === "trim" && rc.markerHex === "#005d5d")).toBe(true);
+    expect(torso.recolor.some((rc) => rc.region === "skin" && rc.markerHex === "#baba00")).toBe(true);
+  });
 });
 
 describe("composeCosmeticLayers frontOverlay", () => {
@@ -225,10 +243,10 @@ describe("composeCosmeticLayers frontOverlay", () => {
     const loadout = { ...defaultCosmeticLoadout(), torso: "torso-stash" };
     const torso = composeCosmeticLayers(loadout).find((l) => l.slot === "torso")!;
     expect(torso.frontOverlay?.spriteKey).toBe("/game/cosmetics/torso/stash-collar.png");
-    const overlayFabric = torso.frontOverlay!.recolor.find((r) => r.region === "fabric")!;
-    const baseFabric = torso.recolor.find((r) => r.region === "fabric")!;
-    expect(overlayFabric.markerHex).toBe("#ffffff");
-    expect(overlayFabric.targetHex).toBe(baseFabric.targetHex);
+    const overlayTrim = torso.frontOverlay!.recolor.find((r) => r.region === "trim")!;
+    const baseTrim = torso.recolor.find((r) => r.region === "trim")!;
+    expect(overlayTrim.markerHex).toBe("#ffffff");
+    expect(overlayTrim.targetHex).toBe(baseTrim.targetHex);
   });
 
   it("is undefined for options without a frontOverlay", () => {

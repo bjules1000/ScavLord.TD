@@ -137,8 +137,15 @@ export interface CosmeticOption {
   frontOverlay?: { spriteKey: string; paintRegions: Record<PaintRegionId, string> };
 }
 
-/** Stash's #baba00 shadow-skin marker sits at this fraction of its #ffff00 base-skin marker. */
-const STASH_SKIN_SHADOW_FACTOR = 0xba / 0xff;
+/**
+ * Shared shading ratios: an art asset's darker marker color sits at this fraction of its base
+ * marker color (e.g. a #baba00 shadow-skin marker next to a #ffff00 base-skin marker implies
+ * factor = 0xba/0xff), so the derived shade always tracks whatever swatch is actually chosen.
+ */
+const SKIN_SHADOW_FACTOR = 0xba / 0xff;
+const TRIM_SHADOW_FACTOR = 0x5d / 0xff;
+const FABRIC_SHADOW_FACTOR = 0xad / 0xff;
+const FABRIC_DEEP_SHADOW_FACTOR = 0x70 / 0xff;
 
 /** Placeholder catalog. Real options are added by dropping a PNG + one entry here. */
 export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
@@ -159,7 +166,7 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       name: "STASH",
       spriteKey: "/game/cosmetics/head/stash.png",
       paintRegions: { hair: "#000000", skin: "#ffff00" },
-      shadeMarkers: [{ region: "skin", markerHex: "#baba00", factor: STASH_SKIN_SHADOW_FACTOR }],
+      shadeMarkers: [{ region: "skin", markerHex: "#baba00", factor: SKIN_SHADOW_FACTOR }],
     },
   ],
   torso: [
@@ -180,11 +187,24 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       spriteKey: "/game/cosmetics/torso/stash.png",
       paintRegions: { fabric: "#ff00ff", trim: "#00ffff", skin: "#ffff00" },
       // The collar wraps up in front of the neck — drawn after "head" instead of at torso's
-      // normal (below-head) position. Recolors with the same fabric swatch as the rest of it.
+      // normal (below-head) position. Recolors with the same trim swatch as the rest of it.
       frontOverlay: {
         spriteKey: "/game/cosmetics/torso/stash-collar.png",
-        paintRegions: { fabric: "#ffffff" },
+        paintRegions: { trim: "#ffffff" },
       },
+    },
+    {
+      id: "torso-jacket",
+      slot: "torso",
+      name: "JACKET",
+      spriteKey: "/game/cosmetics/torso/jacket.png",
+      paintRegions: { fabric: "#ff00ff", trim: "#00ffff", skin: "#ffff00" },
+      shadeMarkers: [
+        { region: "fabric", markerHex: "#ad00ad", factor: FABRIC_SHADOW_FACTOR },
+        { region: "fabric", markerHex: "#700270", factor: FABRIC_DEEP_SHADOW_FACTOR },
+        { region: "trim", markerHex: "#005d5d", factor: TRIM_SHADOW_FACTOR },
+        { region: "skin", markerHex: "#baba00", factor: SKIN_SHADOW_FACTOR },
+      ],
     },
   ],
   legs: [
@@ -266,7 +286,18 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       name: "STASH",
       spriteKey: "/game/cosmetics/arms/stash.png",
       paintRegions: { fabric: "#ff00ff", skin: "#ffff00" },
-      shadeMarkers: [{ region: "skin", markerHex: "#baba00", factor: STASH_SKIN_SHADOW_FACTOR }],
+      shadeMarkers: [{ region: "skin", markerHex: "#baba00", factor: SKIN_SHADOW_FACTOR }],
+    },
+    {
+      id: "arms-jacket",
+      slot: "arms",
+      name: "JACKET",
+      spriteKey: "/game/cosmetics/arms/jacket.png",
+      paintRegions: { fabric: "#ff00ff" },
+      shadeMarkers: [
+        { region: "fabric", markerHex: "#ad00ad", factor: FABRIC_SHADOW_FACTOR },
+        { region: "fabric", markerHex: "#700270", factor: FABRIC_DEEP_SHADOW_FACTOR },
+      ],
     },
   ],
   armor: [
