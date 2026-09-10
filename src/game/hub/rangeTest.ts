@@ -125,17 +125,24 @@ export function fireHubShot(
 /** Hit-circle radius for the dummy — same size raid uses for enemies (ENEMY_HIT_RADIUS). */
 export const DUMMY_HIT_RADIUS = TILE * 0.4;
 
+export interface HubDummyTarget {
+  id: string;
+  pos: { x: number; y: number };
+  radius?: number;
+}
+
 /**
- * Advances one projectile by dt seconds and tests it against the dummy's fixed
- * position. Same shape as shooting.ts's tickProjectile, minus wall collision and
- * multi-enemy handling (the range has neither). Mutates `p` in place.
+ * Advances one projectile by dt seconds and tests it against every dummy's fixed
+ * position, same shape as shooting.ts's tickProjectile minus wall collision (the
+ * range has none). A bullet can only ever hit the first target along its path, so
+ * among all targets the segment crosses this picks the nearest one — same as raid's
+ * multi-enemy handling. Mutates `p` in place.
  */
 export function tickHubProjectile(
   p: Projectile,
   dt: number,
-  dummyPos: { x: number; y: number },
-  dummyRadius: number = DUMMY_HIT_RADIUS,
-): { damage: number; pen: number } | null {
+  targets: readonly HubDummyTarget[],
+): { targetId: string; damage: number; pen: number } | null {
   if (p.dead) return null;
   const step = p.speed * dt;
   const travel = Math.min(step, p.remaining);
@@ -147,13 +154,21 @@ export function tickHubProjectile(
   p.py = p.y;
   const nx = p.x + p.dx * travel;
   const ny = p.y + p.dy * travel;
-  const hitT = segmentCircleHit(p.px, p.py, nx, ny, dummyPos.x, dummyPos.y, dummyRadius);
+  let bestT: number | null = null;
+  let bestTarget: HubDummyTarget | null = null;
+  for (const target of targets) {
+    const hitT = segmentCircleHit(p.px, p.py, nx, ny, target.pos.x, target.pos.y, target.radius ?? DUMMY_HIT_RADIUS);
+    if (hitT != null && (bestT == null || hitT < bestT)) {
+      bestT = hitT;
+      bestTarget = target;
+    }
+  }
   p.remaining -= travel;
-  if (hitT != null) {
-    p.x = p.px + (nx - p.px) * hitT;
-    p.y = p.py + (ny - p.py) * hitT;
+  if (bestT != null && bestTarget) {
+    p.x = p.px + (nx - p.px) * bestT;
+    p.y = p.py + (ny - p.py) * bestT;
     p.dead = true;
-    return { damage: p.damage, pen: p.pen };
+    return { targetId: bestTarget.id, damage: p.damage, pen: p.pen };
   }
   p.x = nx;
   p.y = ny;

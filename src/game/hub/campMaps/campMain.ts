@@ -70,23 +70,29 @@ const PROPS: CampStationProp[] = [
   { id: "prop-13", type: "ops-table", tx: 18, ty: 7, hubAction: "skills" },
 ];
 
+/** Inclusive [tx0,ty0]-[tx1,ty1] rectangle as explicit [x, y] cells. */
+function rectCells(tx0: number, ty0: number, tx1: number, ty1: number): Array<[number, number]> {
+  const cells: Array<[number, number]> = [];
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) cells.push([tx, ty]);
+  }
+  return cells;
+}
+
 /** Only the zone enclosing the range table/dummies is kept — the export also carried a
  * leftover "zone-range" rectangle from before the range was moved, dropped here.
- * [3,2]/[3,3]/[4,3]/[2,2]/[6,2]/[6,3] are added on top of the exported cells: none of
- * the walkable tiles within interact range of the range-table prop at (4,2) (its own
- * tile is prop-occupied and unwalkable) were covered by the exported zone, so standing
- * anywhere near enough to interact with the table left the player just outside the
- * zone and weapon test mode immediately auto-deactivated. */
+ * The exported zone was a sparse hand-painted outline rather than a filled area (it
+ * traced roughly a corridor around [1,2]-[6,8] but left gaps inside that same footprint
+ * the builder's own bounding-box preview draws as solid). Walking onto one of those gap
+ * tiles while testing — including every walkable tile right next to the range-table
+ * prop at (4,2), whose own tile is occupied and unwalkable — silently auto-deactivated
+ * weapon test mode. Filled to the full bounding box so there are no gaps left. */
 const ZONES: EditorZone[] = [
   {
     id: "zone-range",
     type: "SHOOTING_RANGE",
     name: "SHOOTING RANGE",
-    cells: [
-      [5, 2], [5, 3], [5, 4], [4, 4], [4, 5], [3, 6], [3, 7], [2, 7], [2, 8], [1, 8],
-      [1, 2], [1, 3], [2, 3], [3, 4], [4, 6], [5, 6], [5, 7], [5, 8], [6, 8],
-      [3, 2], [3, 3], [4, 3], [2, 2], [6, 2], [6, 3],
-    ],
+    cells: rectCells(1, 2, 6, 8),
   },
 ];
 

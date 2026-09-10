@@ -61,14 +61,42 @@ describe("tickHubProjectile", () => {
       speed: 1000,
       rng: () => 0.5, // sampleShotAngle(0.5) => 0 deviation
     });
-    const dummy = { x: 100, y: 0 };
+    const targets = [{ id: "dummy-1", pos: { x: 100, y: 0 } }];
     let result: ReturnType<typeof tickHubProjectile> = null;
     for (let i = 0; i < 20 && !result; i++) {
-      result = tickHubProjectile(proj, 1 / 30, dummy);
+      result = tickHubProjectile(proj, 1 / 30, targets);
     }
     expect(result).not.toBeNull();
+    expect(result!.targetId).toBe("dummy-1");
     expect(result!.damage).toBe(25);
     expect(proj.dead).toBe(true);
+  });
+
+  it("hits whichever of several dummies is nearest along the path", () => {
+    const proj = spawnRifleShot({
+      nextId: () => 1,
+      shooterId: -1,
+      origin,
+      aimAngle: 0,
+      accuracy: 0.99,
+      range: 1000,
+      damage: 25,
+      pen: 0,
+      color: "#fff",
+      surface: "GROUND",
+      speed: 1000,
+      rng: () => 0.5,
+    });
+    const targets = [
+      { id: "far", pos: { x: 300, y: 0 } },
+      { id: "near", pos: { x: 100, y: 0 } },
+    ];
+    let result: ReturnType<typeof tickHubProjectile> = null;
+    for (let i = 0; i < 20 && !result; i++) {
+      result = tickHubProjectile(proj, 1 / 30, targets);
+    }
+    expect(result).not.toBeNull();
+    expect(result!.targetId).toBe("near");
   });
 
   it("never hits when aimed far away from the dummy", () => {
@@ -86,10 +114,10 @@ describe("tickHubProjectile", () => {
       speed: 1000,
       rng: () => 0.5,
     });
-    const dummy = { x: 100, y: 0 };
+    const targets = [{ id: "dummy-1", pos: { x: 100, y: 0 } }];
     let hit = false;
     for (let i = 0; i < 60; i++) {
-      const result = tickHubProjectile(proj, 1 / 30, dummy);
+      const result = tickHubProjectile(proj, 1 / 30, targets);
       if (result) hit = true;
       if (proj.dead) break;
     }
@@ -111,10 +139,10 @@ describe("tickHubProjectile", () => {
       speed: 1000,
       rng: () => 0.5,
     });
-    const dummy = { x: 500, y: 0 };
+    const targets = [{ id: "dummy-1", pos: { x: 500, y: 0 } }];
     let hit = false;
     for (let i = 0; i < 30 && !proj.dead; i++) {
-      const result = tickHubProjectile(proj, 1 / 30, dummy);
+      const result = tickHubProjectile(proj, 1 / 30, targets);
       if (result) hit = true;
     }
     expect(hit).toBe(false);

@@ -37,9 +37,15 @@ const CAMP_MAP: CampGameMap = buildCampMap(CAMP_MAP_DEF);
 const CAMP_WIDTH_PX = CAMP_MAP.width * TILE;
 const CAMP_HEIGHT_PX = CAMP_MAP.height * TILE;
 
-/** Both are optional-by-authoring: a camp map built without a range just disables it. */
-const RANGE_DUMMY_PROP = CAMP_MAP.props.find((p) => p.type === "range-dummy") ?? null;
+/** Both are optional-by-authoring: a camp map built without a range just disables it.
+ * A layout can carry any number of range-dummy props — each tracks its own HP. */
+const RANGE_DUMMY_PROPS = CAMP_MAP.props.filter((p) => p.type === "range-dummy");
 const RANGE_ZONE_CELLS = campZoneCellSet(CAMP_MAP, "SHOOTING_RANGE");
+
+interface DummyState {
+  hp: number;
+  zeroAt: number | null;
+}
 
 function campBlocked(tx: number, ty: number): boolean {
   if (tx < 0 || ty < 0 || tx >= CAMP_MAP.width || ty >= CAMP_MAP.height) return true;
@@ -96,8 +102,9 @@ export default function CampHub({
 
   /** Shooting-range "weapon test mode" — toggled at the range table, auto-off on zone exit. */
   const [weaponTestActive, setWeaponTestActive] = useState(false);
-  const dummyHpRef = useRef(DUMMY_MAX_HP);
-  const dummyZeroAtRef = useRef<number | null>(null);
+  const dummyStatesRef = useRef<Map<string, DummyState>>(
+    new Map(RANGE_DUMMY_PROPS.map((p) => [p.id, { hp: DUMMY_MAX_HP, zeroAt: null }])),
+  );
   const cooldownRef = useRef(0);
   const flashRef = useRef(0);
   const aimAngleRef = useRef(0);
@@ -286,32 +293,35 @@ export default function CampHub({
 
       // Advance live bullets + resolve dummy hits/regen — keeps running even after the
       // player leaves test mode, so a damaged dummy keeps healing on its own schedule.
-      // A map authored without a dummy still expires bullets normally; it just never hits one.
+      // A map authored without any dummies still expires bullets normally against an
+      // empty target list; they just never hit anything.
       if (projectilesRef.current.length > 0) {
-        const dummyPos = RANGE_DUMMY_PROP
-          ? tileCenterPx(RANGE_DUMMY_PROP.tx, RANGE_DUMMY_PROP.ty)
-          : { x: -1e6, y: -1e6 };
+        const targets = RANGE_DUMMY_PROPS.map((p) => ({ id: p.id, pos: tileCenterPx(p.tx, p.ty) }));
         const alive: Projectile[] = [];
         for (const proj of projectilesRef.current) {
-          const hit = tickHubProjectile(proj, dt, dummyPos);
+          const hit = tickHubProjectile(proj, dt, targets);
           if (hit) {
-            const newHp = applyDummyDamage(dummyHpRef.current, hit.damage, hit.pen);
-            dummyHpRef.current = newHp;
-            // A hit that lands while zero is already in progress restarts the pause;
-            // a hit that leaves it alive cancels any pending heal (acts like a raid enemy).
-            dummyZeroAtRef.current = newHp <= 0 ? now : null;
+            const state = dummyStatesRef.current.get(hit.targetId);
+            if (state) {
+              const newHp = applyDummyDamage(state.hp, hit.damage, hit.pen);
+              state.hp = newHp;
+              // A hit that lands while zero is already in progress restarts the pause;
+              // a hit that leaves it alive cancels any pending heal (acts like a raid enemy).
+              state.zeroAt = newHp <= 0 ? now : null;
+            }
           }
           if (!proj.dead) alive.push(proj);
         }
         projectilesRef.current = alive;
       }
-      // Recompute from elapsed time every frame (not just once) so the dummy actually
+      // Recompute from elapsed time every frame (not just once) so each dummy actually
       // steps all the way through 25/50/75/100% when left alone, instead of freezing
       // at the first step once hp is no longer exactly 0.
-      if (dummyZeroAtRef.current != null) {
-        const healed = nextDummyHp(DUMMY_MAX_HP, now - dummyZeroAtRef.current);
-        dummyHpRef.current = healed;
-        if (healed >= DUMMY_MAX_HP) dummyZeroAtRef.current = null;
+      for (const state of dummyStatesRef.current.values()) {
+        if (state.zeroAt == null) continue;
+        const healed = nextDummyHp(DUMMY_MAX_HP, now - state.zeroAt);
+        state.hp = healed;
+        if (healed >= DUMMY_MAX_HP) state.zeroAt = null;
       }
 
       const scene = sceneCanvasRef.current;
@@ -319,11 +329,13 @@ export default function CampHub({
       if (scene && sceneCtx) {
         sceneCtx.imageSmoothingEnabled = false;
         drawCampScene(sceneCtx, CAMP_MAP, reducedMotion ? 0 : now);
-        // The dummy itself is drawn by drawCampScene's generic prop pass (type
+        // Each dummy itself is drawn by drawCampScene's generic prop pass (type
         // "range-dummy", see drawProp) — only its raid-style HP bar is drawn here,
         // hidden at full health.
-        if (RANGE_DUMMY_PROP && dummyHpRef.current < DUMMY_MAX_HP) {
-          const dummyPos = tileCenterPx(RANGE_DUMMY_PROP.tx, RANGE_DUMMY_PROP.ty);
+        for (const dummyProp of RANGE_DUMMY_PROPS) {
+          const state = dummyStatesRef.current.get(dummyProp.id);
+          if (!state || state.hp >= DUMMY_MAX_HP) continue;
+          const dummyPos = tileCenterPx(dummyProp.tx, dummyProp.ty);
           const dummySize = TILE * 0.7;
           const w = Math.max(16, dummySize + 6);
           sceneCtx.fillStyle = "#140f0d";
@@ -332,7 +344,7 @@ export default function CampHub({
           sceneCtx.fillRect(
             Math.round(dummyPos.x - w / 2 + 1),
             Math.round(dummyPos.y - dummySize / 2 - 9),
-            Math.max(0, (w - 2) * (dummyHpRef.current / DUMMY_MAX_HP)),
+            Math.max(0, (w - 2) * (state.hp / DUMMY_MAX_HP)),
             2,
           );
         }
