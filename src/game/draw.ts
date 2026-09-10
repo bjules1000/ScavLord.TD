@@ -547,6 +547,28 @@ export function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, ty
         px(ctx, "#ffe27a", 14, 22 - h * 0.4, 4, h * 0.4);
         break;
       }
+      case "range-table":
+        // low bench with a rifle laid flat and a stacked ammo box
+        px(ctx, "#00000040", 3, 27, 26, 4);
+        px(ctx, "#3a2e1c", 4, 19, 24, 4);
+        px(ctx, "#594930", 5, 17, 22, 3);
+        px(ctx, "#2a2114", 6, 23, 3, 7);
+        px(ctx, "#2a2114", 23, 23, 3, 7);
+        px(ctx, "#1c1a17", 7, 10, 20, 3);
+        px(ctx, "#3c352a", 9, 8, 5, 4);
+        px(ctx, "#4a3720", 20, 12, 6, 5);
+        px(ctx, "#a8853f", 21, 13, 4, 2);
+        break;
+      case "range-dummy":
+        // post-mounted burlap target dummy
+        px(ctx, "#00000040", 10, 28, 12, 3);
+        px(ctx, "#3a2e1c", 14, 18, 4, 12);
+        px(ctx, "#8a7355", 9, 11, 14, 12);
+        px(ctx, "#6b5a42", 9, 11, 14, 3);
+        px(ctx, "#c9b48a", 11, 3, 10, 9);
+        px(ctx, "#8a7355", 11, 3, 10, 2);
+        px(ctx, "#c23b2c", 13, 15, 6, 6);
+        break;
     }
   });
 }

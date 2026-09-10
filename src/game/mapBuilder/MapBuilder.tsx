@@ -1142,6 +1142,16 @@ export default function MapBuilder({ initialMapId }: { initialMapId?: string }) 
                 </Chip>
               </Section>
             )}
+            {isCampDoc(doc) && (
+              <Section title="CAMP ZONES">
+                <Chip
+                  active={tool.id === "zone" && tool.zoneType === "SHOOTING_RANGE"}
+                  onClick={() => setTool({ id: "zone", zoneType: "SHOOTING_RANGE" })}
+                >
+                  SHOOTING RANGE ZONE
+                </Chip>
+              </Section>
+            )}
             {isCampDoc(doc) ? (
               <Section title="CAMP PROPS">
                 {CAMP_PROP_TYPES.map((p) => (

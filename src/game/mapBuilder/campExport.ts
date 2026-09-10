@@ -6,6 +6,7 @@ import {
   isTerrainKind,
   type CampPropType,
   type EditorMapDoc,
+  type EditorZone,
   type TerrainKind,
 } from "./schema";
 import type { PropType } from "../map";
@@ -30,6 +31,7 @@ export interface ExportedCampMap {
   palette: EditorMapDoc["palette"];
   terrain: TerrainKind[][];
   props: ExportedCampProp[];
+  zones: EditorZone[];
 }
 
 /** Stable payload: same locked map → identical JSON. No timestamps or editor history. */
@@ -52,6 +54,9 @@ export function toCampExport(doc: EditorMapDoc): ExportedCampMap {
           ? { type: p.type, tx: p.tx, ty: p.ty, hubAction: p.hubAction }
           : { type: p.type, tx: p.tx, ty: p.ty },
       ),
+    zones: [...doc.zones]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((z) => ({ ...z, cells: z.cells.map(([x, y]) => [x, y] as [number, number]) })),
   };
 }
 
@@ -108,7 +113,10 @@ export function parseCampImport(
     }
   }
   if (!Array.isArray(o["props"])) return { ok: false, error: "Import is missing props." };
-  return { ok: true, payload: o as unknown as ExportedCampMap };
+  if (o["zones"] !== undefined && !Array.isArray(o["zones"])) {
+    return { ok: false, error: "Zones must be an array." };
+  }
+  return { ok: true, payload: { ...o, zones: o["zones"] ?? [] } as unknown as ExportedCampMap };
 }
 
 export function importedToCampDoc(payload: ExportedCampMap, draftId: string): EditorMapDoc {
@@ -147,7 +155,7 @@ export function importedToCampDoc(payload: ExportedCampMap, draftId: string): Ed
     checkpoints: [],
     edges: [],
     gates: [],
-    zones: [],
+    zones: (payload.zones ?? []).map((z) => ({ ...z, cells: z.cells.map(([x, y]) => [x, y] as [number, number]) })),
     collisionWalls: [],
     bridges: [],
     tileset: null,

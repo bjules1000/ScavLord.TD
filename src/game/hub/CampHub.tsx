@@ -4,14 +4,14 @@ import { drawOperator, type DrawableOperator } from "../draw";
 import type { CosmeticLoadout } from "../cosmetics";
 import type { HubAction } from "../campActions";
 import { getShotDispersion, type Projectile } from "../shooting";
-import { buildCampMap, type CampGameMap, type CampStationProp } from "./campMap";
-import { CAMP_MAP_DEF, RANGE_DUMMY_TILE, RANGE_ZONE } from "./campMaps/campMain";
+import { canShoot, consumeRound, initAmmo, maybeStartReload, reloadProgress, tickReload } from "../weapons";
+import { buildCampMap, campZoneCellSet, type CampGameMap, type CampStationProp } from "./campMap";
+import { CAMP_MAP_DEF } from "./campMaps/campMain";
 import { drawCampScene } from "./drawCampScene";
 import { nearestStation, stepCampMove, type CampMoveInput } from "./campMovement";
 import { usePrefersReducedMotion } from "./useReducedMotion";
 import {
   applyDummyDamage,
-  DUMMY_HIT_RADIUS,
   DUMMY_MAX_HP,
   fireHubShot,
   hubWeaponStats,
@@ -37,6 +37,10 @@ const CAMP_MAP: CampGameMap = buildCampMap(CAMP_MAP_DEF);
 const CAMP_WIDTH_PX = CAMP_MAP.width * TILE;
 const CAMP_HEIGHT_PX = CAMP_MAP.height * TILE;
 
+/** Both are optional-by-authoring: a camp map built without a range just disables it. */
+const RANGE_DUMMY_PROP = CAMP_MAP.props.find((p) => p.type === "range-dummy") ?? null;
+const RANGE_ZONE_CELLS = campZoneCellSet(CAMP_MAP, "SHOOTING_RANGE");
+
 function campBlocked(tx: number, ty: number): boolean {
   if (tx < 0 || ty < 0 || tx >= CAMP_MAP.width || ty >= CAMP_MAP.height) return true;
   const kind = CAMP_MAP.terrain[ty]?.[tx];
@@ -52,7 +56,7 @@ function tileCenterPx(tx: number, ty: number): { x: number; y: number } {
 function inRangeZone(x: number, y: number): boolean {
   const tx = Math.floor(x / TILE);
   const ty = Math.floor(y / TILE);
-  return tx >= RANGE_ZONE.tx0 && tx <= RANGE_ZONE.tx1 && ty >= RANGE_ZONE.ty0 && ty <= RANGE_ZONE.ty1;
+  return RANGE_ZONE_CELLS.has(`${tx},${ty}`);
 }
 
 /** Bottom-center tile if it's open, else the first open tile scanning from the bottom up. */
@@ -100,6 +104,15 @@ export default function CampHub({
   const triggerHeldRef = useRef(false);
   const projectilesRef = useRef<Projectile[]>([]);
   const nextProjIdRef = useRef(1);
+  const ammoRef = useRef(initAmmo(player.weapon));
+  const reloadLeftRef = useRef(0);
+
+  /** Reset the loaded mag whenever the equipped weapon changes, so switching guns in
+   * the gear screen doesn't carry over a stale ammo count next time the range opens. */
+  useEffect(() => {
+    ammoRef.current = initAmmo(player.weapon);
+    reloadLeftRef.current = 0;
+  }, [player.weapon]);
 
   /** WASD held-state + the E interact key. Paused while a station's menu is open. */
   useEffect(() => {
@@ -230,20 +243,54 @@ export default function CampHub({
       // instant test mode (re)activates; only firing itself is gated on it.
       cooldownRef.current = Math.max(0, cooldownRef.current - dt * 1000);
       flashRef.current = Math.max(0, flashRef.current - dt);
-      if (weaponTestActive && stats && triggerHeldRef.current && cooldownRef.current <= 0) {
-        const pos = playerPosRef.current;
-        const angle = aimAngleRef.current;
-        const origin = { x: pos.x + Math.cos(angle) * 12, y: pos.y - 4 + Math.sin(angle) * 12 };
-        const shots = fireHubShot(origin, angle, stats, () => nextProjIdRef.current++);
-        projectilesRef.current.push(...shots);
-        cooldownRef.current = stats.cooldown;
-        flashRef.current = 0.06;
+      if (stats) {
+        // Same order raid uses (TarkovTD.tsx): advance any in-progress reload first,
+        // then gate firing on canShoot, then maybeStartReload after the fire attempt.
+        const reloaded = tickReload(
+          ammoRef.current,
+          reloadLeftRef.current,
+          dt * 1000,
+          stats.magSize,
+          stats.reloadMs,
+          stats.reloadType,
+          triggerHeldRef.current,
+        );
+        ammoRef.current = reloaded.ammo;
+        reloadLeftRef.current = reloaded.reloadLeft;
+
+        if (
+          weaponTestActive &&
+          triggerHeldRef.current &&
+          cooldownRef.current <= 0 &&
+          canShoot(ammoRef.current, reloadLeftRef.current)
+        ) {
+          const pos = playerPosRef.current;
+          const angle = aimAngleRef.current;
+          const origin = { x: pos.x + Math.cos(angle) * 12, y: pos.y - 4 + Math.sin(angle) * 12 };
+          const shots = fireHubShot(origin, angle, stats, () => nextProjIdRef.current++);
+          projectilesRef.current.push(...shots);
+          cooldownRef.current = stats.cooldown;
+          flashRef.current = 0.06;
+          ammoRef.current = consumeRound(ammoRef.current);
+        }
+
+        reloadLeftRef.current = maybeStartReload(
+          ammoRef.current,
+          reloadLeftRef.current,
+          stats.magSize,
+          stats.reloadMs,
+          stats.reloadType,
+          triggerHeldRef.current,
+        );
       }
 
       // Advance live bullets + resolve dummy hits/regen — keeps running even after the
       // player leaves test mode, so a damaged dummy keeps healing on its own schedule.
+      // A map authored without a dummy still expires bullets normally; it just never hits one.
       if (projectilesRef.current.length > 0) {
-        const dummyPos = tileCenterPx(RANGE_DUMMY_TILE.tx, RANGE_DUMMY_TILE.ty);
+        const dummyPos = RANGE_DUMMY_PROP
+          ? tileCenterPx(RANGE_DUMMY_PROP.tx, RANGE_DUMMY_PROP.ty)
+          : { x: -1e6, y: -1e6 };
         const alive: Projectile[] = [];
         for (const proj of projectilesRef.current) {
           const hit = tickHubProjectile(proj, dt, dummyPos);
@@ -272,22 +319,12 @@ export default function CampHub({
       if (scene && sceneCtx) {
         sceneCtx.imageSmoothingEnabled = false;
         drawCampScene(sceneCtx, CAMP_MAP, reducedMotion ? 0 : now);
-
-        // Dummy placeholder (flat box — real art to follow later) + its raid-style
-        // HP bar, hidden at full health.
-        const dummyPos = tileCenterPx(RANGE_DUMMY_TILE.tx, RANGE_DUMMY_TILE.ty);
-        const dummySize = TILE * 0.7;
-        sceneCtx.fillStyle = "#5b4a3a";
-        sceneCtx.fillRect(dummyPos.x - dummySize / 2, dummyPos.y - dummySize / 2, dummySize, dummySize);
-        sceneCtx.strokeStyle = "#8a7355";
-        sceneCtx.lineWidth = 1;
-        sceneCtx.strokeRect(
-          dummyPos.x - dummySize / 2 + 0.5,
-          dummyPos.y - dummySize / 2 + 0.5,
-          dummySize - 1,
-          dummySize - 1,
-        );
-        if (dummyHpRef.current < DUMMY_MAX_HP) {
+        // The dummy itself is drawn by drawCampScene's generic prop pass (type
+        // "range-dummy", see drawProp) — only its raid-style HP bar is drawn here,
+        // hidden at full health.
+        if (RANGE_DUMMY_PROP && dummyHpRef.current < DUMMY_MAX_HP) {
+          const dummyPos = tileCenterPx(RANGE_DUMMY_PROP.tx, RANGE_DUMMY_PROP.ty);
+          const dummySize = TILE * 0.7;
           const w = Math.max(16, dummySize + 6);
           sceneCtx.fillStyle = "#140f0d";
           sceneCtx.fillRect(Math.round(dummyPos.x - w / 2), Math.round(dummyPos.y - dummySize / 2 - 10), w, 4);
@@ -334,6 +371,37 @@ export default function CampHub({
             const sz = proj.splash > 0 ? 5 : proj.pellet ? 2 : 3;
             sceneCtx.fillRect(Math.round(proj.x) - 1, Math.round(proj.y) - 1, sz, sz);
           }
+
+          // Ammo / reload readout — same visual convention as raid's operator "RLD"
+          // indicator (draw.ts's drawTower): text + a fill-progress bar while reloading.
+          const barW = 22;
+          const bx = pos.x - barW / 2;
+          const by = pos.y - 40;
+          sceneCtx.save();
+          sceneCtx.font = "7px monospace";
+          sceneCtx.textAlign = "center";
+          if (reloadLeftRef.current > 0) {
+            sceneCtx.fillStyle = "#000";
+            sceneCtx.fillText("RLD", pos.x + 1, by - 1);
+            sceneCtx.fillStyle = "#f0b400";
+            sceneCtx.fillText("RLD", pos.x, by - 2);
+            sceneCtx.fillStyle = "#140f0d";
+            sceneCtx.fillRect(bx, by, barW, 4);
+            sceneCtx.fillStyle = "#f0b400";
+            sceneCtx.fillRect(
+              bx + 1,
+              by + 1,
+              (barW - 2) * reloadProgress(reloadLeftRef.current, stats.reloadMs),
+              2,
+            );
+          } else {
+            const ammoText = `${ammoRef.current}/${stats.magSize}`;
+            sceneCtx.fillStyle = "#000";
+            sceneCtx.fillText(ammoText, pos.x + 1, by + 1);
+            sceneCtx.fillStyle = "#d8c98a";
+            sceneCtx.fillText(ammoText, pos.x, by);
+          }
+          sceneCtx.restore();
         }
       }
 
@@ -404,7 +472,7 @@ export default function CampHub({
         />
       )}
 
-      {walkable && promptStation && (
+      {walkable && promptStation && !weaponTestActive && (
         <div
           aria-hidden
           className="pointer-events-none absolute z-[6] whitespace-nowrap rounded border border-primary/60 bg-black/70 px-2 py-1 font-display text-[8px] tracking-wide text-primary sm:text-[9px]"

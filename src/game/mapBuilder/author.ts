@@ -110,7 +110,7 @@ export function applyAuthor(
       return applyEndpoint(doc, ctx.laneId, { tx: cell.tx, ty: cell.ty, edge });
     }
     case "zone":
-      return paintZoneCells(doc, [pos], ctx.zoneId);
+      return paintZoneCells(doc, [pos], ctx.zoneId, tool.zoneType);
     case "gate":
       return placeGate(doc, tool.gateId, ctx.laneId, cell.tx, cell.ty, edgeOf(cell, tile));
     case "erase-gameplay":

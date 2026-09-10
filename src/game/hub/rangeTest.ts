@@ -30,6 +30,9 @@ export interface HubWeaponStats {
   accuracy: number;
   pen: number;
   spread: number | undefined;
+  magSize: number;
+  reloadMs: number;
+  reloadType: WeaponDef["reloadType"];
 }
 
 /**
@@ -48,7 +51,18 @@ export function hubWeaponStats(
   const lvl = Math.max(1, level);
   const damage = fitted.damage * (1 + (lvl - 1) * 0.05);
   const accuracy = clampAccuracy(fitted.accuracy + (lvl - 1) * 0.02);
-  return { weapon: w, damage, range: fitted.range, cooldown: fitted.cooldown, accuracy, pen, spread: fitted.spread };
+  return {
+    weapon: w,
+    damage,
+    range: fitted.range,
+    cooldown: fitted.cooldown,
+    accuracy,
+    pen,
+    spread: fitted.spread,
+    magSize: fitted.magSize,
+    reloadMs: fitted.reloadMs,
+    reloadType: w.reloadType,
+  };
 }
 
 function bulletSpeedFor(w: WeaponDef): number {

@@ -1,6 +1,6 @@
 import type { HubAction } from "../campActions";
 import type { Palette, PropType } from "../map";
-import type { CampPropType, TerrainKind } from "../mapBuilder/schema";
+import type { CampPropType, EditorZone, SpecialZoneType, TerrainKind } from "../mapBuilder/schema";
 
 export interface CampStationProp {
   id: string;
@@ -20,6 +20,7 @@ export interface CampMapDef {
   palette: Palette;
   terrain: TerrainKind[][];
   props: CampStationProp[];
+  zones?: EditorZone[];
 }
 
 export interface CampGameMap {
@@ -28,10 +29,24 @@ export interface CampGameMap {
   height: number;
   terrain: TerrainKind[][];
   props: CampStationProp[];
+  zones: EditorZone[];
 }
 
 export function buildCampMap(def: CampMapDef): CampGameMap {
-  return { def, width: def.width, height: def.height, terrain: def.terrain, props: def.props };
+  return {
+    def,
+    width: def.width,
+    height: def.height,
+    terrain: def.terrain,
+    props: def.props,
+    zones: def.zones ?? [],
+  };
+}
+
+/** "tx,ty" cell keys for the first zone of the given type — empty if the map has none. */
+export function campZoneCellSet(map: CampGameMap, type: SpecialZoneType): Set<string> {
+  const zone = map.zones.find((z) => z.type === type);
+  return new Set(zone ? zone.cells.map(([x, y]) => `${x},${y}`) : []);
 }
 
 function isWalkableCampTerrain(kind: TerrainKind): boolean {

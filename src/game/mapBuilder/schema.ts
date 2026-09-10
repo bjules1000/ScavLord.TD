@@ -11,7 +11,16 @@ export const MAP_TYPES = ["raid", "camp"] as const;
 export type MapType = (typeof MAP_TYPES)[number];
 
 /** Camp-only decorative/interactive objects. Kept separate from raid's PropType. */
-export const CAMP_PROP_TYPES = ["tent", "fire", "ops-table", "gun-bench", "map-table", "radio"] as const;
+export const CAMP_PROP_TYPES = [
+  "tent",
+  "fire",
+  "ops-table",
+  "gun-bench",
+  "map-table",
+  "radio",
+  "range-table",
+  "range-dummy",
+] as const;
 export type CampPropType = (typeof CAMP_PROP_TYPES)[number];
 
 export const TERRAIN_KINDS = ["GROUND", "ROAD", "WATER", "MOUNTAIN", "HIGH_GROUND"] as const;
@@ -24,7 +33,7 @@ export const SUGGESTED_LANE_IDS = ["MAIN", "A", "B", "NORTH", "EAST", "SOUTH", "
 export const GATE_IDS = ["NORTH", "EAST", "SOUTH", "WEST"] as const;
 export type GateId = (typeof GATE_IDS)[number];
 
-export const SPECIAL_ZONE_TYPES = ["RESOURCE_SITE"] as const;
+export const SPECIAL_ZONE_TYPES = ["RESOURCE_SITE", "SHOOTING_RANGE"] as const;
 export type SpecialZoneType = (typeof SPECIAL_ZONE_TYPES)[number];
 
 export const PROP_TYPES: PropType[] = [

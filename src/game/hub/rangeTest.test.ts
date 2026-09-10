@@ -27,6 +27,20 @@ describe("hubWeaponStats", () => {
     const stats = hubWeaponStats("pm", [], 1);
     expect(stats.pen).toBe(0);
   });
+
+  it("carries mag size and reload fields for a MAGAZINE weapon", () => {
+    const stats = hubWeaponStats("pm", [], 1);
+    expect(stats.magSize).toBe(7);
+    expect(stats.reloadType).toBe("MAGAZINE");
+    expect(stats.reloadMs).toBeGreaterThan(0);
+  });
+
+  it("carries mag size and reload fields for a PER_ROUND weapon", () => {
+    const stats = hubWeaponStats("toz", [], 1);
+    expect(stats.magSize).toBe(2);
+    expect(stats.reloadType).toBe("PER_ROUND");
+    expect(stats.reloadMs).toBeGreaterThan(0);
+  });
 });
 
 describe("tickHubProjectile", () => {

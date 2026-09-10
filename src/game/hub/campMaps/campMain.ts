@@ -63,18 +63,19 @@ const PROPS: CampStationProp[] = [
   { id: "prop-8", type: "radio", tx: 18, ty: 6, hubAction: "radio" },
   { id: "prop-9", type: "fire", tx: 14, ty: 7 },
   { id: "prop-10", type: "ops-table", tx: 18, ty: 7, hubAction: "skills" },
-  // Shooting range interact table — "crate" is a placeholder visual until real range
-  // art exists, matching this file's other stations.
-  { id: "prop-range-table", type: "crate", tx: 5, ty: 12, hubAction: "range" },
+  { id: "prop-range-table", type: "range-table", tx: 5, ty: 12, hubAction: "range" },
+  { id: "prop-range-dummy", type: "range-dummy", tx: 5, ty: 9 },
 ];
 
-/**
- * Shooting range zone (inclusive tile bounds) and dummy position. Provisional
- * placement in the open ground band around row 9-13 — reposition freely by editing
- * these, independent of the locked PROPS/TERRAIN export above.
- */
-export const RANGE_ZONE = { tx0: 3, ty0: 8, tx1: 8, ty1: 13 };
-export const RANGE_DUMMY_TILE = { tx: 5, ty: 9 };
+/** Inclusive [tx0,ty0]-[tx1,ty1] rectangle as explicit [x, y] cells, matching the
+ * builder's cell-based EditorZone shape. */
+function rectCells(tx0: number, ty0: number, tx1: number, ty1: number): Array<[number, number]> {
+  const cells: Array<[number, number]> = [];
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) cells.push([tx, ty]);
+  }
+  return cells;
+}
 
 export const CAMP_MAP_DEF: CampMapDef = {
   id: "main-camp",
@@ -84,4 +85,12 @@ export const CAMP_MAP_DEF: CampMapDef = {
   palette: CAMP_PALETTE,
   terrain: buildTerrain(),
   props: PROPS,
+  zones: [
+    {
+      id: "zone-range",
+      type: "SHOOTING_RANGE",
+      name: "SHOOTING RANGE",
+      cells: rectCells(3, 8, 8, 13),
+    },
+  ],
 };

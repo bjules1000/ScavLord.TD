@@ -58,6 +58,9 @@ export function validateCampMap(doc: EditorMapDoc): ValidationResult {
   if (!assigned.has("radio")) {
     warnings.push(issue("warning", "STATION", `No prop is assigned to the "radio" station.`));
   }
+  if (!assigned.has("range")) {
+    warnings.push(issue("warning", "STATION", `No prop is assigned to the "range" station.`));
+  }
 
   return { ok: errors.length === 0, errors, warnings };
 }
