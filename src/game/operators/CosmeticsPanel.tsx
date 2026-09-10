@@ -3,6 +3,7 @@ import CosmeticFigure from "../CosmeticFigure";
 import {
   COSMETIC_CATALOG,
   COSMETIC_SLOTS,
+  GLOBAL_PAINT_REGIONS,
   SWATCH_LISTS,
   cosmeticOption,
   resolvePaintSwatchId,
@@ -68,6 +69,37 @@ function PaletteSwatch({
   );
 }
 
+function PaintPalette({
+  loadout,
+  slot,
+  region,
+  onSelectPaint,
+}: {
+  loadout: CosmeticLoadout;
+  slot: CosmeticSlot;
+  region: PaintRegionId;
+  onSelectPaint: (slot: CosmeticSlot, region: PaintRegionId, swatchId: string) => void;
+}) {
+  const swatches = SWATCH_LISTS[region];
+  if (!swatches?.length) return null;
+
+  return (
+    <div>
+      <div className="font-mono text-[9px] uppercase text-muted-foreground">{region}</div>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {swatches.map((swatch) => (
+          <PaletteSwatch
+            key={swatch.id}
+            swatch={swatch}
+            selected={resolvePaintSwatchId(loadout, slot, region) === swatch.id}
+            onSelect={() => onSelectPaint(slot, region, swatch.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function CosmeticsPanel({
   loadout,
   onSelect,
@@ -79,14 +111,29 @@ export default function CosmeticsPanel({
 }) {
   const [activeSlot, setActiveSlot] = useState<CosmeticSlot>("hat");
   const activeOption = cosmeticOption(activeSlot, loadout[activeSlot]);
-  const regions = Object.keys(activeOption?.paintRegions ?? {});
+  const slotRegions = Object.keys(activeOption?.paintRegions ?? {}).filter(
+    (region) => !GLOBAL_PAINT_REGIONS.includes(region),
+  );
 
   return (
-    <div className="pixel-card flex flex-col gap-3 text-left font-mono text-[10px] lg:flex-row">
-      <div className="flex shrink-0 justify-center bg-black/20 p-3 lg:w-[220px]">
-        <CosmeticFigure loadout={loadout} scale={8} />
+    <div className="pixel-card flex flex-col gap-3 text-left font-mono text-[10px] lg:h-[430px] lg:flex-row">
+      <div className="flex shrink-0 flex-col bg-black/20 p-3 lg:w-[220px]">
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <CosmeticFigure loadout={loadout} scale={8} />
+        </div>
+        <div className="mt-3 flex shrink-0 flex-col gap-2 border-t border-border/40 pt-2">
+          {GLOBAL_PAINT_REGIONS.map((region) => (
+            <PaintPalette
+              key={region}
+              loadout={loadout}
+              slot={activeSlot}
+              region={region}
+              onSelectPaint={onSelectPaint}
+            />
+          ))}
+        </div>
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 lg:overflow-y-auto">
         <div className="flex flex-wrap gap-1 border-b border-border/40 pb-2">
           {COSMETIC_SLOTS.map((slot) => (
             <button
@@ -117,22 +164,16 @@ export default function CosmeticsPanel({
           ))}
         </div>
 
-        {regions.length > 0 && (
+        {slotRegions.length > 0 && (
           <div className="mt-3 flex flex-col gap-2 border-t border-border/40 pt-2">
-            {regions.map((region) => (
-              <div key={region}>
-                <div className="font-mono text-[9px] uppercase text-muted-foreground">{region}</div>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {SWATCH_LISTS[region]?.map((swatch) => (
-                    <PaletteSwatch
-                      key={swatch.id}
-                      swatch={swatch}
-                      selected={resolvePaintSwatchId(loadout, activeSlot, region) === swatch.id}
-                      onSelect={() => onSelectPaint(activeSlot, region, swatch.id)}
-                    />
-                  ))}
-                </div>
-              </div>
+            {slotRegions.map((region) => (
+              <PaintPalette
+                key={region}
+                loadout={loadout}
+                slot={activeSlot}
+                region={region}
+                onSelectPaint={onSelectPaint}
+              />
             ))}
           </div>
         )}
