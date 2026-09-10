@@ -6,6 +6,7 @@ import {
   canShoot,
   combatStatus,
   consumeRound,
+  forceStartReload,
   initAmmo,
   magSizeOf,
   maybeStartReload,
@@ -75,6 +76,27 @@ describe("pistol magazine", () => {
     expect(done.ammo).toBe(7);
     expect(done.reloadLeft).toBe(0);
     expect(canShoot(done.ammo, done.reloadLeft)).toBe(true);
+  });
+});
+
+describe("forceStartReload (manual 'R' reload)", () => {
+  const mag = magSizeOf("pm");
+  const reloadMs = reloadMsOf("pm");
+
+  it("starts a reload immediately even with a partial magazine", () => {
+    expect(forceStartReload(4, 0, mag, reloadMs)).toBe(reloadMs);
+  });
+
+  it("is a no-op when already full", () => {
+    expect(forceStartReload(mag, 0, mag, reloadMs)).toBe(0);
+  });
+
+  it("is a no-op when already reloading — doesn't restart the timer", () => {
+    expect(forceStartReload(2, 900, mag, reloadMs)).toBe(900);
+  });
+
+  it("starts a reload from empty too, same as maybeStartReload", () => {
+    expect(forceStartReload(0, 0, mag, reloadMs)).toBe(reloadMs);
   });
 });
 
