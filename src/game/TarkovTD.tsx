@@ -983,6 +983,7 @@ export default function TarkovTD() {
       xp: m.pmc.xp,
       armor: m.pmc.armor,
       armorHp: armorDef ? armorDef.durability : 0,
+      cosmetics: m.pmc.cosmetics,
       scavMods: m.pmc.scavMods
         ? { ...m.pmc.scavMods, parts: { ...m.pmc.scavMods.parts } }
         : null,
@@ -3788,6 +3789,7 @@ export default function TarkovTD() {
                     armor: meta.pmc.armor ?? null,
                     attachments: meta.pmc.attachments,
                     level: meta.pmc.level,
+                    cosmetics: meta.pmc.cosmetics,
                   }}
                   onAction={(action: HubAction) => {
                     if (action === "supplies") setSuppliesTab("stash");

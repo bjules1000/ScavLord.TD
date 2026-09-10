@@ -154,3 +154,27 @@ export function drawCosmeticFigure(
     }
   }
 }
+
+let figureCanvas: HTMLCanvasElement | null = null;
+let figureCtx: CanvasRenderingContext2D | null = null;
+
+/**
+ * Composites a loadout into one shared offscreen canvas and returns it — for callers
+ * (e.g. draw.ts's in-game operator sprite) that want to drawImage() the result with
+ * their own transform (flip, position, scale) instead of drawing straight onto a fixed
+ * ctx at (0, 0) the way drawCosmeticFigure does. Safe to share one buffer: callers draw
+ * then immediately consume it synchronously, and the game only ever renders one screen
+ * (hub or raid) at a time. Lazily creates the canvas on first use — module load can
+ * happen in non-DOM environments (tests) that never actually call this.
+ */
+export function cosmeticFigureCanvas(loadout: CosmeticLoadout, onReady: () => void): HTMLCanvasElement {
+  if (!figureCanvas) {
+    figureCanvas = document.createElement("canvas");
+    figureCanvas.width = COSMETIC_FIGURE.width;
+    figureCanvas.height = COSMETIC_FIGURE.height;
+    figureCtx = figureCanvas.getContext("2d")!;
+    figureCtx.imageSmoothingEnabled = false;
+  }
+  drawCosmeticFigure(figureCtx!, loadout, onReady);
+  return figureCanvas;
+}

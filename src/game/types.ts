@@ -84,6 +84,8 @@ export interface Tower {
   scavMods?: import("./weaponVisuals").WeaponVisualState | null;
   /** In-progress heal-over-time channel. Null/absent = not healing. */
   healing?: import("./healing").HealingState | null;
+  /** Customized appearance for the player's own operator. Undefined for crew/enemies. */
+  cosmetics?: import("./cosmetics").CosmeticLoadout | null;
 }
 
 export type BuiltinEnemyKind = "scav" | "raider" | "sniperScav" | "pmc" | "boss";

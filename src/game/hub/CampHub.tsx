@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { TILE } from "../data";
 import { drawOperator, type DrawableOperator } from "../draw";
+import type { CosmeticLoadout } from "../cosmetics";
 import type { HubAction } from "../campActions";
 import { buildCampMap, type CampGameMap, type CampStationProp } from "./campMap";
 import { CAMP_MAP_DEF } from "./campMaps/campMain";
@@ -19,6 +20,7 @@ export interface CampPlayerGear {
   armor: string | null;
   attachments: string[];
   level: number;
+  cosmetics: CosmeticLoadout;
 }
 
 const CAMP_MAP: CampGameMap = buildCampMap(CAMP_MAP_DEF);
@@ -164,6 +166,7 @@ export default function CampHub({
           pmc: true,
           level: player.level,
           flash: 0,
+          cosmetics: player.cosmetics,
         };
         drawOperator(ctx, sprite, canvas.width / 2, canvas.height / 2, PLAYER_DRAW_SCALE, now, { pad: false });
       }
