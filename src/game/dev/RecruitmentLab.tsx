@@ -8,6 +8,7 @@ import {
   effectiveRecruitmentProfiles,
   effectiveRetransmissionRules,
   effectiveTraitProbability,
+  effectiveUniqueCosmetics,
   eligibleProfiles,
   formatRecruitmentPatch,
   generateTestRecruitmentPool,
@@ -32,6 +33,16 @@ import {
   type RecruitmentLabOverrides,
   type RecruitmentLabView,
 } from "../operators/recruitmentLabCore";
+import {
+  COSMETIC_CATALOG,
+  COSMETIC_SLOTS,
+  GLOBAL_PAINT_REGIONS,
+  SWATCH_LISTS,
+  cosmeticOption,
+  resolvePaintSwatchId,
+  type CosmeticLoadout,
+  type CosmeticSlot,
+} from "../cosmetics";
 import {
   RADIO_SLOT_MAX,
   RADIO_SLOT_MIN,
@@ -917,6 +928,7 @@ export default function RecruitmentLab({
                       </>
                     );
                   })()}
+                  <UniqueCosmeticsEditor uniqueId={selectedUnique.id} draft={draft} onDraft={setDraft} />
                   <button
                     type="button"
                     className="pixel-btn px-2 py-1"
@@ -1073,6 +1085,124 @@ function KitEditor({
         {renderPool("ARMORS", "armors", [null, ...Object.keys(ARMORS)])}
         {renderPool("ATTACHMENTS", "attachments", Object.keys(ATTACHMENTS))}
       </div>
+    </div>
+  );
+}
+
+/** DEV-only appearance override for a unique operator — dropdowns only, no avatar preview
+ * (see effectiveUniqueCosmetics: canonical cosmetics + this patch = what hiring produces). */
+function UniqueCosmeticsEditor({
+  uniqueId,
+  draft,
+  onDraft,
+}: {
+  uniqueId: string;
+  draft: RecruitmentLabOverrides;
+  onDraft: (next: RecruitmentLabOverrides) => void;
+}) {
+  const effective = effectiveUniqueCosmetics(uniqueId, draft);
+  const existing = draft.uniqueCosmetics?.[uniqueId] ?? {};
+
+  const patch = (p: Partial<CosmeticLoadout>) => {
+    onDraft({
+      ...draft,
+      uniqueCosmetics: { ...draft.uniqueCosmetics, [uniqueId]: { ...existing, ...p } },
+    });
+  };
+
+  const patchGlobalPaint = (region: string, swatchId: string) => {
+    patch({ globalPaint: { ...existing.globalPaint, [region]: swatchId } });
+  };
+
+  const patchSlotPaint = (slot: CosmeticSlot, region: string, swatchId: string) => {
+    patch({
+      slotPaint: {
+        ...existing.slotPaint,
+        [slot]: { ...existing.slotPaint?.[slot], [region]: swatchId },
+      },
+    });
+  };
+
+  return (
+    <div className="pixel-card p-2">
+      <div className="text-primary">APPEARANCE (DEV OVERRIDE)</div>
+      <div className="mt-1 grid gap-1 sm:grid-cols-2">
+        {COSMETIC_SLOTS.map((slot) => (
+          <label key={slot} className="flex items-center justify-between gap-2">
+            <span className="uppercase text-muted-foreground">{slot}</span>
+            <select
+              className="border border-border bg-background px-1"
+              value={effective[slot]}
+              onChange={(e) => patch({ [slot]: e.target.value })}
+            >
+              {COSMETIC_CATALOG[slot].map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+
+      <div className="mt-2 grid gap-1 sm:grid-cols-2">
+        {GLOBAL_PAINT_REGIONS.map((region) => {
+          const list = SWATCH_LISTS[region];
+          if (!list?.length) return null;
+          const current = resolvePaintSwatchId(effective, COSMETIC_SLOTS[0]!, region);
+          return (
+            <label key={region} className="flex items-center justify-between gap-2">
+              <span className="uppercase text-muted-foreground">{region}</span>
+              <select
+                className="border border-border bg-background px-1"
+                value={current}
+                onChange={(e) => patchGlobalPaint(region, e.target.value)}
+              >
+                {list.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      </div>
+
+      {COSMETIC_SLOTS.map((slot) => {
+        const option = cosmeticOption(slot, effective[slot]);
+        const regions = Object.keys(option?.paintRegions ?? {}).filter(
+          (r) => !GLOBAL_PAINT_REGIONS.includes(r),
+        );
+        if (!regions.length) return null;
+        return (
+          <div key={slot} className="mt-2 grid gap-1 sm:grid-cols-2">
+            {regions.map((region) => {
+              const list = SWATCH_LISTS[region];
+              if (!list?.length) return null;
+              const current = resolvePaintSwatchId(effective, slot, region);
+              return (
+                <label key={`${slot}-${region}`} className="flex items-center justify-between gap-2">
+                  <span className="uppercase text-muted-foreground">
+                    {slot} {region}
+                  </span>
+                  <select
+                    className="border border-border bg-background px-1"
+                    value={current}
+                    onChange={(e) => patchSlotPaint(slot, region, e.target.value)}
+                  >
+                    {list.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              );
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 }

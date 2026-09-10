@@ -2,6 +2,7 @@ import type { Meta } from "../meta";
 import { DEV_TOOLS_ENABLED } from "../dev/tools";
 import {
   effectiveRecruitmentProfiles,
+  effectiveUniqueCosmetics,
   getRecruitmentLabOverrides,
   progressionFactsFromMeta,
 } from "./recruitmentLabCore";
@@ -251,6 +252,11 @@ export function hireUniqueContact(
   if (meta.bank < cost) return { ok: false, reason: "Insufficient funds." };
   meta.bank -= cost;
   const operator = uniqueToOperator(def, operatorId);
+  // DEV-only appearance override from the Recruitment Lab (see RecruitmentLab.tsx's
+  // "unique" tab) — no-op (returns the canonical cosmetics unchanged) when unset.
+  if (DEV_TOOLS_ENABLED) {
+    operator.cosmetics = effectiveUniqueCosmetics(uniqueId, getRecruitmentLabOverrides());
+  }
   meta.crew.operators.push(operator);
   meta.crew.radio = {
     ...radio,

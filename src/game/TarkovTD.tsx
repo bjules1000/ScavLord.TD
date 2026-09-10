@@ -720,6 +720,7 @@ function spawnPersistentOperatorTower(
     operatorId: op.id,
     armor: op.equipment.armor,
     armorHp: armorDef ? armorDef.durability : 0,
+    cosmetics: op.cosmetics,
     scavMods: op.equipment.scavMods
       ? { ...op.equipment.scavMods, parts: { ...op.equipment.scavMods.parts } }
       : null,
