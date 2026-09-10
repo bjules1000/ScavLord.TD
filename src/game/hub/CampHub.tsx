@@ -4,7 +4,15 @@ import { drawOperator, type DrawableOperator } from "../draw";
 import type { CosmeticLoadout } from "../cosmetics";
 import type { HubAction } from "../campActions";
 import { getShotDispersion, type Projectile } from "../shooting";
-import { canShoot, consumeRound, initAmmo, maybeStartReload, reloadProgress, tickReload } from "../weapons";
+import {
+  canShoot,
+  consumeRound,
+  forceStartReload,
+  initAmmo,
+  maybeStartReload,
+  reloadProgress,
+  tickReload,
+} from "../weapons";
 import { buildCampMap, campZoneCellSet, type CampGameMap, type CampStationProp } from "./campMap";
 import { CAMP_MAP_DEF } from "./campMaps/campMain";
 import { drawCampScene } from "./drawCampScene";
@@ -113,6 +121,7 @@ export default function CampHub({
   const nextProjIdRef = useRef(1);
   const ammoRef = useRef(initAmmo(player.weapon));
   const reloadLeftRef = useRef(0);
+  const manualReloadRef = useRef(false);
 
   /** Reset the loaded mag whenever the equipped weapon changes, so switching guns in
    * the gear screen doesn't carry over a stale ammo count next time the range opens. */
@@ -139,6 +148,7 @@ export default function CampHub({
           onAction(action);
         }
       }
+      if (key === "r" && !e.repeat) manualReloadRef.current = true;
     };
     const onKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
@@ -265,6 +275,16 @@ export default function CampHub({
         ammoRef.current = reloaded.ammo;
         reloadLeftRef.current = reloaded.reloadLeft;
 
+        if (manualReloadRef.current) {
+          manualReloadRef.current = false;
+          reloadLeftRef.current = forceStartReload(
+            ammoRef.current,
+            reloadLeftRef.current,
+            stats.magSize,
+            stats.reloadMs,
+          );
+        }
+
         if (
           weaponTestActive &&
           triggerHeldRef.current &&
@@ -289,6 +309,10 @@ export default function CampHub({
           stats.reloadType,
           triggerHeldRef.current,
         );
+      } else {
+        // Not in test mode — drop any manual-reload press so it doesn't fire late
+        // once test mode is reactivated later.
+        manualReloadRef.current = false;
       }
 
       // Advance live bullets + resolve dummy hits/regen — keeps running even after the

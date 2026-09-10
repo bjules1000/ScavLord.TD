@@ -97,6 +97,19 @@ export function maybeStartReload(
   return 0;
 }
 
+/**
+ * Manual ("R" key) reload — starts immediately regardless of current ammo, unlike
+ * maybeStartReload which only kicks in once the mag is empty (or, for PER_ROUND, idle
+ * without a target). No-op if already reloading or already full. tickReload already
+ * handles MAGAZINE vs PER_ROUND completion correctly either way, so this doesn't need
+ * to know reloadType.
+ */
+export function forceStartReload(ammo: number, reloadLeft: number, magSize: number, reloadMs: number): number {
+  if (reloadLeft > 0) return reloadLeft;
+  if (ammo >= magSize) return reloadLeft;
+  return reloadMs;
+}
+
 export type CombatStatus = "IDLE" | "ENGAGING" | "RELOADING" | "HOLD" | "MOVING";
 
 export function combatStatus(

@@ -211,6 +211,7 @@ import {
   attachmentDef,
   canShoot,
   consumeRound,
+  forceStartReload,
   maybeStartReload,
   reloadProgress,
   tickReload,
@@ -3471,6 +3472,14 @@ export default function TarkovTD() {
         const sel = s.towers.find((t) => t.id === s.selectedId);
         if (sel && !sel.healing && directControlActive()) {
           directGrenadeHoldStartRef.current = performance.now();
+        }
+      }
+      if (key === "r" && !e.repeat) {
+        const s = gs.current;
+        const sel = s.towers.find((t) => t.id === s.selectedId);
+        if (sel && !sel.healing && directControlActive()) {
+          const st = towerStats(sel, undefined, mapRef.current, metaRef.current);
+          sel.reloadLeft = forceStartReload(sel.ammo, sel.reloadLeft, st.magSize, st.reloadMs);
         }
       }
       // Hotbar: 1..HOTBAR_SIZE, same effect as clicking the cell — unless a backpack
