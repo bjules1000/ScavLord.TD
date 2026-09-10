@@ -7,6 +7,7 @@
 
 import { ITEM_BY_ID } from "../gear";
 import { armorItemId, attachItemId, weaponItemId } from "../raidGear";
+import { randomCosmeticLoadout } from "../cosmetics";
 import { OPERATOR_NAMES } from "./names";
 import {
   isNegativeTraitId,
@@ -23,7 +24,7 @@ import {
 import { getQualityTier, rollNegativeTraitCount, rollPositiveTraitCount } from "./recruitmentQuality";
 import type { RecruitmentQuality } from "./radioProgression";
 import { mulberry32, pickOne, pickWeighted, seedFromParts } from "./rng";
-import type { OperatorAppearance, OperatorEquipment, RecruitCandidate } from "./types";
+import type { OperatorEquipment, RecruitCandidate } from "./types";
 
 /** @deprecated Prefer resolveRecruitmentCapability().slots.effective */
 export const RECRUITMENT_POOL_SIZE = 0;
@@ -41,12 +42,6 @@ export function kitEquipmentValue(equipment: OperatorEquipment): number {
     if (ar) total += ITEM_BY_ID[ar]?.value ?? 0;
   }
   return total;
-}
-
-function pickAppearance(rng: () => number): OperatorAppearance {
-  const presetId = `scav_${Math.floor(rng() * 4)}`;
-  if (rng() < 0.5) return { presetId, paletteId: `accent_${Math.floor(rng() * 3)}` };
-  return { presetId };
 }
 
 function uniqueName(rng: () => number, used: Set<string>): string {
@@ -156,7 +151,7 @@ export function generateCandidateFromProfile(
     traitIds,
     perkIds,
     equipment,
-    appearance: pickAppearance(rng),
+    cosmetics: randomCosmeticLoadout(rng),
     cost: 0,
     generationQuality: quality,
   };

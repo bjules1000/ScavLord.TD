@@ -148,7 +148,7 @@ export function candidateFromOperator(op: PersistentOperator, cost: number): Rec
       attachments: [...op.equipment.attachments],
       armor: op.equipment.armor,
     },
-    appearance: { ...op.appearance },
+    cosmetics: { ...op.cosmetics, globalPaint: { ...op.cosmetics.globalPaint }, slotPaint: { ...op.cosmetics.slotPaint } },
     cost,
   };
   if (op.uniqueId) c.uniqueId = op.uniqueId;
@@ -172,7 +172,11 @@ export function candidateToOperator(candidate: RecruitCandidate, operatorId: str
       attachments: [...candidate.equipment.attachments],
       armor: candidate.equipment.armor,
     },
-    appearance: { ...candidate.appearance },
+    cosmetics: {
+      ...candidate.cosmetics,
+      globalPaint: { ...candidate.cosmetics.globalPaint },
+      slotPaint: { ...candidate.cosmetics.slotPaint },
+    },
     progression: { level: 1, xp: 0 },
     status: "alive",
   };

@@ -9,11 +9,19 @@ import {
   cosmeticOption,
   defaultCosmeticLoadout,
   paintSwatch,
+  randomCosmeticLoadout,
   resolveCosmeticLoadout,
   resolvePaintSwatchId,
   selectCosmeticOption,
   selectPaintSwatch,
 } from "./cosmetics";
+
+/** Short repeating sequence so tests don't depend on how many times randomCosmeticLoadout
+ * happens to call rng() — any number of draws stays in-range and deterministic. */
+function seqRng(values: number[]): () => number {
+  let i = 0;
+  return () => values[i++ % values.length]!;
+}
 
 describe("defaultCosmeticLoadout", () => {
   it("picks the first catalog option for every slot", () => {
@@ -61,6 +69,56 @@ describe("resolveCosmeticLoadout", () => {
     expect(resolved.legs).toBe(COSMETIC_CATALOG.legs[0]!.id);
     expect(resolved.torso).toBe(COSMETIC_CATALOG.torso[0]!.id);
     expect(resolved.hat).toBe(COSMETIC_CATALOG.hat[0]!.id);
+  });
+});
+
+describe("randomCosmeticLoadout", () => {
+  it("picks a real catalog option for every slot", () => {
+    const loadout = randomCosmeticLoadout(seqRng([0.1, 0.4, 0.7, 0.99, 0.05, 0.6]));
+    for (const slot of COSMETIC_SLOTS) {
+      expect(cosmeticOption(slot, loadout[slot])).not.toBeNull();
+    }
+  });
+
+  it("is deterministic for the same rng sequence", () => {
+    const a = randomCosmeticLoadout(seqRng([0.2, 0.8, 0.35, 0.9, 0.15]));
+    const b = randomCosmeticLoadout(seqRng([0.2, 0.8, 0.35, 0.9, 0.15]));
+    expect(a).toEqual(b);
+  });
+
+  it("can differ for a different rng sequence", () => {
+    const a = randomCosmeticLoadout(seqRng([0, 0, 0, 0, 0]));
+    const b = randomCosmeticLoadout(seqRng([0.99, 0.99, 0.99, 0.99, 0.99]));
+    expect(a).not.toEqual(b);
+  });
+
+  it("sets a valid global swatch shared across slots for every global region", () => {
+    const loadout = randomCosmeticLoadout(seqRng([0.33, 0.66, 0.12, 0.88]));
+    for (const region of GLOBAL_PAINT_REGIONS) {
+      const swatchId = loadout.globalPaint[region];
+      expect(swatchId).toBeDefined();
+      expect(SWATCH_LISTS[region]!.some((s) => s.id === swatchId)).toBe(true);
+    }
+  });
+
+  it("sets a valid per-slot swatch for every non-global region the chosen option declares", () => {
+    const loadout = randomCosmeticLoadout(seqRng([0.5, 0.25, 0.75, 0.1, 0.9, 0.4]));
+    for (const slot of COSMETIC_SLOTS) {
+      const option = cosmeticOption(slot, loadout[slot]);
+      for (const region of Object.keys(option?.paintRegions ?? {})) {
+        if (GLOBAL_PAINT_REGIONS.includes(region)) continue;
+        const swatchId = loadout.slotPaint[slot]?.[region];
+        expect(swatchId).toBeDefined();
+        expect(SWATCH_LISTS[region]!.some((s) => s.id === swatchId)).toBe(true);
+      }
+    }
+  });
+
+  it("defaults to Math.random when no rng is passed", () => {
+    const loadout = randomCosmeticLoadout();
+    for (const slot of COSMETIC_SLOTS) {
+      expect(cosmeticOption(slot, loadout[slot])).not.toBeNull();
+    }
   });
 });
 

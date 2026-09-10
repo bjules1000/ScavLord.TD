@@ -37,9 +37,18 @@ const warnedMismatch = new Set<string>();
 
 function loadImage(src: string, onReady: () => void): HTMLImageElement {
   const cached = imageCache.get(src);
-  if (cached) return cached;
+  if (cached) {
+    // The cache holds one <img> per src, but every caller still needs its own notification
+    // once loading finishes — not just whichever caller happened to request it first (a
+    // single img.onload assignment would silently overwrite/drop earlier callers').
+    if (!cached.complete) {
+      cached.addEventListener("load", onReady, { once: true });
+      cached.addEventListener("error", onReady, { once: true });
+    }
+    return cached;
+  }
   const img = new Image();
-  img.onload = () => {
+  img.addEventListener("load", () => {
     if (
       (img.naturalWidth !== COSMETIC_FIGURE.width || img.naturalHeight !== COSMETIC_FIGURE.height) &&
       !warnedMismatch.has(src)
@@ -51,8 +60,8 @@ function loadImage(src: string, onReady: () => void): HTMLImageElement {
       );
     }
     onReady();
-  };
-  img.onerror = onReady;
+  });
+  img.addEventListener("error", onReady);
   img.src = src;
   imageCache.set(src, img);
   return img;

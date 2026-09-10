@@ -480,6 +480,38 @@ export function selectPaintSwatch(
   return applyPaintSwatch(loadout, slot, region, swatchId);
 }
 
+function pickOne<T>(items: readonly T[], rng: () => number): T {
+  return items[Math.floor(rng() * items.length)] ?? items[0]!;
+}
+
+/**
+ * A fully random but always-valid loadout — one random option per slot, plus a random
+ * swatch for every paint region those chosen options actually declare (global regions
+ * like skin/hair shared across slots, everything else scoped per-slot). Pass a seeded
+ * rng (e.g. mulberry32) for deterministic, reproducible recruits; defaults to Math.random.
+ */
+export function randomCosmeticLoadout(rng: () => number = Math.random): CosmeticLoadout {
+  let loadout = defaultCosmeticLoadout();
+  for (const slot of COSMETIC_SLOTS) {
+    loadout = selectCosmeticOption(loadout, slot, pickOne(COSMETIC_CATALOG[slot], rng).id);
+  }
+  for (const region of GLOBAL_PAINT_REGIONS) {
+    const list = SWATCH_LISTS[region];
+    if (!list?.length) continue;
+    loadout = selectPaintSwatch(loadout, COSMETIC_SLOTS[0]!, region, pickOne(list, rng).id);
+  }
+  for (const slot of COSMETIC_SLOTS) {
+    const option = cosmeticOption(slot, loadout[slot]);
+    for (const region of Object.keys(option?.paintRegions ?? {})) {
+      if (GLOBAL_PAINT_REGIONS.includes(region)) continue;
+      const list = SWATCH_LISTS[region];
+      if (!list?.length) continue;
+      loadout = selectPaintSwatch(loadout, slot, region, pickOne(list, rng).id);
+    }
+  }
+  return loadout;
+}
+
 export interface ComposedCosmeticRecolor {
   region: PaintRegionId;
   markerHex: string;
