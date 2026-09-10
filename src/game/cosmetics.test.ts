@@ -267,8 +267,8 @@ describe("composeCosmeticLayers frontOverlay", () => {
     const torso = composeCosmeticLayers(loadout).find((l) => l.slot === "torso")!;
     expect(torso.frontOverlay?.spriteKey).toBe("/game/cosmetics/torso/stash-collar.png");
     const overlayTrim = torso.frontOverlay!.recolor.find((r) => r.region === "trim")!;
-    const baseTrim = torso.recolor.find((r) => r.region === "trim")!;
-    expect(overlayTrim.markerHex).toBe("#ffffff");
+    const baseTrim = torso.recolor.find((r) => r.region === "trim" && r.markerHex === "#00ffff")!;
+    expect(overlayTrim.markerHex).toBe("#000000");
     expect(overlayTrim.targetHex).toBe(baseTrim.targetHex);
   });
 
