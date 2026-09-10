@@ -1,6 +1,6 @@
 import type { CampMapDef, CampStationProp } from "../campMap";
 import type { Palette } from "../../map";
-import type { TerrainKind } from "../../mapBuilder/schema";
+import type { EditorZone, TerrainKind } from "../../mapBuilder/schema";
 
 const WIDTH = 24;
 const HEIGHT = 18;
@@ -28,21 +28,21 @@ const TERRAIN_LEGEND: Record<string, TerrainKind> = {
 
 /** Authored in the camp map editor. One character represents one terrain tile. */
 const TERRAIN_ROWS = [
-  "MMMMMMMGGGGGMMMMMMMMMMMM",
-  "MMMMHHHGGGGGGMMMMMMMMMMM",
-  "MMHHHHHGGGGGGGMMMMMMMMMM",
-  "MHHHHHGGGGGGGGGGMMMMMMMM",
-  "HHHHHHGGGGGGGGGGGMMMMMMM",
-  "HHHHHHGGGGGGGGGGGGMMMMMM",
-  "HMMHHGGGGGGGGGGGGGGMMMMM",
-  "MMMMGGGGGGGGGGGGGGGMMMMM",
-  "MMMMGGGGGGGGGGGGGGGMMMMM",
-  "MMMGGGGGGGGGGGGGGGGGGGMM",
-  "MMMGGGGGGGGGGGGGGGGGGGGM",
-  "MMGGGGGMMMGGGGGGGGGGGGGG",
-  "GGGGGGMMMMMGGGGGGGGGGGGG",
-  "GGGGGGMMMMMGGGGGGGGGGGWW",
-  "GGGGGMMMMMMMGGGGGGGGGWWW",
+  "MMMMMMMMMGGGMMMMMMMMMMMM",
+  "MMMMMMMGGGGGGMMMMMMMMMMM",
+  "MMHHGGGGGGGGGGMMMMMMMMMM",
+  "MHHHGGGGGGGGGGGGMMMMMMMM",
+  "MHHHGGGGGGGGGGGGGMMMMMMM",
+  "MHHHHGGGGGGGGGGGGGMMMMMM",
+  "MHHHHHGGGGGGGGGGGGGMMMMM",
+  "MHHHHHHGGGGGGGGGGGGMMMMM",
+  "MMHHHHHGGGGGGGGGGGGMMMMM",
+  "MMMHHHGGGGGGGGGGGGGGGGMM",
+  "MMMMHGGGGGGGGGGGGGGGGGGM",
+  "MMMMGGGGGGGGGGGGGGGGGGGG",
+  "MMMGGGGGMMMGGGGGGGGGGGGG",
+  "MMGGGGMMMMMGGGGGGGGGGGWW",
+  "MGGGGMMMMMMMGGGGGGGGGWWW",
   "GGGGGMMMMMMMGMMMGGGWWWWW",
   "GGGGMMMMMMMMMMMMMGWWWWWW",
   "GGMMMMMMMMMMMMMMMWWWWWWW",
@@ -52,30 +52,43 @@ function buildTerrain(): TerrainKind[][] {
   return TERRAIN_ROWS.map((row) => [...row].map((tile) => TERRAIN_LEGEND[tile]!));
 }
 
+/** Authored in the camp map editor (main-camp.camp.json export). The range-table prop
+ * had no hubAction in that export — re-added here so the range station stays reachable. */
 const PROPS: CampStationProp[] = [
   { id: "prop-1", type: "map-table", tx: 12, ty: 1, hubAction: "region" },
-  { id: "prop-2", type: "crate", tx: 14, ty: 3, hubAction: "supplies" },
-  { id: "prop-3", type: "crate", tx: 15, ty: 3 },
-  { id: "prop-4", type: "crate", tx: 14, ty: 4 },
-  { id: "prop-5", type: "crate", tx: 15, ty: 4 },
-  { id: "prop-6", type: "gun-bench", tx: 16, ty: 4, hubAction: "gear" },
-  { id: "prop-7", type: "tent", tx: 14, ty: 5 },
-  { id: "prop-8", type: "radio", tx: 18, ty: 6, hubAction: "radio" },
-  { id: "prop-9", type: "fire", tx: 14, ty: 7 },
-  { id: "prop-10", type: "ops-table", tx: 18, ty: 7, hubAction: "skills" },
-  { id: "prop-range-table", type: "range-table", tx: 5, ty: 12, hubAction: "range" },
-  { id: "prop-range-dummy", type: "range-dummy", tx: 5, ty: 9 },
+  { id: "prop-2", type: "range-table", tx: 4, ty: 2, hubAction: "range" },
+  { id: "prop-3", type: "crate", tx: 14, ty: 3, hubAction: "supplies" },
+  { id: "prop-4", type: "crate", tx: 15, ty: 3 },
+  { id: "prop-5", type: "range-dummy", tx: 1, ty: 4 },
+  { id: "prop-6", type: "crate", tx: 14, ty: 4 },
+  { id: "prop-7", type: "crate", tx: 15, ty: 4 },
+  { id: "prop-8", type: "gun-bench", tx: 16, ty: 4, hubAction: "gear" },
+  { id: "prop-9", type: "tent", tx: 14, ty: 5 },
+  { id: "prop-10", type: "range-dummy", tx: 1, ty: 6 },
+  { id: "prop-11", type: "radio", tx: 18, ty: 6, hubAction: "radio" },
+  { id: "prop-12", type: "fire", tx: 14, ty: 7 },
+  { id: "prop-13", type: "ops-table", tx: 18, ty: 7, hubAction: "skills" },
 ];
 
-/** Inclusive [tx0,ty0]-[tx1,ty1] rectangle as explicit [x, y] cells, matching the
- * builder's cell-based EditorZone shape. */
-function rectCells(tx0: number, ty0: number, tx1: number, ty1: number): Array<[number, number]> {
-  const cells: Array<[number, number]> = [];
-  for (let ty = ty0; ty <= ty1; ty++) {
-    for (let tx = tx0; tx <= tx1; tx++) cells.push([tx, ty]);
-  }
-  return cells;
-}
+/** Only the zone enclosing the range table/dummies is kept — the export also carried a
+ * leftover "zone-range" rectangle from before the range was moved, dropped here.
+ * [3,2]/[3,3]/[4,3]/[2,2]/[6,2]/[6,3] are added on top of the exported cells: none of
+ * the walkable tiles within interact range of the range-table prop at (4,2) (its own
+ * tile is prop-occupied and unwalkable) were covered by the exported zone, so standing
+ * anywhere near enough to interact with the table left the player just outside the
+ * zone and weapon test mode immediately auto-deactivated. */
+const ZONES: EditorZone[] = [
+  {
+    id: "zone-range",
+    type: "SHOOTING_RANGE",
+    name: "SHOOTING RANGE",
+    cells: [
+      [5, 2], [5, 3], [5, 4], [4, 4], [4, 5], [3, 6], [3, 7], [2, 7], [2, 8], [1, 8],
+      [1, 2], [1, 3], [2, 3], [3, 4], [4, 6], [5, 6], [5, 7], [5, 8], [6, 8],
+      [3, 2], [3, 3], [4, 3], [2, 2], [6, 2], [6, 3],
+    ],
+  },
+];
 
 export const CAMP_MAP_DEF: CampMapDef = {
   id: "main-camp",
@@ -85,12 +98,5 @@ export const CAMP_MAP_DEF: CampMapDef = {
   palette: CAMP_PALETTE,
   terrain: buildTerrain(),
   props: PROPS,
-  zones: [
-    {
-      id: "zone-range",
-      type: "SHOOTING_RANGE",
-      name: "SHOOTING RANGE",
-      cells: rectCells(3, 8, 8, 13),
-    },
-  ],
+  zones: ZONES,
 };
