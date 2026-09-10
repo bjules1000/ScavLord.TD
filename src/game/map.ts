@@ -93,7 +93,10 @@ export interface MapDef {
   collisionWalls?: Array<{ tx: number; ty: number; edge: "N" | "E" | "S" | "W"; kind?: "MOVEMENT" | "SOLID" }>;
   /** Suspended-bridge overlay cells. Base terrain/path underneath is unchanged. */
   bridges?: Array<{ tx: number; ty: number; orientation: "H" | "V" }>;
-  zones?: Array<{ type: "RESOURCE_SITE"; name: string; cells: Array<[number, number]> }>;
+  /** "SHOOTING_RANGE" is camp-only in practice — MapBuilder never offers it for raid docs — but the
+   * literal union stays in sync with mapBuilder/schema.ts's SPECIAL_ZONE_TYPES since both doc types
+   * share one EditorZone shape. */
+  zones?: Array<{ type: "RESOURCE_SITE" | "SHOOTING_RANGE"; name: string; cells: Array<[number, number]> }>;
   props: Prop[];
   checkpoint: CheckpointPart[];
   cover: Array<[number, number, CoverType]>;

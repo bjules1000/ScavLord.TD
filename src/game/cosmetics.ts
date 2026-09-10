@@ -1,7 +1,8 @@
 /**
  * Player/scav cosmetic slots — head/torso/legs/hat, composed onto one fixed silhouette.
  * Mirrors weaponVisuals.ts's platform/part/resolve/compose shape: one "platform" (the
- * body) instead of several, and no click-to-edit hotspots (this is arrow-cycling).
+ * body) instead of several. Both which option is equipped and which color is picked are
+ * click-to-select (a style grid + a color palette per slot) — see CosmeticsPanel.tsx.
  *
  * Recoloring: a sprite marks a region (e.g. "hair", "skin") with one flat marker color
  * in the source PNG; a separate optional shading-overlay PNG (composited multiply) adds
@@ -77,27 +78,46 @@ export interface ColorSwatch {
 export const SWATCH_LISTS: Record<PaintRegionId, ColorSwatch[]> = {
   hair: [
     { id: "hair-brown", name: "BROWN", hex: "#5a3a22" },
+    { id: "hair-dark-brown", name: "DARK BROWN", hex: "#2e1d10" },
+    { id: "hair-auburn", name: "AUBURN", hex: "#6b3420" },
     { id: "hair-ginger", name: "GINGER", hex: "#a85a2e" },
     { id: "hair-blonde", name: "BLONDE", hex: "#c9a227" },
+    { id: "hair-ash-blonde", name: "ASH BLONDE", hex: "#b8a878" },
+    { id: "hair-grey", name: "GREY", hex: "#8a8a86" },
+    { id: "hair-white", name: "WHITE", hex: "#e8e4d8" },
     { id: "hair-black", name: "BLACK", hex: "#1c1712" },
   ],
   skin: [
     { id: "skin-pale", name: "PALE", hex: "#d8b088" },
+    { id: "skin-fair", name: "FAIR", hex: "#e8c9a8" },
     { id: "skin-tan", name: "TAN", hex: "#a8764a" },
+    { id: "skin-olive", name: "OLIVE", hex: "#8a6a42" },
     { id: "skin-brown", name: "BROWN", hex: "#6b4226" },
+    { id: "skin-dark-brown", name: "DARK BROWN", hex: "#4a2c18" },
     { id: "skin-deep", name: "DEEP", hex: "#3c2414" },
+    { id: "skin-ebony", name: "EBONY", hex: "#241408" },
   ],
   fabric: [
     { id: "fabric-olive", name: "OLIVE", hex: "#4a5a3a" },
     { id: "fabric-black", name: "BLACK", hex: "#1c1c1c" },
     { id: "fabric-tan", name: "TAN", hex: "#8a7a55" },
     { id: "fabric-navy", name: "NAVY", hex: "#2a3245" },
+    { id: "fabric-charcoal", name: "CHARCOAL", hex: "#3a3a3a" },
+    { id: "fabric-forest", name: "FOREST", hex: "#2e4a2e" },
+    { id: "fabric-khaki", name: "KHAKI", hex: "#b0a575" },
+    { id: "fabric-maroon", name: "MAROON", hex: "#5a2a2a" },
+    { id: "fabric-slate", name: "SLATE", hex: "#3a4a5a" },
+    { id: "fabric-brown", name: "BROWN", hex: "#4a3620" },
   ],
   trim: [
     { id: "trim-black", name: "BLACK", hex: "#14130f" },
     { id: "trim-brown", name: "BROWN", hex: "#4a3720" },
     { id: "trim-steel", name: "STEEL", hex: "#6a6e76" },
     { id: "trim-gold", name: "GOLD", hex: "#c9a227" },
+    { id: "trim-silver", name: "SILVER", hex: "#b8bcc0" },
+    { id: "trim-red", name: "RED", hex: "#7a1e1e" },
+    { id: "trim-white", name: "WHITE", hex: "#d8d4c8" },
+    { id: "trim-orange", name: "ORANGE", hex: "#b5651d" },
   ],
 };
 
@@ -393,17 +413,14 @@ export function resolveCosmeticLoadout(
   return loadout;
 }
 
-/** Wraps around the catalog array for that slot. Pure — returns a new loadout. */
-export function cycleCosmeticOption(
+/** Sets the equipped option for a slot directly. No-op if optionId isn't in that slot's catalog. */
+export function selectCosmeticOption(
   loadout: CosmeticLoadout,
   slot: CosmeticSlot,
-  direction: 1 | -1,
+  optionId: string,
 ): CosmeticLoadout {
-  const options = COSMETIC_CATALOG[slot];
-  const currentIndex = options.findIndex((o) => o.id === loadout[slot]);
-  const base = currentIndex === -1 ? 0 : currentIndex;
-  const nextIndex = (base + direction + options.length) % options.length;
-  return { ...loadout, [slot]: options[nextIndex]!.id };
+  if (!cosmeticOption(slot, optionId)) return loadout;
+  return { ...loadout, [slot]: optionId };
 }
 
 /** The swatch id currently in effect for a region on a slot (global regions ignore `slot`). */
@@ -432,29 +449,67 @@ export function paintSwatch(
   return list.find((s) => s.id === id) ?? list[0]!;
 }
 
-/** Wraps around that region's swatch list. Pure — returns a new loadout. */
-export function cyclePaintSwatch(
+/** Sets a region's swatch directly, routing through globalPaint or slotPaint as appropriate. */
+function applyPaintSwatch(
   loadout: CosmeticLoadout,
   slot: CosmeticSlot,
   region: PaintRegionId,
-  direction: 1 | -1,
+  swatchId: string,
 ): CosmeticLoadout {
-  const list = SWATCH_LISTS[region];
-  if (!list || !list.length) return loadout;
-  const currentId = resolvePaintSwatchId(loadout, slot, region);
-  const currentIndex = list.findIndex((s) => s.id === currentId);
-  const base = currentIndex === -1 ? 0 : currentIndex;
-  const nextId = list[(base + direction + list.length) % list.length]!.id;
   if (GLOBAL_PAINT_REGIONS.includes(region)) {
-    return { ...loadout, globalPaint: { ...loadout.globalPaint, [region]: nextId } };
+    return { ...loadout, globalPaint: { ...loadout.globalPaint, [region]: swatchId } };
   }
   return {
     ...loadout,
     slotPaint: {
       ...loadout.slotPaint,
-      [slot]: { ...loadout.slotPaint[slot], [region]: nextId },
+      [slot]: { ...loadout.slotPaint[slot], [region]: swatchId },
     },
   };
+}
+
+/** Sets a region's swatch directly. No-op if swatchId isn't a valid id for that region. */
+export function selectPaintSwatch(
+  loadout: CosmeticLoadout,
+  slot: CosmeticSlot,
+  region: PaintRegionId,
+  swatchId: string,
+): CosmeticLoadout {
+  const list = SWATCH_LISTS[region];
+  if (!list || !list.some((s) => s.id === swatchId)) return loadout;
+  return applyPaintSwatch(loadout, slot, region, swatchId);
+}
+
+function pickOne<T>(items: readonly T[], rng: () => number): T {
+  return items[Math.floor(rng() * items.length)] ?? items[0]!;
+}
+
+/**
+ * A fully random but always-valid loadout — one random option per slot, plus a random
+ * swatch for every paint region those chosen options actually declare (global regions
+ * like skin/hair shared across slots, everything else scoped per-slot). Pass a seeded
+ * rng (e.g. mulberry32) for deterministic, reproducible recruits; defaults to Math.random.
+ */
+export function randomCosmeticLoadout(rng: () => number = Math.random): CosmeticLoadout {
+  let loadout = defaultCosmeticLoadout();
+  for (const slot of COSMETIC_SLOTS) {
+    loadout = selectCosmeticOption(loadout, slot, pickOne(COSMETIC_CATALOG[slot], rng).id);
+  }
+  for (const region of GLOBAL_PAINT_REGIONS) {
+    const list = SWATCH_LISTS[region];
+    if (!list?.length) continue;
+    loadout = selectPaintSwatch(loadout, COSMETIC_SLOTS[0]!, region, pickOne(list, rng).id);
+  }
+  for (const slot of COSMETIC_SLOTS) {
+    const option = cosmeticOption(slot, loadout[slot]);
+    for (const region of Object.keys(option?.paintRegions ?? {})) {
+      if (GLOBAL_PAINT_REGIONS.includes(region)) continue;
+      const list = SWATCH_LISTS[region];
+      if (!list?.length) continue;
+      loadout = selectPaintSwatch(loadout, slot, region, pickOne(list, rng).id);
+    }
+  }
+  return loadout;
 }
 
 export interface ComposedCosmeticRecolor {

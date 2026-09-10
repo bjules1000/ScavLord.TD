@@ -23,6 +23,7 @@ export function toCampMapDef(doc: EditorMapDoc): CampMapDef {
         ...(p.hubAction ? { hubAction: p.hubAction } : {}),
       }),
     ),
+    zones: exported.zones,
   };
 }
 
@@ -44,6 +45,7 @@ export function fromCampMapDef(def: CampMapDef): EditorMapDoc {
       ty: p.ty,
       ...(p.hubAction ? { hubAction: p.hubAction } : {}),
     })),
+    zones: def.zones ?? [],
   };
 }
 

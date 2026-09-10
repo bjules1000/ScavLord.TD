@@ -1,5 +1,5 @@
 import type { CheckpointPart, CoverType, PropType } from "../map";
-import type { CampPropType, GateId, TerrainKind, VisualLayerId } from "./schema";
+import type { CampPropType, GateId, SpecialZoneType, TerrainKind, VisualLayerId } from "./schema";
 import type { EnemyKind } from "../types";
 
 export type EditorTool =
@@ -10,7 +10,7 @@ export type EditorTool =
   | { id: "spawn" }
   | { id: "end" }
   | { id: "gate"; gateId: GateId }
-  | { id: "zone" }
+  | { id: "zone"; zoneType?: SpecialZoneType }
   | { id: "prop"; type: PropType | CampPropType }
   | { id: "cover"; type: CoverType }
   | { id: "crate" }

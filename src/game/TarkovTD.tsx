@@ -332,7 +332,7 @@ import ArmoryPanel from "./ArmoryPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import CosmeticsPanel from "./operators/CosmeticsPanel";
-import { cycleCosmeticOption, cyclePaintSwatch } from "./cosmetics";
+import { selectCosmeticOption, selectPaintSwatch } from "./cosmetics";
 import {
   operatorAccuracyBonus,
   operatorEffectiveWeight,
@@ -343,7 +343,6 @@ import {
 } from "./operators/runtime";
 import { operatorSpeedMultiplier, OPERATOR_MOVE_SPEED_TILES } from "./movement";
 import CampHub from "./hub/CampHub";
-import type { HubAction } from "./campActions";
 import { CAMP_MAP_DEF } from "./hub/campMaps/campMain";
 
 import { RAID_SCRAP_MULT } from "./loot";
@@ -721,6 +720,7 @@ function spawnPersistentOperatorTower(
     operatorId: op.id,
     armor: op.equipment.armor,
     armorHp: armorDef ? armorDef.durability : 0,
+    cosmetics: op.cosmetics,
     scavMods: op.equipment.scavMods
       ? { ...op.equipment.scavMods, parts: { ...op.equipment.scavMods.parts } }
       : null,
@@ -983,6 +983,7 @@ export default function TarkovTD() {
       xp: m.pmc.xp,
       armor: m.pmc.armor,
       armorHp: armorDef ? armorDef.durability : 0,
+      cosmetics: m.pmc.cosmetics,
       scavMods: m.pmc.scavMods
         ? { ...m.pmc.scavMods, parts: { ...m.pmc.scavMods.parts } }
         : null,
@@ -3788,8 +3789,9 @@ export default function TarkovTD() {
                     armor: meta.pmc.armor ?? null,
                     attachments: meta.pmc.attachments,
                     level: meta.pmc.level,
+                    cosmetics: meta.pmc.cosmetics,
                   }}
-                  onAction={(action: HubAction) => {
+                  onAction={(action) => {
                     if (action === "supplies") setSuppliesTab("stash");
                     if (action === "skills") setScavTab("overview");
                     setScreen(action);
@@ -4107,15 +4109,15 @@ export default function TarkovTD() {
                   {scavTab === "customize" && (
                     <CosmeticsPanel
                       loadout={meta.pmc.cosmetics}
-                      onCycle={(slot, direction) => {
+                      onSelect={(slot, optionId) => {
                         const cur = metaRef.current;
-                        cur.pmc.cosmetics = cycleCosmeticOption(cur.pmc.cosmetics, slot, direction);
+                        cur.pmc.cosmetics = selectCosmeticOption(cur.pmc.cosmetics, slot, optionId);
                         saveMeta(cur);
                         rerender();
                       }}
-                      onCyclePaint={(slot, region, direction) => {
+                      onSelectPaint={(slot, region, swatchId) => {
                         const cur = metaRef.current;
-                        cur.pmc.cosmetics = cyclePaintSwatch(cur.pmc.cosmetics, slot, region, direction);
+                        cur.pmc.cosmetics = selectPaintSwatch(cur.pmc.cosmetics, slot, region, swatchId);
                         saveMeta(cur);
                         rerender();
                       }}

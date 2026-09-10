@@ -10,6 +10,7 @@ import type { GearFrameName } from "./sprites";
 import type { WeaponClass } from "./gear";
 import { obstacleDrawAlpha, type BarricadeEdge } from "./defenses";
 import { reloadProgress } from "./weapons";
+import { cosmeticFigureCanvas } from "./cosmeticRender";
 
 /** Map a weapon class to the pixel gun art in the gear atlas. */
 function gunFrame(cls: WeaponClass, firing: boolean): GearFrameName {
@@ -546,6 +547,28 @@ export function drawProp(ctx: CanvasRenderingContext2D, x: number, y: number, ty
         px(ctx, "#ffe27a", 14, 22 - h * 0.4, 4, h * 0.4);
         break;
       }
+      case "range-table":
+        // low bench with a rifle laid flat and a stacked ammo box
+        px(ctx, "#00000040", 3, 27, 26, 4);
+        px(ctx, "#3a2e1c", 4, 19, 24, 4);
+        px(ctx, "#594930", 5, 17, 22, 3);
+        px(ctx, "#2a2114", 6, 23, 3, 7);
+        px(ctx, "#2a2114", 23, 23, 3, 7);
+        px(ctx, "#1c1a17", 7, 10, 20, 3);
+        px(ctx, "#3c352a", 9, 8, 5, 4);
+        px(ctx, "#4a3720", 20, 12, 6, 5);
+        px(ctx, "#a8853f", 21, 13, 4, 2);
+        break;
+      case "range-dummy":
+        // post-mounted burlap target dummy
+        px(ctx, "#00000040", 10, 28, 12, 3);
+        px(ctx, "#3a2e1c", 14, 18, 4, 12);
+        px(ctx, "#8a7355", 9, 11, 14, 12);
+        px(ctx, "#6b5a42", 9, 11, 14, 3);
+        px(ctx, "#c9b48a", 11, 3, 10, 9);
+        px(ctx, "#8a7355", 11, 3, 10, 2);
+        px(ctx, "#c23b2c", 13, 15, 6, 6);
+        break;
     }
   });
 }
@@ -661,7 +684,17 @@ export function drawDropBag(ctx: CanvasRenderingContext2D, tx: number, ty: numbe
 /** Core operator sprite. Drawn in the 32px art grid around (cx, cy) at `scale`. */
 export type DrawableOperator = Pick<
   Tower,
-  "id" | "weapon" | "armor" | "armorHp" | "attachments" | "hurt" | "angle" | "pmc" | "level" | "flash"
+  | "id"
+  | "weapon"
+  | "armor"
+  | "armorHp"
+  | "attachments"
+  | "hurt"
+  | "angle"
+  | "pmc"
+  | "level"
+  | "flash"
+  | "cosmetics"
 >;
 
 export function drawOperator(
@@ -694,9 +727,23 @@ export function drawOperator(
   const bob = Math.sin(time / 260 + t.id) > 0 ? 0 : 1;
   const body = hurt ? "#ff8d7a" : w.color;
   const y = bob;
-  const drewBody = drawGear(ctx, (bob ? "unk_2" : "unk_1") as GearFrameName, 0, -1 + y, 18, {
-    anchor: "center",
-  });
+  let drewBody = false;
+  if (t.cosmetics) {
+    // A custom-painted body, authored facing right — mirror it around the operator's
+    // own origin when facing left, same as the weapon rotates around that origin.
+    const figure = cosmeticFigureCanvas(t.cosmetics, () => {});
+    const facingLeft = Math.cos(angle) < 0;
+    ctx.save();
+    ctx.scale(facingLeft ? -1 : 1, 1);
+    ctx.drawImage(figure, -16, -20 + y, 32, 32);
+    ctx.restore();
+    drewBody = true;
+  }
+  if (!drewBody) {
+    drewBody = drawGear(ctx, (bob ? "unk_2" : "unk_1") as GearFrameName, 0, -1 + y, 18, {
+      anchor: "center",
+    });
+  }
 
   if (!drewBody) {
   // legs + boots

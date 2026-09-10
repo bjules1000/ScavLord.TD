@@ -1,4 +1,5 @@
 import type { RadioProgressionState } from "./radioProgression";
+import type { CosmeticLoadout } from "../cosmetics";
 
 /** Canonical operator combat dimensions. Deltas are applied at runtime, not baked into equipment. */
 export interface OperatorBaseStats {
@@ -9,11 +10,6 @@ export interface OperatorBaseStats {
 }
 
 export type OperatorStatus = "alive" | "dead";
-
-export interface OperatorAppearance {
-  presetId: string;
-  paletteId?: string;
-}
 
 export interface OperatorEquipment {
   weapon: string;
@@ -49,7 +45,7 @@ export interface PersistentOperator {
   /** @deprecated Prefer traitIds — kept for save/UI compat. */
   negativeTraitIds?: string[];
   equipment: OperatorEquipment;
-  appearance: OperatorAppearance;
+  cosmetics: CosmeticLoadout;
   progression: OperatorProgression;
   status: OperatorStatus;
 }
@@ -67,7 +63,7 @@ export interface RecruitCandidate {
   perkIds: string[];
   negativeTraitIds?: string[];
   equipment: OperatorEquipment;
-  appearance: OperatorAppearance;
+  cosmetics: CosmeticLoadout;
   cost: number;
   /** Internal generation quality used for this candidate. */
   generationQuality?: number;

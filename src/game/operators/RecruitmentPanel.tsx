@@ -4,6 +4,7 @@ import {
   buildSelectedDetailView,
   formatRecruitmentRoubles,
 } from "./recruitmentUi";
+import CosmeticFigure from "../CosmeticFigure";
 import type { RecruitCandidate } from "./types";
 import {
   isProceduralRecruitmentUnlocked,
@@ -69,8 +70,17 @@ function CandidateCard({
         selected ? "border-primary ring-2 ring-primary/60" : "border-border/60 hover:border-border"
       }`}
     >
-      <div className="font-display text-[14px] text-primary">{view.name}</div>
-      <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{view.archetype}</div>
+      <div className="flex items-start gap-2">
+        <CosmeticFigure
+          loadout={candidate.cosmetics}
+          scale={2}
+          className="shrink-0 rounded border border-border/50 bg-black/25"
+        />
+        <div>
+          <div className="font-display text-[14px] text-primary">{view.name}</div>
+          <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{view.archetype}</div>
+        </div>
+      </div>
       <div className="mt-2.5 space-y-1">
         {view.statRows.map((row) => (
           <StatRow key={row.key} label={row.label} current={row.current} bar={row.bar} />
@@ -103,7 +113,14 @@ function SelectedCandidateDetail({
 
   return (
     <div className="pixel-card mt-3 p-3.5 text-left font-mono sm:p-4">
-      <div className="font-display text-[14px] text-primary">{view.identity}</div>
+      <div className="flex items-center gap-3">
+        <CosmeticFigure
+          loadout={candidate.cosmetics}
+          scale={4}
+          className="shrink-0 rounded border border-border/50 bg-black/25"
+        />
+        <div className="font-display text-[14px] text-primary">{view.identity}</div>
+      </div>
 
       <div className="mt-3 grid gap-4 lg:grid-cols-2 lg:gap-6">
         <div>

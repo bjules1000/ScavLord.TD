@@ -2,6 +2,7 @@ import type { Meta } from "../meta";
 import { DEV_TOOLS_ENABLED } from "../dev/tools";
 import {
   effectiveRecruitmentProfiles,
+  effectiveUniqueCosmetics,
   getRecruitmentLabOverrides,
   progressionFactsFromMeta,
 } from "./recruitmentLabCore";
@@ -148,7 +149,7 @@ export function candidateFromOperator(op: PersistentOperator, cost: number): Rec
       attachments: [...op.equipment.attachments],
       armor: op.equipment.armor,
     },
-    appearance: { ...op.appearance },
+    cosmetics: { ...op.cosmetics, globalPaint: { ...op.cosmetics.globalPaint }, slotPaint: { ...op.cosmetics.slotPaint } },
     cost,
   };
   if (op.uniqueId) c.uniqueId = op.uniqueId;
@@ -172,7 +173,11 @@ export function candidateToOperator(candidate: RecruitCandidate, operatorId: str
       attachments: [...candidate.equipment.attachments],
       armor: candidate.equipment.armor,
     },
-    appearance: { ...candidate.appearance },
+    cosmetics: {
+      ...candidate.cosmetics,
+      globalPaint: { ...candidate.cosmetics.globalPaint },
+      slotPaint: { ...candidate.cosmetics.slotPaint },
+    },
     progression: { level: 1, xp: 0 },
     status: "alive",
   };
@@ -247,6 +252,11 @@ export function hireUniqueContact(
   if (meta.bank < cost) return { ok: false, reason: "Insufficient funds." };
   meta.bank -= cost;
   const operator = uniqueToOperator(def, operatorId);
+  // DEV-only appearance override from the Recruitment Lab (see RecruitmentLab.tsx's
+  // "unique" tab) — no-op (returns the canonical cosmetics unchanged) when unset.
+  if (DEV_TOOLS_ENABLED) {
+    operator.cosmetics = effectiveUniqueCosmetics(uniqueId, getRecruitmentLabOverrides());
+  }
   meta.crew.operators.push(operator);
   meta.crew.radio = {
     ...radio,

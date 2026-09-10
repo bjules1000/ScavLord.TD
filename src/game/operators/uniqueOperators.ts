@@ -5,6 +5,7 @@
 
 import type { OperatorBaseStats, OperatorEquipment, PersistentOperator } from "./types";
 import { resolveTraitIds } from "./types";
+import { defaultCosmeticLoadout, type CosmeticLoadout } from "../cosmetics";
 import type { RecruitmentRequirement } from "./recruitmentRequirements";
 import {
   isUniqueContactRadioActive,
@@ -54,7 +55,8 @@ export interface UniqueOperatorDefinition {
   callsign?: string;
   profileId?: string;
   roleLabel: string;
-  appearancePresetId: string;
+  /** Fixed appearance — every unique always looks the same, unlike randomized recruits. */
+  cosmetics: CosmeticLoadout;
   stats: OperatorBaseStats;
   potential: OperatorBaseStats;
   traitIds: string[];
@@ -76,7 +78,9 @@ export const CANONICAL_UNIQUE_OPERATORS: UniqueOperatorDefinition[] = [
     callsign: "WOLF",
     profileId: "marksman",
     roleLabel: "MARKSMAN",
-    appearancePresetId: "scav_2",
+    // WOLF is the default option in every cosmetic slot (see cosmetics.ts's catalog), so
+    // the default loadout is already Wolf's own art, on-theme with the character's name.
+    cosmetics: defaultCosmeticLoadout(),
     stats: { aim: 56, toughness: 48, handling: 50, mobility: 46 },
     potential: { aim: 98, toughness: 72, handling: 82, mobility: 68 },
     traitIds: ["marksman"],
@@ -383,7 +387,13 @@ export function uniqueToOperator(
       attachments: [...def.equipment.attachments],
       armor: def.equipment.armor,
     },
-    appearance: { presetId: def.appearancePresetId },
+    // Cloned (not shared) like equipment above, so per-operator state never mutates the
+    // canonical definition.
+    cosmetics: {
+      ...def.cosmetics,
+      globalPaint: { ...def.cosmetics.globalPaint },
+      slotPaint: { ...def.cosmetics.slotPaint },
+    },
     progression: { level: 1, xp: 0 },
     status: "alive",
   };

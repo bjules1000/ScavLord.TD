@@ -54,6 +54,15 @@ import {
   nextRetransmissionCashCost,
   type RetransmissionRules,
 } from "./retransmission";
+import { UNIQUE_OPERATOR_BY_ID } from "./uniqueOperators";
+import {
+  COSMETIC_SLOTS,
+  SWATCH_LISTS,
+  cosmeticOption,
+  defaultCosmeticLoadout,
+  type CosmeticLoadout,
+  type CosmeticSlot,
+} from "../cosmetics";
 
 export const RECRUITMENT_LAB_STORAGE_KEY = "scavlord.dev.recruitmentLab.v1";
 
@@ -93,6 +102,9 @@ export type RecruitmentLabOverrides = {
   profiles: Record<string, ProfileOverride>;
   previewCandidates: Record<string, CandidateOverride>;
   uniqueLifecycle?: Record<string, UniqueContactLifecycle>;
+  /** Per-slot/per-region patch onto a unique's canonical cosmetics — only fields present
+   * here are overridden, everything else falls back to the canonical definition. */
+  uniqueCosmetics?: Record<string, Partial<CosmeticLoadout>>;
 };
 
 export type RecruitmentLabView = "radio" | "profiles" | "unique" | "candidates";
@@ -194,6 +206,7 @@ export function resetRecruitmentLabCandidate(candidateId: string): void {
 export function resetRecruitmentLabUnique(): void {
   const next = { ...appliedOverrides };
   delete next.uniqueLifecycle;
+  delete next.uniqueCosmetics;
   appliedOverrides = pruneOverrides(next);
 }
 
@@ -211,6 +224,7 @@ function normalizeOverrides(src: Partial<RecruitmentLabOverrides>): RecruitmentL
     ...(src.retransmissionRules ? { retransmissionRules: src.retransmissionRules } : {}),
     ...(src.qualityTraitOverrides ? { qualityTraitOverrides: src.qualityTraitOverrides } : {}),
     ...(src.uniqueLifecycle ? { uniqueLifecycle: src.uniqueLifecycle } : {}),
+    ...(src.uniqueCosmetics ? { uniqueCosmetics: src.uniqueCosmetics } : {}),
   });
 }
 
@@ -238,6 +252,9 @@ function pruneOverrides(src: RecruitmentLabOverrides): RecruitmentLabOverrides {
   if (src.uniqueLifecycle && Object.keys(src.uniqueLifecycle).length) {
     out.uniqueLifecycle = { ...src.uniqueLifecycle };
   }
+  if (src.uniqueCosmetics && Object.keys(src.uniqueCosmetics).length) {
+    out.uniqueCosmetics = { ...src.uniqueCosmetics };
+  }
   return out;
 }
 
@@ -257,6 +274,7 @@ export function modifiedRecruitmentLabCount(overrides: RecruitmentLabOverrides):
   n += Object.keys(overrides.profiles).length;
   n += Object.keys(overrides.previewCandidates).length;
   n += Object.keys(overrides.uniqueLifecycle ?? {}).length;
+  n += Object.keys(overrides.uniqueCosmetics ?? {}).length;
   return n;
 }
 
@@ -326,6 +344,40 @@ export function mergeRecruitmentKit(
     attachmentChance:
       typeof patch.attachmentChance === "number" ? patch.attachmentChance : base.attachmentChance,
   };
+}
+
+/** Canonical unique cosmetics + a per-slot/region DEV patch = effective test appearance. */
+export function effectiveUniqueCosmetics(
+  uniqueId: string,
+  overrides: RecruitmentLabOverrides = getRecruitmentLabOverrides(),
+): CosmeticLoadout {
+  const base = UNIQUE_OPERATOR_BY_ID[uniqueId]?.cosmetics ?? defaultCosmeticLoadout();
+  const patch = overrides.uniqueCosmetics?.[uniqueId];
+  if (!patch) return base;
+  const next: CosmeticLoadout = {
+    ...base,
+    globalPaint: { ...base.globalPaint },
+    slotPaint: { ...base.slotPaint },
+  };
+  for (const slot of COSMETIC_SLOTS) {
+    const optionId = patch[slot];
+    if (optionId && cosmeticOption(slot, optionId)) next[slot] = optionId;
+  }
+  for (const [region, swatchId] of Object.entries(patch.globalPaint ?? {})) {
+    if (swatchId && SWATCH_LISTS[region]?.some((s) => s.id === swatchId)) {
+      next.globalPaint[region] = swatchId;
+    }
+  }
+  for (const [slot, regions] of Object.entries(patch.slotPaint ?? {}) as Array<
+    [CosmeticSlot, Record<string, string> | undefined]
+  >) {
+    const merged = { ...(next.slotPaint[slot] ?? {}) };
+    for (const [region, swatchId] of Object.entries(regions ?? {})) {
+      if (swatchId && SWATCH_LISTS[region]?.some((s) => s.id === swatchId)) merged[region] = swatchId;
+    }
+    next.slotPaint[slot] = merged;
+  }
+  return next;
 }
 
 export function effectiveRecruitmentProfile(
@@ -565,6 +617,14 @@ export function formatRecruitmentPatch(
       JSON.stringify(applied.qualityTraitOverrides ?? null)
     ) {
       lines.push(`qualityTraitOverrides: ${JSON.stringify(draft.qualityTraitOverrides ?? {})}`);
+    }
+    lines.push("");
+  }
+
+  if (JSON.stringify(draft.uniqueCosmetics ?? {}) !== JSON.stringify(applied.uniqueCosmetics ?? {})) {
+    lines.push("UNIQUE COSMETICS");
+    for (const [id, patch] of Object.entries(draft.uniqueCosmetics ?? {})) {
+      lines.push(`${id}: ${JSON.stringify(patch)}`);
     }
     lines.push("");
   }

@@ -9,7 +9,19 @@ import {
   isValidStats,
 } from "./stats";
 import { WEAPONS } from "../gear";
+import { randomCosmeticLoadout, resolveCosmeticLoadout, type CosmeticLoadout } from "../cosmetics";
+import { mulberry32, seedFromParts } from "./rng";
 import { resolveTraitIds, type OperatorBaseStats, type PersistentOperator, type RecruitCandidate } from "./types";
+
+/** Old saves predate cosmetics entirely; back-fill a stable-per-id random loadout instead of
+ * leaving every migrated operator/candidate with a blank/default one. New saves round-trip as-is. */
+function resolveEntityCosmetics(
+  cosmetics: Partial<CosmeticLoadout> | undefined,
+  seedKey: string,
+): CosmeticLoadout {
+  if (cosmetics) return resolveCosmeticLoadout(cosmetics);
+  return randomCosmeticLoadout(mulberry32(seedFromParts("legacy-cosmetics", seedKey)));
+}
 
 export function migrateV5ToV6(v5: Meta): Meta {
   const base = { ...v5 };
@@ -75,9 +87,7 @@ export function normalizeOperator(raw: Partial<PersistentOperator>): PersistentO
       attachments: Array.isArray(raw.equipment?.attachments) ? [...raw.equipment.attachments] : [],
       armor: raw.equipment?.armor ?? null,
     },
-    appearance: raw.appearance?.paletteId
-      ? { presetId: raw.appearance?.presetId ?? "scav_0", paletteId: raw.appearance.paletteId }
-      : { presetId: raw.appearance?.presetId ?? "scav_0" },
+    cosmetics: resolveEntityCosmetics(raw.cosmetics, raw.id),
     progression: {
       level: Math.max(1, Number(raw.progression?.level) || 1),
       xp: Math.max(0, Number(raw.progression?.xp) || 0),
@@ -99,7 +109,8 @@ export function normalizeMetaV6(raw: Partial<Meta>, runs: number): Meta {
   const candidates = crewBase.recruitment.candidates.map((c) => {
     const stats = isValidStats(c.stats) ? c.stats : { aim: 50, toughness: 50, handling: 50, mobility: 50 };
     const potential = normalizeCandidatePotential({ ...c, stats });
-    return { ...c, stats, potential };
+    const cosmetics = resolveEntityCosmetics(c.cosmetics, c.candidateId);
+    return { ...c, stats, potential, cosmetics };
   });
   return {
     ...(raw as Meta),

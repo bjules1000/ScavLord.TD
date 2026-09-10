@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createBlankCampMap } from "./campDocument";
-import { placeProp } from "./paint";
+import { paintZoneCells, placeProp } from "./paint";
 import { setPropHubAction } from "./campPaint";
 import { lockDoc } from "./document";
 import {
@@ -15,6 +15,7 @@ function sampleDoc() {
   doc = placeProp(doc, 2, 2, "crate");
   doc = setPropHubAction(doc, doc.props[0]!.id, "supplies");
   doc = placeProp(doc, 5, 5, "tent");
+  doc = paintZoneCells(doc, [[6, 6], [6, 7]], null, "SHOOTING_RANGE");
   doc = lockDoc(doc);
   return doc;
 }
@@ -31,6 +32,16 @@ describe("toCampExport / stringifyCampExport", () => {
     const tent = exported.props.find((p) => p.type === "tent")!;
     expect(crate.hubAction).toBe("supplies");
     expect(tent.hubAction).toBeUndefined();
+  });
+
+  it("includes painted zones", () => {
+    const exported = toCampExport(sampleDoc());
+    expect(exported.zones).toHaveLength(1);
+    expect(exported.zones[0]!.type).toBe("SHOOTING_RANGE");
+    expect(exported.zones[0]!.cells).toEqual([
+      [6, 6],
+      [6, 7],
+    ]);
   });
 });
 
