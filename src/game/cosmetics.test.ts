@@ -7,12 +7,12 @@ import {
   SWATCH_LISTS,
   composeCosmeticLayers,
   cosmeticOption,
-  cycleCosmeticOption,
-  cyclePaintSwatch,
   defaultCosmeticLoadout,
   paintSwatch,
   resolveCosmeticLoadout,
   resolvePaintSwatchId,
+  selectCosmeticOption,
+  selectPaintSwatch,
 } from "./cosmetics";
 
 describe("defaultCosmeticLoadout", () => {
@@ -24,35 +24,27 @@ describe("defaultCosmeticLoadout", () => {
   });
 });
 
-describe("cycleCosmeticOption", () => {
-  it("moves to the next option in the catalog", () => {
+describe("selectCosmeticOption", () => {
+  it("sets the chosen option for a slot", () => {
     const loadout = defaultCosmeticLoadout();
-    const next = cycleCosmeticOption(loadout, "head", 1);
-    expect(next.head).toBe(COSMETIC_CATALOG.head[1]!.id);
+    const target = COSMETIC_CATALOG.head[1]!.id;
+    const next = selectCosmeticOption(loadout, "head", target);
+    expect(next.head).toBe(target);
     // Other slots untouched.
     expect(next.torso).toBe(loadout.torso);
   });
 
-  it("wraps forward past the last option", () => {
+  it("is a no-op for an id that doesn't exist in that slot's catalog", () => {
     const loadout = defaultCosmeticLoadout();
-    const lastIndex = COSMETIC_CATALOG.legs.length - 1;
-    let cur = loadout;
-    for (let i = 0; i < lastIndex; i++) cur = cycleCosmeticOption(cur, "legs", 1);
-    expect(cur.legs).toBe(COSMETIC_CATALOG.legs[lastIndex]!.id);
-    const wrapped = cycleCosmeticOption(cur, "legs", 1);
-    expect(wrapped.legs).toBe(COSMETIC_CATALOG.legs[0]!.id);
+    const next = selectCosmeticOption(loadout, "hat", "not-a-real-id");
+    expect(next).toBe(loadout);
   });
 
-  it("wraps backward before the first option", () => {
+  it("is a no-op for a valid id from a different slot", () => {
     const loadout = defaultCosmeticLoadout();
-    const prev = cycleCosmeticOption(loadout, "torso", -1);
-    expect(prev.torso).toBe(COSMETIC_CATALOG.torso[COSMETIC_CATALOG.torso.length - 1]!.id);
-  });
-
-  it("recovers from an unknown current id by starting at index 0", () => {
-    const loadout = { ...defaultCosmeticLoadout(), hat: "not-a-real-id" };
-    const next = cycleCosmeticOption(loadout, "hat", 1);
-    expect(next.hat).toBe(COSMETIC_CATALOG.hat[1]!.id);
+    const foreignId = COSMETIC_CATALOG.torso[0]!.id;
+    const next = selectCosmeticOption(loadout, "legs", foreignId);
+    expect(next).toBe(loadout);
   });
 });
 
@@ -131,41 +123,35 @@ describe("resolvePaintSwatchId / paintSwatch", () => {
   });
 });
 
-describe("cyclePaintSwatch", () => {
-  it("cycles a non-global region independently per slot", () => {
+describe("selectPaintSwatch", () => {
+  it("sets a non-global region independently per slot", () => {
     let loadout = defaultCosmeticLoadout();
-    loadout = cyclePaintSwatch(loadout, "torso", "fabric", 1);
-    const torsoFabric = resolvePaintSwatchId(loadout, "torso", "fabric");
-    expect(torsoFabric).toBe(SWATCH_LISTS.fabric![1]!.id);
-    // legs' fabric choice is untouched by torso's cycle.
+    const target = SWATCH_LISTS.fabric![2]!.id;
+    loadout = selectPaintSwatch(loadout, "torso", "fabric", target);
+    expect(resolvePaintSwatchId(loadout, "torso", "fabric")).toBe(target);
+    // legs' fabric choice is untouched by torso's selection.
     expect(resolvePaintSwatchId(loadout, "legs", "fabric")).toBe(SWATCH_LISTS.fabric![0]!.id);
   });
 
-  it("wraps around a region's swatch list in both directions", () => {
-    let loadout = defaultCosmeticLoadout();
-    const last = SWATCH_LISTS.trim!.length - 1;
-    for (let i = 0; i < last; i++) loadout = cyclePaintSwatch(loadout, "hat", "trim", 1);
-    expect(resolvePaintSwatchId(loadout, "hat", "trim")).toBe(SWATCH_LISTS.trim![last]!.id);
-    loadout = cyclePaintSwatch(loadout, "hat", "trim", 1);
-    expect(resolvePaintSwatchId(loadout, "hat", "trim")).toBe(SWATCH_LISTS.trim![0]!.id);
-    loadout = cyclePaintSwatch(loadout, "hat", "trim", -1);
-    expect(resolvePaintSwatchId(loadout, "hat", "trim")).toBe(SWATCH_LISTS.trim![last]!.id);
+  it("is a no-op for an id that isn't in that region's swatch list", () => {
+    const loadout = defaultCosmeticLoadout();
+    expect(selectPaintSwatch(loadout, "hat", "trim", "not-a-real-id")).toBe(loadout);
   });
 
   it("is a no-op for a region with no swatch list", () => {
     const loadout = defaultCosmeticLoadout();
-    expect(cyclePaintSwatch(loadout, "head", "not-a-region", 1)).toBe(loadout);
+    expect(selectPaintSwatch(loadout, "head", "not-a-region", "anything")).toBe(loadout);
   });
 
-  it("treats skin as global: cycling from one slot is visible from every slot", () => {
+  it("treats skin as global: selecting from one slot is visible from every slot", () => {
     expect(GLOBAL_PAINT_REGIONS).toContain("skin");
     let loadout = defaultCosmeticLoadout();
-    loadout = cyclePaintSwatch(loadout, "head", "skin", 1);
-    const expected = SWATCH_LISTS.skin![1]!.id;
-    expect(resolvePaintSwatchId(loadout, "head", "skin")).toBe(expected);
+    const target = SWATCH_LISTS.skin![2]!.id;
+    loadout = selectPaintSwatch(loadout, "head", "skin", target);
+    expect(resolvePaintSwatchId(loadout, "head", "skin")).toBe(target);
     // Same global value read from an entirely different slot.
-    expect(resolvePaintSwatchId(loadout, "torso", "skin")).toBe(expected);
-    expect(resolvePaintSwatchId(loadout, "legs", "skin")).toBe(expected);
+    expect(resolvePaintSwatchId(loadout, "torso", "skin")).toBe(target);
+    expect(resolvePaintSwatchId(loadout, "legs", "skin")).toBe(target);
   });
 });
 
@@ -190,7 +176,7 @@ describe("composeCosmeticLayers recolor metadata", () => {
 
   it("resolves the actual chosen swatch hex into targetHex, not just the default", () => {
     let loadout = defaultCosmeticLoadout();
-    loadout = cyclePaintSwatch(loadout, "head", "hair", 1);
+    loadout = selectPaintSwatch(loadout, "head", "hair", SWATCH_LISTS.hair![1]!.id);
     const layers = composeCosmeticLayers(loadout);
     const hair = layers.find((l) => l.slot === "head")!.recolor.find((r) => r.region === "hair")!;
     expect(hair.targetHex).toBe(SWATCH_LISTS.hair![1]!.hex);
@@ -217,7 +203,7 @@ describe("composeCosmeticLayers shadeMarkers", () => {
 
   it("tracks the region's swatch when it changes, not a fixed color", () => {
     let loadout = { ...defaultCosmeticLoadout(), head: "head-stash" };
-    loadout = cyclePaintSwatch(loadout, "head", "skin", 1);
+    loadout = selectPaintSwatch(loadout, "head", "skin", SWATCH_LISTS.skin![1]!.id);
     const head = composeCosmeticLayers(loadout).find((l) => l.slot === "head")!;
     const shade = head.recolor.find((r) => r.markerHex === "#baba00")!;
     const [r, g, b] = channels(SWATCH_LISTS.skin![1]!.hex);

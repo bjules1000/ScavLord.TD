@@ -332,7 +332,7 @@ import ArmoryPanel from "./ArmoryPanel";
 import { PERKS, crewStatRows, type PersistentOperator } from "./operators";
 import RecruitmentPanel, { RECRUITMENT_SUBTITLE } from "./operators/RecruitmentPanel";
 import CosmeticsPanel from "./operators/CosmeticsPanel";
-import { cycleCosmeticOption, cyclePaintSwatch } from "./cosmetics";
+import { selectCosmeticOption, selectPaintSwatch } from "./cosmetics";
 import {
   operatorAccuracyBonus,
   operatorEffectiveWeight,
@@ -4107,15 +4107,15 @@ export default function TarkovTD() {
                   {scavTab === "customize" && (
                     <CosmeticsPanel
                       loadout={meta.pmc.cosmetics}
-                      onCycle={(slot, direction) => {
+                      onSelect={(slot, optionId) => {
                         const cur = metaRef.current;
-                        cur.pmc.cosmetics = cycleCosmeticOption(cur.pmc.cosmetics, slot, direction);
+                        cur.pmc.cosmetics = selectCosmeticOption(cur.pmc.cosmetics, slot, optionId);
                         saveMeta(cur);
                         rerender();
                       }}
-                      onCyclePaint={(slot, region, direction) => {
+                      onSelectPaint={(slot, region, swatchId) => {
                         const cur = metaRef.current;
-                        cur.pmc.cosmetics = cyclePaintSwatch(cur.pmc.cosmetics, slot, region, direction);
+                        cur.pmc.cosmetics = selectPaintSwatch(cur.pmc.cosmetics, slot, region, swatchId);
                         saveMeta(cur);
                         rerender();
                       }}
