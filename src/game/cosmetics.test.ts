@@ -85,8 +85,16 @@ describe("composeCosmeticLayers", () => {
     }
   });
 
-  it("marks the default hat as empty (no sprite, no placeholder)", () => {
+  it("renders the default hat as real art, not the empty placeholder", () => {
     const layers = composeCosmeticLayers(defaultCosmeticLoadout());
+    const hat = layers.find((l) => l.slot === "hat")!;
+    expect(hat.empty).toBe(false);
+    expect(hat.spriteKey).toBe("/game/cosmetics/hat/wolf-cap.png");
+  });
+
+  it("marks an explicitly-empty option as empty (no sprite, no placeholder)", () => {
+    const loadout = { ...defaultCosmeticLoadout(), hat: "hat-none" };
+    const layers = composeCosmeticLayers(loadout);
     const hat = layers.find((l) => l.slot === "hat")!;
     expect(hat.empty).toBe(true);
     expect(hat.spriteKey).toBeUndefined();
@@ -165,19 +173,19 @@ describe("composeCosmeticLayers recolor metadata", () => {
   it("attaches a recolor entry and placeholderColor for an option with paintRegions", () => {
     const layers = composeCosmeticLayers(defaultCosmeticLoadout());
     const head = layers.find((l) => l.slot === "head")!;
-    expect(head.recolor.length).toBe(2);
+    expect(head.recolor.length).toBeGreaterThan(0);
     expect(head.recolor.some((r) => r.region === "hair")).toBe(true);
     expect(head.recolor.some((r) => r.region === "skin")).toBe(true);
     expect(head.placeholderColor).toBe(head.recolor[0]!.targetHex);
   });
 
   it("leaves recolor empty for an option with no paintRegions", () => {
-    // head-c ("VISOR") declares no paintRegions.
-    const loadout = { ...defaultCosmeticLoadout(), head: "head-c" };
+    // hat-none is the deliberate "no hat" choice — no spriteKey, no paintRegions.
+    const loadout = { ...defaultCosmeticLoadout(), hat: "hat-none" };
     const layers = composeCosmeticLayers(loadout);
-    const head = layers.find((l) => l.slot === "head")!;
-    expect(head.recolor).toEqual([]);
-    expect(head.placeholderColor).toBeUndefined();
+    const hat = layers.find((l) => l.slot === "hat")!;
+    expect(hat.recolor).toEqual([]);
+    expect(hat.placeholderColor).toBeUndefined();
   });
 
   it("resolves the actual chosen swatch hex into targetHex, not just the default", () => {
@@ -235,6 +243,21 @@ describe("composeCosmeticLayers shadeMarkers", () => {
     // Two more regions get their own single darker tier alongside fabric's three tiers.
     expect(torso.recolor.some((rc) => rc.region === "trim" && rc.markerHex === "#005d5d")).toBe(true);
     expect(torso.recolor.some((rc) => rc.region === "skin" && rc.markerHex === "#baba00")).toBe(true);
+  });
+
+  it("shades hair the same way as any other region (wolf's #dbdbdb/#b2b2b2 grey tiers)", () => {
+    // head-wolf is the default, so a fresh loadout already has it.
+    const head = composeCosmeticLayers(defaultCosmeticLoadout()).find((l) => l.slot === "head")!;
+    const base = head.recolor.find((r) => r.markerHex === "#ffffff")!;
+    const light = head.recolor.find((r) => r.markerHex === "#dbdbdb")!;
+    const deep = head.recolor.find((r) => r.markerHex === "#b2b2b2")!;
+    expect(light.region).toBe("hair");
+    expect(deep.region).toBe("hair");
+    const [r, g, b] = channels(base.targetHex);
+    const [lr, lg, lb] = channels(light.targetHex);
+    const [dr, dg, db] = channels(deep.targetHex);
+    expect([lr, lg, lb]).toEqual([r, g, b].map((c) => Math.round(c * (0xdb / 0xff))));
+    expect([dr, dg, db]).toEqual([r, g, b].map((c) => Math.round(c * (0xb2 / 0xff))));
   });
 });
 

@@ -146,19 +146,27 @@ const SKIN_SHADOW_FACTOR = 0xba / 0xff;
 const TRIM_SHADOW_FACTOR = 0x5d / 0xff;
 const FABRIC_SHADOW_FACTOR = 0xad / 0xff;
 const FABRIC_DEEP_SHADOW_FACTOR = 0x70 / 0xff;
+const HAIR_SHADOW_FACTOR = 0xdb / 0xff;
+const HAIR_DEEP_SHADOW_FACTOR = 0xb2 / 0xff;
 
-/** Placeholder catalog. Real options are added by dropping a PNG + one entry here. */
+/**
+ * Real catalog — every option here has actual art. First entry per slot is the default.
+ * A hat/armor slot's "NONE" option is a deliberate choice (see CosmeticOption.empty), not a
+ * missing-art placeholder, so it stays.
+ */
 export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
   head: [
-    { id: "head-a", slot: "head", name: "GRUNT", paintRegions: { hair: "#ff00ff", skin: "#00ffff" } },
-    { id: "head-b", slot: "head", name: "BALACLAVA", paintRegions: { skin: "#00ffff" } },
-    { id: "head-c", slot: "head", name: "VISOR" },
     {
       id: "head-wolf",
       slot: "head",
       name: "WOLF",
       spriteKey: "/game/cosmetics/head/wolf.png",
-      paintRegions: { hair: "#000000", skin: "#ffff00" },
+      paintRegions: { hair: "#ffffff", skin: "#ffff00" },
+      shadeMarkers: [
+        { region: "hair", markerHex: "#dbdbdb", factor: HAIR_SHADOW_FACTOR },
+        { region: "hair", markerHex: "#b2b2b2", factor: HAIR_DEEP_SHADOW_FACTOR },
+        { region: "skin", markerHex: "#baba00", factor: SKIN_SHADOW_FACTOR },
+      ],
     },
     {
       id: "head-stash",
@@ -170,15 +178,17 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
     },
   ],
   torso: [
-    { id: "torso-a", slot: "torso", name: "FIELD JACKET", paintRegions: { fabric: "#ff00ff" } },
-    { id: "torso-b", slot: "torso", name: "PLATE CARRIER" },
-    { id: "torso-c", slot: "torso", name: "RAIN SLICKER", paintRegions: { fabric: "#ff00ff" } },
     {
       id: "torso-wolf",
       slot: "torso",
       name: "WOLF",
       spriteKey: "/game/cosmetics/torso/wolf.png",
       paintRegions: { fabric: "#ff00ff", trim: "#00ffff", skin: "#ffff00" },
+      shadeMarkers: [
+        { region: "fabric", markerHex: "#ad00ad", factor: FABRIC_SHADOW_FACTOR },
+        { region: "fabric", markerHex: "#700270", factor: FABRIC_DEEP_SHADOW_FACTOR },
+        { region: "skin", markerHex: "#baba00", factor: SKIN_SHADOW_FACTOR },
+      ],
     },
     {
       id: "torso-stash",
@@ -208,15 +218,16 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
     },
   ],
   legs: [
-    { id: "legs-a", slot: "legs", name: "FATIGUES", paintRegions: { fabric: "#ff00ff" } },
-    { id: "legs-b", slot: "legs", name: "CARGO PANTS", paintRegions: { fabric: "#ff00ff" } },
-    { id: "legs-c", slot: "legs", name: "WADERS" },
     {
       id: "legs-wolf",
       slot: "legs",
       name: "WOLF",
       spriteKey: "/game/cosmetics/legs/wolf.png",
       paintRegions: { fabric: "#ff00ff", trim: "#00ffff" },
+      shadeMarkers: [
+        { region: "fabric", markerHex: "#ad00ad", factor: FABRIC_SHADOW_FACTOR },
+        { region: "fabric", markerHex: "#700270", factor: FABRIC_DEEP_SHADOW_FACTOR },
+      ],
     },
     {
       id: "legs-stash",
@@ -227,21 +238,24 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
     },
   ],
   hat: [
-    { id: "hat-none", slot: "hat", name: "NONE", empty: true },
-    { id: "hat-a", slot: "hat", name: "BOONIE", paintRegions: { trim: "#ff00ff" } },
-    {
-      id: "hat-b",
-      slot: "hat",
-      name: "USHANKA",
-      spriteKey: "/game/cosmetics/hat/ushanka.png",
-      paintRegions: { fabric: "#ff00ff" },
-    },
     {
       id: "hat-wolf-cap",
       slot: "hat",
       name: "WOLF CAP",
       spriteKey: "/game/cosmetics/hat/wolf-cap.png",
-      paintRegions: { hair: "#000000", fabric: "#ff00ff" },
+      paintRegions: { hair: "#ffffff", fabric: "#ff00ff" },
+      shadeMarkers: [
+        { region: "hair", markerHex: "#b2b2b2", factor: HAIR_DEEP_SHADOW_FACTOR },
+        { region: "fabric", markerHex: "#ad00ad", factor: FABRIC_SHADOW_FACTOR },
+      ],
+    },
+    { id: "hat-none", slot: "hat", name: "NONE", empty: true },
+    {
+      id: "hat-ushanka",
+      slot: "hat",
+      name: "USHANKA",
+      spriteKey: "/game/cosmetics/hat/ushanka.png",
+      paintRegions: { fabric: "#ff00ff" },
     },
     {
       id: "hat-cap-forward",
@@ -279,6 +293,11 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       name: "WOLF",
       spriteKey: "/game/cosmetics/arms/wolf.png",
       paintRegions: { fabric: "#ff00ff", skin: "#ffff00" },
+      shadeMarkers: [
+        { region: "fabric", markerHex: "#ad00ad", factor: FABRIC_SHADOW_FACTOR },
+        { region: "fabric", markerHex: "#700270", factor: FABRIC_DEEP_SHADOW_FACTOR },
+        { region: "skin", markerHex: "#baba00", factor: SKIN_SHADOW_FACTOR },
+      ],
     },
     {
       id: "arms-stash",
