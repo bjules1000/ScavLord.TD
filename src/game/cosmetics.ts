@@ -120,7 +120,25 @@ export interface CosmeticOption {
   empty?: boolean;
   /** Region name -> the literal flat marker hex authored in spriteKey for that region. */
   paintRegions?: Record<PaintRegionId, string>;
+  /**
+   * Extra marker colors in spriteKey that reuse an already-resolved region's color instead of
+   * picking their own swatch — e.g. a pre-baked shadow tone authored as its own flat marker.
+   * `factor` scales the resolved color (1 = identical, <1 = darker), matching whatever ratio
+   * the art was drawn with (e.g. a #baba00 shadow marker next to a #ffff00 skin marker implies
+   * factor = 0x ba/0xff).
+   */
+  shadeMarkers?: { region: PaintRegionId; markerHex: string; factor: number }[];
+  /**
+   * A second sprite from this same option, drawn immediately after the "head" layer instead of
+   * at this slot's normal stacking position — e.g. a collar/scarf that wraps in front of the
+   * head. Recolored the same way as spriteKey, via its own marker map (regions resolve through
+   * this option's own slot, so they track the same chosen swatches automatically).
+   */
+  frontOverlay?: { spriteKey: string; paintRegions: Record<PaintRegionId, string> };
 }
+
+/** Stash's #baba00 shadow-skin marker sits at this fraction of its #ffff00 base-skin marker. */
+const STASH_SKIN_SHADOW_FACTOR = 0xba / 0xff;
 
 /** Placeholder catalog. Real options are added by dropping a PNG + one entry here. */
 export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
@@ -135,6 +153,14 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       spriteKey: "/game/cosmetics/head/wolf.png",
       paintRegions: { hair: "#000000", skin: "#ffff00" },
     },
+    {
+      id: "head-stash",
+      slot: "head",
+      name: "STASH",
+      spriteKey: "/game/cosmetics/head/stash.png",
+      paintRegions: { hair: "#000000", skin: "#ffff00" },
+      shadeMarkers: [{ region: "skin", markerHex: "#baba00", factor: STASH_SKIN_SHADOW_FACTOR }],
+    },
   ],
   torso: [
     { id: "torso-a", slot: "torso", name: "FIELD JACKET", paintRegions: { fabric: "#ff00ff" } },
@@ -147,6 +173,19 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       spriteKey: "/game/cosmetics/torso/wolf.png",
       paintRegions: { fabric: "#ff00ff", trim: "#00ffff", skin: "#ffff00" },
     },
+    {
+      id: "torso-stash",
+      slot: "torso",
+      name: "STASH",
+      spriteKey: "/game/cosmetics/torso/stash.png",
+      paintRegions: { fabric: "#ff00ff", trim: "#00ffff", skin: "#ffff00" },
+      // The collar wraps up in front of the neck — drawn after "head" instead of at torso's
+      // normal (below-head) position. Recolors with the same fabric swatch as the rest of it.
+      frontOverlay: {
+        spriteKey: "/game/cosmetics/torso/stash-collar.png",
+        paintRegions: { fabric: "#ffffff" },
+      },
+    },
   ],
   legs: [
     { id: "legs-a", slot: "legs", name: "FATIGUES", paintRegions: { fabric: "#ff00ff" } },
@@ -157,6 +196,13 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       slot: "legs",
       name: "WOLF",
       spriteKey: "/game/cosmetics/legs/wolf.png",
+      paintRegions: { fabric: "#ff00ff", trim: "#00ffff" },
+    },
+    {
+      id: "legs-stash",
+      slot: "legs",
+      name: "STASH",
+      spriteKey: "/game/cosmetics/legs/stash.png",
       paintRegions: { fabric: "#ff00ff", trim: "#00ffff" },
     },
   ],
@@ -213,6 +259,14 @@ export const COSMETIC_CATALOG: Record<CosmeticSlot, CosmeticOption[]> = {
       name: "WOLF",
       spriteKey: "/game/cosmetics/arms/wolf.png",
       paintRegions: { fabric: "#ff00ff", skin: "#ffff00" },
+    },
+    {
+      id: "arms-stash",
+      slot: "arms",
+      name: "STASH",
+      spriteKey: "/game/cosmetics/arms/stash.png",
+      paintRegions: { fabric: "#ff00ff", skin: "#ffff00" },
+      shadeMarkers: [{ region: "skin", markerHex: "#baba00", factor: STASH_SKIN_SHADOW_FACTOR }],
     },
   ],
   armor: [
@@ -361,6 +415,31 @@ export interface ComposedCosmeticLayer {
   recolor: ComposedCosmeticRecolor[];
   /** First active region's resolved color — used only as the placeholder fill until spriteKey exists. */
   placeholderColor?: string;
+  /** See CosmeticOption.frontOverlay — drawn by the renderer right after the "head" layer. */
+  frontOverlay?: { spriteKey: string; recolor: ComposedCosmeticRecolor[] };
+}
+
+function darkenHex(hex: string, factor: number): string {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const scale = (channel: number) => Math.max(0, Math.min(255, Math.round(channel * factor)));
+  const r = scale((n >> 16) & 255);
+  const g = scale((n >> 8) & 255);
+  const b = scale(n & 255);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
+
+function resolveRecolor(
+  paintRegions: Record<PaintRegionId, string> | undefined,
+  resolved: CosmeticLoadout,
+  slot: CosmeticSlot,
+): ComposedCosmeticRecolor[] {
+  const recolor: ComposedCosmeticRecolor[] = [];
+  if (!paintRegions) return recolor;
+  for (const [region, markerHex] of Object.entries(paintRegions)) {
+    const swatch = paintSwatch(resolved, slot, region);
+    if (swatch) recolor.push({ region, markerHex, targetHex: swatch.hex });
+  }
+  return recolor;
 }
 
 /** Resolve deterministic draw layers for a loadout. Does not load images. */
@@ -372,13 +451,23 @@ export function composeCosmeticLayers(
   for (const slot of COSMETIC_FIGURE.layerOrder) {
     const optionId = resolved[slot];
     const option = cosmeticOption(slot, optionId);
-    const recolor: ComposedCosmeticRecolor[] = [];
-    if (option?.paintRegions) {
-      for (const [region, markerHex] of Object.entries(option.paintRegions)) {
-        const swatch = paintSwatch(resolved, slot, region);
-        if (swatch) recolor.push({ region, markerHex, targetHex: swatch.hex });
+    const recolor = resolveRecolor(option?.paintRegions, resolved, slot);
+    for (const shade of option?.shadeMarkers ?? []) {
+      const swatch = paintSwatch(resolved, slot, shade.region);
+      if (swatch) {
+        recolor.push({
+          region: shade.region,
+          markerHex: shade.markerHex,
+          targetHex: darkenHex(swatch.hex, shade.factor),
+        });
       }
     }
+    const frontOverlay = option?.frontOverlay
+      ? {
+          spriteKey: option.frontOverlay.spriteKey,
+          recolor: resolveRecolor(option.frontOverlay.paintRegions, resolved, slot),
+        }
+      : undefined;
     layers.push({
       key: `${slot}:${optionId}`,
       slot,
@@ -390,6 +479,7 @@ export function composeCosmeticLayers(
       label: option?.name ?? optionId,
       recolor,
       ...(recolor.length ? { placeholderColor: recolor[0]!.targetHex } : {}),
+      ...(frontOverlay ? { frontOverlay } : {}),
     });
   }
   return layers;

@@ -188,3 +188,51 @@ describe("composeCosmeticLayers recolor metadata", () => {
     expect(hair.targetHex).toBe(SWATCH_LISTS.hair![1]!.hex);
   });
 });
+
+function channels(hex: string): [number, number, number] {
+  return [0, 2, 4].map((i) => parseInt(hex.slice(1 + i, 3 + i), 16)) as [number, number, number];
+}
+
+describe("composeCosmeticLayers shadeMarkers", () => {
+  it("derives a darkened variant of the region's resolved color (head-stash's #baba00)", () => {
+    const loadout = { ...defaultCosmeticLoadout(), head: "head-stash" };
+    const head = composeCosmeticLayers(loadout).find((l) => l.slot === "head")!;
+    const base = head.recolor.find((r) => r.markerHex === "#ffff00")!;
+    const shade = head.recolor.find((r) => r.markerHex === "#baba00")!;
+    expect(shade.region).toBe("skin");
+    const [r, g, b] = channels(base.targetHex);
+    const [dr, dg, db] = channels(shade.targetHex);
+    expect(dr).toBe(Math.round(r * (0xba / 0xff)));
+    expect(dg).toBe(Math.round(g * (0xba / 0xff)));
+    expect(db).toBe(Math.round(b * (0xba / 0xff)));
+  });
+
+  it("tracks the region's swatch when it changes, not a fixed color", () => {
+    let loadout = { ...defaultCosmeticLoadout(), head: "head-stash" };
+    loadout = cyclePaintSwatch(loadout, "head", "skin", 1);
+    const head = composeCosmeticLayers(loadout).find((l) => l.slot === "head")!;
+    const shade = head.recolor.find((r) => r.markerHex === "#baba00")!;
+    const [r, g, b] = channels(SWATCH_LISTS.skin![1]!.hex);
+    const [dr, dg, db] = channels(shade.targetHex);
+    expect(dr).toBe(Math.round(r * (0xba / 0xff)));
+    expect(dg).toBe(Math.round(g * (0xba / 0xff)));
+    expect(db).toBe(Math.round(b * (0xba / 0xff)));
+  });
+});
+
+describe("composeCosmeticLayers frontOverlay", () => {
+  it("resolves its own recolor set through the same slot's swatches (torso-stash's collar)", () => {
+    const loadout = { ...defaultCosmeticLoadout(), torso: "torso-stash" };
+    const torso = composeCosmeticLayers(loadout).find((l) => l.slot === "torso")!;
+    expect(torso.frontOverlay?.spriteKey).toBe("/game/cosmetics/torso/stash-collar.png");
+    const overlayFabric = torso.frontOverlay!.recolor.find((r) => r.region === "fabric")!;
+    const baseFabric = torso.recolor.find((r) => r.region === "fabric")!;
+    expect(overlayFabric.markerHex).toBe("#ffffff");
+    expect(overlayFabric.targetHex).toBe(baseFabric.targetHex);
+  });
+
+  it("is undefined for options without a frontOverlay", () => {
+    const torso = composeCosmeticLayers(defaultCosmeticLoadout()).find((l) => l.slot === "torso")!;
+    expect(torso.frontOverlay).toBeUndefined();
+  });
+});

@@ -9,7 +9,19 @@
  * native size, at (0, 0). Only the "no art yet" placeholder box uses layer.placeholder.
  */
 
-import { COSMETIC_FIGURE, composeCosmeticLayers, type CosmeticLoadout } from "./cosmetics";
+import {
+  COSMETIC_FIGURE,
+  composeCosmeticLayers,
+  type ComposedCosmeticRecolor,
+  type CosmeticLoadout,
+} from "./cosmetics";
+
+/** Just enough shape to draw+recolor one sprite — a real layer, or a layer's frontOverlay. */
+interface DrawableSprite {
+  spriteKey?: string;
+  shadingKey?: string;
+  recolor: ComposedCosmeticRecolor[];
+}
 
 const SLOT_COLOR: Record<string, string> = {
   head: "#c9a56a",
@@ -53,20 +65,17 @@ function hexToRgb(hex: string): [number, number, number] {
 
 const recolorCache = new Map<string, HTMLCanvasElement>();
 
-function recolorSignature(layer: ReturnType<typeof composeCosmeticLayers>[number]): string {
-  return `${layer.spriteKey}|${layer.shadingKey ?? ""}|${JSON.stringify(layer.recolor)}`;
+function recolorSignature(sprite: DrawableSprite): string {
+  return `${sprite.spriteKey}|${sprite.shadingKey ?? ""}|${JSON.stringify(sprite.recolor)}`;
 }
 
-/** Draws + recolors a layer's sprite onto a cached offscreen canvas. Null while assets load. */
-function recoloredLayerCanvas(
-  layer: ReturnType<typeof composeCosmeticLayers>[number],
-  onReady: () => void,
-): HTMLCanvasElement | null {
-  if (!layer.spriteKey) return null;
-  const img = loadImage(layer.spriteKey, onReady);
+/** Draws + recolors a sprite onto a cached offscreen canvas. Null while assets load. */
+function recoloredLayerCanvas(sprite: DrawableSprite, onReady: () => void): HTMLCanvasElement | null {
+  if (!sprite.spriteKey) return null;
+  const img = loadImage(sprite.spriteKey, onReady);
   if (!img.complete || !img.naturalWidth) return null;
 
-  const signature = recolorSignature(layer);
+  const signature = recolorSignature(sprite);
   const cached = recolorCache.get(signature);
   if (cached) return cached;
 
@@ -78,10 +87,10 @@ function recoloredLayerCanvas(
   octx.imageSmoothingEnabled = false;
   octx.drawImage(img, 0, 0);
 
-  if (layer.recolor.length) {
+  if (sprite.recolor.length) {
     const data = octx.getImageData(0, 0, off.width, off.height);
     const pixels = data.data;
-    for (const { markerHex, targetHex } of layer.recolor) {
+    for (const { markerHex, targetHex } of sprite.recolor) {
       const [mr, mg, mb] = hexToRgb(markerHex);
       const [tr, tg, tb] = hexToRgb(targetHex);
       for (let i = 0; i < pixels.length; i += 4) {
@@ -95,8 +104,8 @@ function recoloredLayerCanvas(
     octx.putImageData(data, 0, 0);
   }
 
-  if (layer.shadingKey) {
-    const shadeImg = loadImage(layer.shadingKey, onReady);
+  if (sprite.shadingKey) {
+    const shadeImg = loadImage(sprite.shadingKey, onReady);
     if (shadeImg.complete && shadeImg.naturalWidth) {
       octx.globalCompositeOperation = "multiply";
       octx.drawImage(shadeImg, 0, 0);
@@ -119,16 +128,29 @@ export function drawCosmeticFigure(
   onReady: () => void,
 ) {
   ctx.clearRect(0, 0, COSMETIC_FIGURE.width, COSMETIC_FIGURE.height);
+  // A layer's frontOverlay (e.g. a collar drawn from the torso option) must render above the
+  // head instead of at its own slot's normal stacking position — queue it and flush right
+  // after the head layer draws.
+  const pendingFrontOverlays: DrawableSprite[] = [];
   for (const layer of composeCosmeticLayers(loadout)) {
-    if (layer.empty) continue;
-    const canvas = recoloredLayerCanvas(layer, onReady);
-    if (canvas) {
-      // Native size, no stretch — every part is pre-aligned on the shared figure canvas.
-      ctx.drawImage(canvas, 0, 0);
-    } else {
-      const { x, y, w, h } = layer.placeholder;
-      ctx.fillStyle = layer.placeholderColor ?? SLOT_COLOR[layer.slot] ?? "#666";
-      ctx.fillRect(x, y, w, h);
+    if (!layer.empty) {
+      const canvas = recoloredLayerCanvas(layer, onReady);
+      if (canvas) {
+        // Native size, no stretch — every part is pre-aligned on the shared figure canvas.
+        ctx.drawImage(canvas, 0, 0);
+      } else {
+        const { x, y, w, h } = layer.placeholder;
+        ctx.fillStyle = layer.placeholderColor ?? SLOT_COLOR[layer.slot] ?? "#666";
+        ctx.fillRect(x, y, w, h);
+      }
+      if (layer.frontOverlay) pendingFrontOverlays.push(layer.frontOverlay);
+    }
+    if (layer.slot === "head") {
+      for (const overlay of pendingFrontOverlays) {
+        const canvas = recoloredLayerCanvas(overlay, onReady);
+        if (canvas) ctx.drawImage(canvas, 0, 0);
+      }
+      pendingFrontOverlays.length = 0;
     }
   }
 }
