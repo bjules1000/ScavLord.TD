@@ -63,7 +63,18 @@ const PROPS: CampStationProp[] = [
   { id: "prop-8", type: "radio", tx: 18, ty: 6, hubAction: "radio" },
   { id: "prop-9", type: "fire", tx: 14, ty: 7 },
   { id: "prop-10", type: "ops-table", tx: 18, ty: 7, hubAction: "skills" },
+  // Shooting range interact table — "crate" is a placeholder visual until real range
+  // art exists, matching this file's other stations.
+  { id: "prop-range-table", type: "crate", tx: 5, ty: 12, hubAction: "range" },
 ];
+
+/**
+ * Shooting range zone (inclusive tile bounds) and dummy position. Provisional
+ * placement in the open ground band around row 9-13 — reposition freely by editing
+ * these, independent of the locked PROPS/TERRAIN export above.
+ */
+export const RANGE_ZONE = { tx0: 3, ty0: 8, tx1: 8, ty1: 13 };
+export const RANGE_DUMMY_TILE = { tx: 5, ty: 9 };
 
 export const CAMP_MAP_DEF: CampMapDef = {
   id: "main-camp",

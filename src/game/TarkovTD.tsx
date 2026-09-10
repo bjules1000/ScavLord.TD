@@ -343,7 +343,6 @@ import {
 } from "./operators/runtime";
 import { operatorSpeedMultiplier, OPERATOR_MOVE_SPEED_TILES } from "./movement";
 import CampHub from "./hub/CampHub";
-import type { HubAction } from "./campActions";
 import { CAMP_MAP_DEF } from "./hub/campMaps/campMain";
 
 import { RAID_SCRAP_MULT } from "./loot";
@@ -3791,7 +3790,7 @@ export default function TarkovTD() {
                     level: meta.pmc.level,
                     cosmetics: meta.pmc.cosmetics,
                   }}
-                  onAction={(action: HubAction) => {
+                  onAction={(action) => {
                     if (action === "supplies") setSuppliesTab("stash");
                     if (action === "skills") setScavTab("overview");
                     setScreen(action);
